@@ -1,8 +1,8 @@
 // Credentials for githubStorage from a GitHub App instead of a personal token. The app signs a JWT
 // with its private key (RS256), looks up its installation on the repository and gets an
 // installation token limited to that one repository and contents:write. A token lasts an hour and
-// is reused until five minutes before it expires. Commits name the app's bot (e.g. werft[bot]) as
-// committer; the editor stays the author.
+// is reused until five minutes before it expires. Commits name the app's bot (e.g.
+// werft-cms[bot]) as committer; the editor stays the author.
 //
 // The private key must be PKCS#8; GitHub's download is PKCS#1, which Web Crypto cannot import:
 //   openssl pkcs8 -topk8 -nocrypt -in <app>.private-key.pem -out <app>.pkcs8.pem

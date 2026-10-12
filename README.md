@@ -166,7 +166,7 @@ triggers a Cloudflare build.
    | Variable | Value |
    |---|---|
    | `WERFT_SECRET` | output of `npx werft secret` |
-   | `GITHUB_APP_ID` | the werft GitHub App's client ID (its app ID works too), see [GitHub App](#github-app) |
+   | `GITHUB_APP_ID` | the werft-cms GitHub App's client ID (its app ID works too), see [GitHub App](#github-app) |
    | `GITHUB_APP_PRIVATE_KEY` | the app's private key, converted to PKCS#8 |
    | `GITHUB_TOKEN` | instead of the app: fine-grained token, repository access to this one repository, permission "Contents: Read and write" |
    | `WERFT_REPO` | `owner/repository` |
@@ -183,18 +183,19 @@ or saving stops working.
 
 #### GitHub App
 
-frontierdsgn owns one GitHub App, `werft`, for all sites. Commits made through it show `werft[bot]`
-as committer and the editor as author; editors still need no GitHub account.
+frontierdsgn owns one GitHub App for all sites,
+[werft-cms](https://github.com/apps/werft-cms) (the name "werft" is taken on GitHub). Commits made
+through it show `werft-cms[bot]` as committer and the editor as author; editors still need no
+GitHub account. The app has one permission, "Repository contents: Read and write", and no
+webhook; any account can install it.
 
-1. Create it once (organization settings → Developer settings → GitHub Apps → New): permission
-   "Repository contents: Read and write" and nothing else, webhook off, installable only on this
-   account unless clients install it on their own organizations ("Any account").
-2. Generate a private key. GitHub downloads it as PKCS#1; Web Crypto needs PKCS#8:
-   `openssl pkcs8 -topk8 -nocrypt -in werft.private-key.pem -out werft.pkcs8.pem`. Its content
-   goes into `GITHUB_APP_PRIVATE_KEY`; keep the files out of every repository.
-3. Install the app on the site repositories. One installation on frontierdsgn covers its sites
-   (choose "All repositories" or add each new one); a client with its own organization installs
-   the app there.
+1. `GITHUB_APP_ID` is the app's client ID (on its settings page).
+2. `GITHUB_APP_PRIVATE_KEY` is one of its private keys. GitHub downloads a key as PKCS#1; Web
+   Crypto needs PKCS#8: `openssl pkcs8 -topk8 -nocrypt -in werft-cms.private-key.pem -out
+   werft-cms.pkcs8.pem`. Keep the files out of every repository.
+3. A new site's repository must be added to the app's installation (organization settings →
+   GitHub Apps → werft-cms → Configure). A client with its own organization installs the app
+   there.
 
 The gateway signs a JWT with the key, finds the installation on `WERFT_REPO` and gets a token
 that lasts an hour and is limited to that repository and contents. It keeps the token until five
