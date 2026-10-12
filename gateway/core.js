@@ -154,14 +154,19 @@ export function createGateway(options) {
     const files = await treeAt(head.sha);
     const blobOf = (p) => files.find((f) => f.path === p);
     const changes = [];
+    const touched = new Set();
     for (const file of body.files ?? []) {
       const path = String(file.path ?? '').replace(/^\/+/, '');
       if (!path || path.split('/').some((s) => s === '..' || s === '.')) return error(422, `Invalid path ${file.path}`);
       if (!visible(path)) return error(403, 'Dieser Bereich ist geschützt.');
       const data = file.operation === 'delete' ? null : fromBase64(file.content ?? '');
-      const source = file.from_path && file.from_path !== path ? file.from_path : path;
+      const source = file.from_path && file.from_path !== path ? String(file.from_path).replace(/^\/+/, '') : path;
+      if (source.split('/').some((s) => s === '..' || s === '.' || s === '') || !visible(source)) return error(422, `Invalid path ${file.from_path}`);
+      // Each path once per save, so no change can slip past the checks of another.
+      for (const p of new Set([source, path])) { if (touched.has(p)) return error(422, `${p} appears twice.`); touched.add(p); }
       const existing = blobOf(source);
-      if (file.operation === 'create' && blobOf(path)) return error(422, `${path} already exists.`);
+      // A new file, or a renamed one, must not replace a file that is already there.
+      if ((file.operation === 'create' || source !== path) && blobOf(path)) return error(422, `${path} already exists.`);
       if (file.operation !== 'create') {
         if (!existing) return error(404, `${source} does not exist.`);
         if (file.sha && file.sha !== existing.sha) return error(409, `${source} was changed by someone else.`);
@@ -270,16 +275,16 @@ export function createGateway(options) {
   }
 
   // ---- werft's own API ----
-  async function saveUsers(admin, users, message) {
-    const head = await storage.head(branch);
-    const result = await storage.commit({ branch, parent: head.sha, message, author: { name: admin.name ?? admin.email, email: admin.email }, changes: [{ path: USERS_FILE, data: encoder.encode(serializeUsers(users)) }] });
+  // parent: the commit the users were read from, so a concurrent change fails instead of being undone.
+  async function saveUsers(admin, users, message, parent) {
+    const result = await storage.commit({ branch, parent, message, author: { name: admin.name ?? admin.email, email: admin.email }, changes: [{ path: USERS_FILE, data: encoder.encode(serializeUsers(users)) }] });
     usersCache = { sha: null, users: [] };
     return result;
   }
 
   async function usersApi(request, user) {
     if (user.role !== 'administrator') return error(403, 'Nur Administratoren verwalten Benutzer.');
-    const { users } = await loadUsers();
+    const { users, sha: parent } = await loadUsers();
     if (request.method === 'GET') return json({ users: users.map(publicUser), roles: ROLES });
     const body = await request.json();
     const email = String(body.email ?? '').trim();
@@ -299,7 +304,12 @@ export function createGateway(options) {
       if (body.password) updated.password = await hashPassword(String(body.password), options.iterations);
       next = existing ? users.map((u) => (u === existing ? updated : u)) : [...users, updated];
     }
-    await saveUsers(user, next, `Benutzer ${body.action === 'delete' ? 'gelöscht' : existing ? 'geändert' : 'angelegt'}: ${email}`);
+    try {
+      await saveUsers(user, next, `Benutzer ${body.action === 'delete' ? 'gelöscht' : existing ? 'geändert' : 'angelegt'}: ${email}`, parent);
+    } catch (e) {
+      if (e.status === 409) return error(409, 'Der Stand hat sich inzwischen geändert. Bitte neu laden und erneut versuchen.');
+      throw e;
+    }
     return json({ users: next.map(publicUser) });
   }
 

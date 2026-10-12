@@ -128,6 +128,10 @@ test('applies WordPress-style roles', async () => {
   const { data: a } = await call('/contents/content/events/a.json?ref=main', { token: author });
   const edit = await call('/contents', { token: author, method: 'POST', body: { branch: 'main', message: 'x', files: [{ operation: 'update', path: 'content/events/a.json', content: b64('{}'), sha: a.sha }] } });
   assert.equal(edit.status, 403, "authors cannot edit someone else's post");
+  const { data: b } = await call('/contents/content/events/b.json?ref=main', { token: author });
+  const rename = await call('/contents', { token: author, method: 'POST', body: { branch: 'main', message: 'x', files: [{ operation: 'update', from_path: 'content/events/b.json', path: 'content/events/a.json', content: b64('{"title":"B"}'), sha: b.sha }] } });
+  assert.equal(rename.status, 422, "renaming onto someone else's post does not replace it");
+  assert.equal(store.working('content/events/a.json'), '{"title":"A","status":"published"}\n');
   assert.equal((await create(contrib, 'content/events/c.json', '{"title":"C","status":"published"}')).status, 403, 'contributors cannot publish');
   assert.equal((await create(contrib, 'content/events/c.json', '{"title":"C","status":"pending"}')).status, 201, 'contributors submit for review');
   assert.equal((await create(contrib, 'assets/img/x.png', 'x')).status, 403, 'contributors cannot upload');
@@ -141,6 +145,21 @@ test('lets administrators manage users and revokes tokens of changed users', asy
   assert.equal(changed.status, 200);
   assert.equal((await call('', { token: contrib })).status, 401, 'old token no longer works');
   assert.ok(await signIn('contrib@test', 'a-new-password'));
+});
+
+test('a user change based on an outdated list fails instead of undoing another', async () => {
+  const admin = await signIn('admin@test', 'admin-password');
+  const users = `${ORIGIN}/api/werft/users`;
+  await call(users, { token: admin, method: 'POST', body: { email: 'temp@test', password: 'temp-password', role: 'author' } });
+  // A reads the users, then waits for its body while B deletes the account.
+  let send;
+  const body = new ReadableStream({ start: (c) => { send = () => { c.enqueue(new TextEncoder().encode(JSON.stringify({ email: 'temp@test', name: 'Renamed' }))); c.close(); }; } });
+  const slow = gateway(new Request(users, { method: 'POST', headers: { authorization: `token ${admin}`, 'content-type': 'application/json' }, body, duplex: 'half' }));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await call(users, { token: admin, method: 'POST', body: { action: 'delete', email: 'temp@test' } })).status, 200);
+  send();
+  assert.equal((await slow).status, 409);
+  assert.ok(!(await call(users, { token: admin })).data.users.some((u) => u.email === 'temp@test'), 'the deleted account stays deleted');
 });
 
 test('asks for a rebuild when a scheduled entry falls due', async () => {
