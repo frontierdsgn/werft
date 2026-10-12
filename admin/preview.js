@@ -1,6 +1,6 @@
 // Live preview in the CMS: renders the entry being edited with the site's own theme, in the browser,
 // so the preview is the page as it will be published.
-import { createContext } from 'werft';
+import { createContext, mediaPaths } from 'werft';
 import { api } from './session.js';
 
 const REPO = '/api/v1/repos/werft/site';
@@ -15,7 +15,8 @@ async function loadContent(site, theme, branch) {
   const { tree } = await api(`${REPO}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
   const paths = tree.map((e) => e.path).filter((p) => p.startsWith(`${dir}/`) && p.endsWith('.json'));
   const files = await api(`${REPO}/file-contents?ref=${encodeURIComponent(branch)}`, { method: 'POST', body: { files: paths } });
-  const data = Object.fromEntries(files.filter(Boolean).map((f) => [f.path, JSON.parse(decode(f.content))]));
+  const revive = mediaPaths(site);
+  const data = Object.fromEntries(files.filter(Boolean).map((f) => [f.path, JSON.parse(decode(f.content), revive)]));
   const folder = (name) => Object.entries(data).filter(([p]) => p.startsWith(`${dir}/${name}/`))
     .map(([p, value]) => ({ ...value, slug: p.split('/').pop().replace(/\.json$/, '') })).sort((a, b) => (a.slug < b.slug ? -1 : 1));
   return {
@@ -61,7 +62,7 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
 
   function Preview(kind) {
     return function WerftPreview({ entry, getAsset, document: doc }) {
-      const data = entry.get('data').toJS();
+      const data = JSON.parse(JSON.stringify(entry.get('data').toJS()), mediaPaths(site));
       const slug = entry.get('slug') || 'neu';
       const key = JSON.stringify(data);
       const [state, setState] = React.useState({ html: '', className: '' });
@@ -81,7 +82,7 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
             for (const name of ['src', 'href']) {
               const value = el.getAttribute(name);
               if (!value || value.startsWith('#')) continue;
-              el.setAttribute(name, value.startsWith(`${mediaDir}/`) && !(value in index) ? String(getAsset(value) ?? value) : new URL(value, siteURL).href);
+              el.setAttribute(name, value.startsWith(`${mediaDir}/`) && !(value in index) ? String(getAsset(`${base}${value}`) ?? value) : new URL(value, siteURL).href);
             }
             const srcset = el.getAttribute('srcset');
             if (srcset) {
