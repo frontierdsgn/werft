@@ -15,6 +15,7 @@
 //   WERFT_DIR          the site's directory in the repository ('' when it is the root)
 //   WERFT_BRANCH       production branch (default main)
 //   WERFT_DEPLOY_HOOK  optional deploy hook URL, used to publish scheduled entries
+//   WERFT_GITHUB_API   optional, for GitHub Enterprise Server (default https://api.github.com)
 import { createGateway, gatewaySite } from '../gateway/core.js';
 import { githubStorage } from '../gateway/storage/github.js';
 
@@ -25,7 +26,7 @@ export function pagesFunction({ site, theme, fetch: request = (...args) => fetch
     if (!owner || !repo || !env.GITHUB_TOKEN) throw new Error('Set WERFT_REPO (owner/repository) and GITHUB_TOKEN in the Pages project.');
     const base = site.base ? `/${site.base.replace(/^\/|\/$/g, '')}/` : '/';
     return createGateway({
-      storage: githubStorage({ owner, repo, token: env.GITHUB_TOKEN, dir: env.WERFT_DIR ?? '', fetch: request }),
+      storage: githubStorage({ owner, repo, token: env.GITHUB_TOKEN, dir: env.WERFT_DIR ?? '', api: env.WERFT_GITHUB_API || undefined, fetch: request }),
       secret: env.WERFT_SECRET,
       branch: env.WERFT_BRANCH || 'main',
       site: gatewaySite(site, theme),
