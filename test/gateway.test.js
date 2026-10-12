@@ -1,0 +1,136 @@
+// Gateway contract: sign-in, the Gitea API subset Sveltia uses, conflicts and role checks, against
+// a throwaway git repository.
+import { test, before } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createGateway } from '../gateway/core.js';
+import { gitStorage } from '../gateway/storage/git.js';
+import { hashPassword, serializeUsers } from '../gateway/auth.js';
+
+const ORIGIN = 'https://site.test';
+const API = `${ORIGIN}/api/werft/api/v1/repos/werft/site`;
+let gateway, dir;
+const commits = [];
+
+const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); };
+const b64 = (text) => Buffer.from(text).toString('base64');
+
+before(async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'werft-gw-'));
+  dir = path.join(root, 'site');
+  const users = [
+    { email: 'admin@test', name: 'Ada', role: 'administrator', password: await hashPassword('admin-password', 1000) },
+    { email: 'author@test', name: 'Aut', role: 'author', password: await hashPassword('author-password', 1000) },
+    { email: 'contrib@test', name: 'Con', role: 'contributor', password: await hashPassword('contrib-password', 1000) },
+  ];
+  write('.werft/users.json', serializeUsers(users));
+  write('content/pages/index.json', '{"title":"Start","status":"published"}\n');
+  write('content/events/a.json', '{"title":"A","status":"published"}\n');
+  write('content/settings/site.json', '{"title":"Site"}\n');
+  write('outside.txt', 'not part of the site\n');
+  const git = (...args) => execFileSync('git', args, { cwd: root, env: { ...process.env, GIT_AUTHOR_NAME: 'Ada', GIT_AUTHOR_EMAIL: 'admin@test', GIT_COMMITTER_NAME: 'Ada', GIT_COMMITTER_EMAIL: 'admin@test' } });
+  fs.renameSync(path.join(dir, 'outside.txt'), path.join(root, 'outside.txt'));
+  git('init', '--quiet', '-b', 'main');
+  git('add', '.');
+  git('commit', '--quiet', '-m', 'init');
+  gateway = createGateway({
+    storage: await gitStorage(dir), secret: 'x'.repeat(32), branch: 'main', iterations: 1000,
+    site: { name: 'Test', contentDir: 'content', postType: 'events', mediaDirs: ['assets/img'] },
+    onCommit: (c) => commits.push(c),
+  });
+});
+
+async function call(url, { token, method = 'GET', body } = {}) {
+  const response = await gateway(new Request(url.startsWith('http') ? url : `${API}${url}`, {
+    method, headers: { ...(token && { authorization: `token ${token}` }), ...(body && { 'content-type': 'application/json' }) }, body: body && JSON.stringify(body),
+  }));
+  const type = response.headers.get('content-type') ?? '';
+  return { status: response.status, data: type.includes('json') ? await response.json() : await response.text() };
+}
+
+const signIn = async (email, password) => (await call(`${ORIGIN}/api/werft/session`, { method: 'POST', body: { email, password } })).data.access_token;
+
+test('signs in with the right password only', async () => {
+  assert.equal((await call(`${ORIGIN}/api/werft/session`, { method: 'POST', body: { email: 'admin@test', password: 'wrong' } })).status, 401);
+  assert.ok(await signIn('admin@test', 'admin-password'));
+  assert.equal((await call('')).status, 401);
+});
+
+test('lists the site directory without the users file', async () => {
+  const token = await signIn('admin@test', 'admin-password');
+  const { data } = await call('/git/trees/main?recursive=1', { token });
+  const paths = data.tree.map((e) => e.path).sort();
+  assert.deepEqual(paths, ['content/events/a.json', 'content/pages/index.json', 'content/settings/site.json']);
+  const contents = await call('/file-contents?ref=main', { token, method: 'POST', body: { files: ['content/pages/index.json', '.werft/users.json'] } });
+  assert.equal(Buffer.from(contents.data[0].content, 'base64').toString(), '{"title":"Start","status":"published"}\n');
+  assert.equal(contents.data[1], null);
+  assert.equal((await call('/raw/.werft/users.json?ref=main', { token })).status, 404);
+});
+
+test('commits a change, then refuses a stale one', async () => {
+  const token = await signIn('admin@test', 'admin-password');
+  const { data: file } = await call('/contents/content/pages/index.json?ref=main', { token });
+  const update = (text) => call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'Edit start', files: [{ operation: 'update', path: 'content/pages/index.json', content: b64(text), sha: file.sha }] } });
+  const first = await update('{"title":"Neu","status":"published"}\n');
+  assert.equal(first.status, 201);
+  assert.equal(fs.readFileSync(path.join(dir, 'content/pages/index.json'), 'utf8'), '{"title":"Neu","status":"published"}\n');
+  assert.equal(commits.at(-1).author, 'admin@test');
+  assert.equal((await update('{"title":"Alt"}\n')).status, 409);
+  const { data: log } = await call('/commits?sha=main&path=content/pages/index.json&limit=100', { token });
+  assert.deepEqual(log.map((c) => c.commit.message), ['Edit start', 'init']);
+});
+
+test('moves and deletes files', async () => {
+  const token = await signIn('admin@test', 'admin-password');
+  const created = await call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'add', files: [{ operation: 'create', path: 'content/pages/alt.json', content: b64('{"title":"Alt"}') }] } });
+  const moved = await call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'rename', files: [{ operation: 'update', path: 'content/pages/neu.json', from_path: 'content/pages/alt.json', content: b64('{"title":"Neu"}'), sha: created.data.files[0].sha }] } });
+  assert.equal(moved.status, 201);
+  assert.ok(!fs.existsSync(path.join(dir, 'content/pages/alt.json')));
+  const deleted = await call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'remove', files: [{ operation: 'delete', path: 'content/pages/neu.json', sha: moved.data.files[0].sha }] } });
+  assert.equal(deleted.status, 201);
+  const { data } = await call('/git/trees/main?recursive=1', { token });
+  assert.ok(!data.tree.some((e) => e.path.startsWith('content/pages/neu')));
+});
+
+test('applies WordPress-style roles', async () => {
+  const author = await signIn('author@test', 'author-password');
+  const contrib = await signIn('contrib@test', 'contrib-password');
+  const create = (token, path, text) => call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'x', files: [{ operation: 'create', path, content: b64(text) }] } });
+  assert.equal((await create(author, 'content/pages/neu.json', '{}')).status, 403, 'authors cannot create pages');
+  assert.equal((await create(author, 'content/events/b.json', '{"title":"B","status":"published"}')).status, 201, 'authors publish their own posts');
+  const { data: a } = await call('/contents/content/events/a.json?ref=main', { token: author });
+  const edit = await call('/contents', { token: author, method: 'POST', body: { branch: 'main', message: 'x', files: [{ operation: 'update', path: 'content/events/a.json', content: b64('{}'), sha: a.sha }] } });
+  assert.equal(edit.status, 403, "authors cannot edit someone else's post");
+  assert.equal((await create(contrib, 'content/events/c.json', '{"title":"C","status":"published"}')).status, 403, 'contributors cannot publish');
+  assert.equal((await create(contrib, 'content/events/c.json', '{"title":"C","status":"pending"}')).status, 201, 'contributors submit for review');
+  assert.equal((await create(contrib, 'assets/img/x.png', 'x')).status, 403, 'contributors cannot upload');
+});
+
+test('lets administrators manage users and revokes tokens of changed users', async () => {
+  const admin = await signIn('admin@test', 'admin-password');
+  const contrib = await signIn('contrib@test', 'contrib-password');
+  assert.equal((await call(`${ORIGIN}/api/werft/users`, { token: contrib })).status, 403);
+  const changed = await call(`${ORIGIN}/api/werft/users`, { token: admin, method: 'POST', body: { email: 'contrib@test', password: 'a-new-password' } });
+  assert.equal(changed.status, 200);
+  assert.equal((await call('', { token: contrib })).status, 401, 'old token no longer works');
+  assert.ok(await signIn('contrib@test', 'a-new-password'));
+});
+
+test('completes the OAuth code flow with PKCE', async () => {
+  const verifier = 'v'.repeat(43);
+  const challenge = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))).toString('base64url');
+  const query = new URLSearchParams({ client_id: 'werft', redirect_uri: `${ORIGIN}/admin/`, state: 's1', code_challenge: challenge, code_challenge_method: 'S256' });
+  const page = await gateway(new Request(`${ORIGIN}/api/werft/login/oauth/authorize?${query}`));
+  assert.match(await page.text(), /type="password"/);
+  const post = await gateway(new Request(`${ORIGIN}/api/werft/login/oauth/authorize`, { method: 'POST', body: new URLSearchParams({ ...Object.fromEntries(query), email: 'admin@test', password: 'admin-password' }) }));
+  assert.equal(post.status, 302);
+  const back = new URL(post.headers.get('location'));
+  assert.equal(back.searchParams.get('state'), 's1');
+  const token = await call(`${ORIGIN}/api/werft/login/oauth/access_token`, { method: 'POST', body: { grant_type: 'authorization_code', client_id: 'werft', code: back.searchParams.get('code'), redirect_uri: `${ORIGIN}/admin/`, code_verifier: verifier } });
+  assert.ok(token.data.access_token);
+  const wrong = await call(`${ORIGIN}/api/werft/login/oauth/access_token`, { method: 'POST', body: { grant_type: 'authorization_code', code: back.searchParams.get('code'), redirect_uri: `${ORIGIN}/admin/`, code_verifier: 'x'.repeat(43) } });
+  assert.equal(wrong.status, 400);
+});
