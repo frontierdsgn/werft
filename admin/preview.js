@@ -1,6 +1,6 @@
 // Live preview in the CMS: renders the entry being edited with the site's own theme, in the browser,
 // so the preview is the page as it will be published.
-import { createContext, mediaPaths } from 'werft';
+import { createContext, mediaPaths, safeURL } from 'werft';
 import { api } from './session.js';
 
 const REPO = '/api/v1/repos/werft/site';
@@ -75,6 +75,13 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
           const ctx = createContext({ site, theme, content, media: index, now: new Date(), preview: true });
           const html = theme.renderPage(page, ctx.for(page)).value;
           const parsed = new DOMParser().parseFromString(html, 'text/html');
+          // The preview runs on the admin's origin, next to the signed-in user's tokens: whatever a
+          // theme lets through, no event handler or javascript: URL reaches it.
+          for (const el of parsed.querySelectorAll('*')) {
+            for (const { name, value } of [...el.attributes]) {
+              if (name.startsWith('on') || (['href', 'src', 'action', 'formaction', 'poster', 'xlink:href'].includes(name) && !safeURL(value))) el.removeAttribute(name);
+            }
+          }
           // The preview frame has no address of its own: links and images become absolute. Files
           // uploaded but not yet on the site come from the CMS's local copy.
           const siteURL = new URL(base, location.origin);
