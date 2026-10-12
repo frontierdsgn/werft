@@ -1,6 +1,7 @@
 // Versions of each content file, compared with the current one and restorable. Restoring is an
 // ordinary save, so it is itself a new version and the gateway checks the role as for any change.
 import { requireUser, loadSite, toolbar, api } from './session.js';
+import { versionDiff, diffHTML } from './diff.js';
 
 const REPO = '/api/v1/repos/werft/site';
 const { site, theme } = await loadSite();
@@ -18,22 +19,6 @@ const groups = { pages: 'Seite', patterns: 'Muster', forms: 'Formular', settings
 async function readAt(ref, path) {
   const response = await api(`${REPO}/raw/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`, { raw: true });
   return response.ok ? response.text() : null;
-}
-
-// Line diff (longest common subsequence); content files are small.
-function diff(a, b) {
-  const x = a.split('\n'), y = b.split('\n');
-  const m = x.length, n = y.length;
-  const table = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
-  for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--) table[i][j] = x[i] === y[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
-  const out = [];
-  let i = 0, j = 0;
-  while (i < m || j < n) {
-    if (i < m && j < n && x[i] === y[j]) { out.push(`  ${escapeHTML(x[i])}`); i++; j++; }
-    else if (j < n && (i === m || table[i][j + 1] > table[i + 1][j])) out.push(`<ins>+ ${escapeHTML(y[j++])}</ins>`);
-    else out.push(`<del>- ${escapeHTML(x[i++])}</del>`);
-  }
-  return out.join('\n');
 }
 
 const { tree } = await api(`${REPO}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
@@ -62,7 +47,8 @@ $('#history').addEventListener('click', async (event) => {
   const [old, current] = await Promise.all([readAt(button.dataset.sha, path), readAt(branch, path)]);
   selected = { path, text: old };
   $('#compare-title').textContent = `Version vom ${dateTime(button.dataset.date)} im Vergleich zur aktuellen`;
-  $('#diff').innerHTML = diff(current ?? '', old ?? '');
+  const lines = versionDiff(current ?? '', old ?? '');
+  $('#diff').innerHTML = lines.some(([kind]) => kind !== ' ') ? diffHTML(lines) : '<span class="note">Keine inhaltlichen Unterschiede.</span>';
   $('#error').textContent = '';
   $('#compare').hidden = false;
   $('#compare').scrollIntoView({ block: 'start' });
