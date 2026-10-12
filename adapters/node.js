@@ -5,7 +5,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { buildToDisk, loadSite } from '../lib/node.js';
-import { createGateway } from '../gateway/core.js';
+import { createGateway, gatewaySite } from '../gateway/core.js';
 import { gitStorage } from '../gateway/storage/git.js';
 
 const TYPES = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', ico: 'image/x-icon', txt: 'text/plain; charset=utf-8', xml: 'application/xml', woff2: 'font/woff2', pdf: 'application/pdf', map: 'application/json' };
@@ -72,7 +72,7 @@ export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret
   };
   const gateway = createGateway({
     storage, secret, branch,
-    site: { name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [] },
+    site: gatewaySite(site, theme),
     onCommit: (commit) => { rebuild(commit.message); },
     onTick: ({ due }) => rebuild(`scheduled: ${due.join(', ')}`),
     lastBuild,

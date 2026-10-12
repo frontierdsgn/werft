@@ -52,6 +52,7 @@ const storages = {
 for (const [kind, setup] of Object.entries(storages)) describe(`gateway on ${kind} storage`, () => {
 let gateway, store;
 const commits = [];
+const ticks = [];
 
 before(async () => {
   store = await setup(await repoFiles());
@@ -59,6 +60,9 @@ before(async () => {
     storage: store.storage, secret: 'x'.repeat(32), branch: 'main', iterations: 1000,
     site: { name: 'Test', contentDir: 'content', postType: 'events', mediaDirs: ['assets/img'] },
     onCommit: (c) => commits.push(c),
+    onTick: ({ due }) => { ticks.push(due); },
+    lastBuild: () => '2026-01-01T00:00:00Z',
+    now: () => Date.parse('2026-06-01T00:00:00Z'),
   });
 });
 
@@ -137,6 +141,19 @@ test('lets administrators manage users and revokes tokens of changed users', asy
   assert.equal(changed.status, 200);
   assert.equal((await call('', { token: contrib })).status, 401, 'old token no longer works');
   assert.ok(await signIn('contrib@test', 'a-new-password'));
+});
+
+test('asks for a rebuild when a scheduled entry falls due', async () => {
+  const token = await signIn('admin@test', 'admin-password');
+  const add = (slug, date) => call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'plan', files: [{ operation: 'create', path: `content/events/${slug}.json`, content: b64(JSON.stringify({ title: slug, status: 'published', publish_date: date })) }] } });
+  await add('later', '2026-09-01T10:00:00Z');
+  let { data } = await call(`${ORIGIN}/api/werft/tick`);
+  assert.deepEqual([data.rebuilt, data.due, data.next_publish], [false, [], '2026-09-01T10:00:00Z']);
+  await add('due', '2026-05-31T10:00:00Z');
+  await add('old', '2025-12-31T10:00:00Z');
+  ({ data } = await call(`${ORIGIN}/api/werft/tick`));
+  assert.deepEqual([data.rebuilt, data.due], [true, ['due']], 'only entries due since the last build');
+  assert.deepEqual(ticks.at(-1), ['due']);
 });
 
 test('completes the OAuth code flow with PKCE', async () => {

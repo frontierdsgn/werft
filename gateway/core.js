@@ -34,6 +34,9 @@ async function sha256(text) {
   return base64url.encode(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(text))));
 }
 
+// The gateway's view of a site (werft.config.js and its theme).
+export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [] });
+
 // options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs }, owner, repo,
 //   onCommit?(commit), onTick?(), now?() }
 export function createGateway(options) {
@@ -316,8 +319,9 @@ export function createGateway(options) {
     const due = entries.filter((e) => e.publish_date && (e.status ?? 'published') === 'published'
       && Date.parse(e.publish_date) <= now() && (!lastBuild || Date.parse(e.publish_date) > Date.parse(lastBuild)));
     const next = entries.filter((e) => isScheduled(e, new Date(now()))).map((e) => e.publish_date).sort()[0] ?? null;
-    if (due.length) await onTick?.({ due: due.map((e) => e.slug) });
-    return json({ rebuilt: due.length > 0, due: due.map((e) => e.slug), next_publish: next, last_build: lastBuild ?? null });
+    // onTick returns false when the host cannot rebuild on request.
+    const rebuilt = due.length > 0 && !!onTick && (await onTick({ due: due.map((e) => e.slug) })) !== false;
+    return json({ rebuilt, due: due.map((e) => e.slug), next_publish: next, last_build: lastBuild ?? null });
   }
 
   return async function handle(request) {
