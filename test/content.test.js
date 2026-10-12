@@ -18,3 +18,8 @@ test('files picked in the admin reach the theme relative to the site', async () 
   const content = await loadContent({ site, theme: {}, store: memoryStore({ 'content/pages/p.json': JSON.stringify(page) }) });
   assert.deepEqual(content.pages[0].sections, [{ image: { src: 'assets/img/new.jpg' } }, { image: { src: 'assets/img/old.jpg' } }, { link: { url: '/classic/kontakt.html' } }]);
 });
+
+test('content is read from the directory werft.config.js names', async () => {
+  const content = await loadContent({ site: { content: 'inhalt' }, theme: {}, store: memoryStore({ 'inhalt/pages/p.json': '{"title":"P"}' }) });
+  assert.equal(content.pages[0].title, 'P');
+});
