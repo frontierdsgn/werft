@@ -51,3 +51,10 @@ test('the signed-in role leaves out what it cannot change', () => {
   assert.ok(!result.texts.some((t) => t.source === 'settings'));
   assert.ok(result.texts.some((t) => t.source === 'page:index'));
 });
+
+test('a page without sections opens', () => {
+  const data = content();
+  delete data.pages[0].sections;
+  const result = pageRenderer({ site: {}, theme })(data, 'index');
+  assert.match(unmark(result.html), /<main><\/main>/);
+});

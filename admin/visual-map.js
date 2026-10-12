@@ -72,7 +72,7 @@ export function pageRenderer({ site, theme, media = {}, now = () => new Date(), 
     // Each section of the page between comments, so the editor knows which elements it rendered.
     const blocks = ctx.blocks;
     ctx.blocks = (sections) => (sections !== page.sections ? blocks(sections)
-      : raw(sections.map((s, i) => `<!--werft-section:${i}-->${blocks([s]).value}<!--/werft-section-->`).join('')));
+      : raw((sections ?? []).map((s, i) => `<!--werft-section:${i}-->${blocks([s]).value}<!--/werft-section-->`).join('')));
     return theme.renderPage(page, ctx).value;
   }
 

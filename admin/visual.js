@@ -3,12 +3,12 @@
 // and removed once the layout is unlocked. Changes stay in the browser until "Speichern", which
 // stores every changed file in one commit through the gateway, as the CMS does.
 import { cmsConfig } from 'werft/cms-config';
-import { createContext, mediaPaths, markdown, raw, imageSize } from 'werft';
+import { createContext, mediaPaths, markdown, raw, escape, imageSize } from 'werft';
 import { requireUser, loadSite, api, signOut } from './session.js';
 import { disarm } from './preview.js';
 import { pageRenderer, mapDocument, getAt, setAt, textOf } from './visual-map.js';
 import { buildForm, emptyValue } from './visual-form.js';
-import { toMarkdown, formatBar } from './visual-rich.js';
+import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
 
 const REPO = '/api/v1/repos/werft/site';
 const { site, theme, base } = await loadSite();
@@ -251,7 +251,7 @@ function modeOf(text, entry) {
   if (!entry.el) return 'dialog';
   const def = schemaAt(text.source, text.path);
   const block = entry.el.dataset.werftField !== undefined && entry.el.localName !== 'span' && !/^(a|button|label)$/.test(entry.el.localName);
-  if (def?.widget === 'richtext' && block) return 'rich';
+  if (def?.widget === 'richtext' && block) return editableAsRich(text.value) ? 'rich' : 'dialog';
   return entry.plain ? 'plain' : 'dialog';
 }
 
@@ -549,7 +549,7 @@ function openSectionPanel(index) {
 // A text that cannot be edited on the page (formatted parts, values the theme reworks).
 function openTextDialog(text, node) {
   const def = schemaAt(text.source, text.path);
-  const rich = def?.widget === 'richtext';
+  const rich = def?.widget === 'richtext' && editableAsRich(text.value);
   const snapshotBefore = snapshot();
   let started = false;
   const save = (value) => {
@@ -566,7 +566,7 @@ function openTextDialog(text, node) {
     editor.addEventListener('input', () => save(toMarkdown(editor)));
     editor.addEventListener('paste', (event) => { event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain')); });
   } else {
-    editor = el('textarea', { value: text.value, rows: 4 });
+    editor = el('textarea', { value: text.value, rows: def?.widget === 'richtext' ? 10 : 4 });
     editor.addEventListener('input', () => save(editor.value));
   }
   const owner = ownerOf(text.source, text.path);
@@ -672,7 +672,7 @@ function sectionHTML(section) {
   const body = out.body.innerHTML;
   const inner = body.slice(body.indexOf('<!--ve-->') + 9, body.indexOf('<!--/ve-->'));
   const styles = [...out.head.querySelectorAll('link[rel~="stylesheet"], style')].map((n) => n.outerHTML).join('');
-  return `<!doctype html><html lang="${out.documentElement.lang}"><head><base href="${siteURL}">${styles}<style>html,body{overflow:hidden;pointer-events:none}</style></head><body class="${out.body.className}"><main>${inner}</main></body></html>`;
+  return `<!doctype html><html lang="${escape(out.documentElement.lang)}"><head><base href="${escape(siteURL)}">${styles}<style>html,body{overflow:hidden;pointer-events:none}</style></head><body class="${escape(out.body.className)}"><main>${inner}</main></body></html>`;
 }
 function addSection(at) {
   const dialog = $('#ve-sections');
@@ -680,14 +680,14 @@ function addSection(at) {
   const found = examples();
   const insert = (section) => {
     dialog.close();
-    sectionTo(at, () => pageData().sections.splice(at, 0, section));
+    sectionTo(at, () => (pageData().sections ??= []).splice(at, 0, section));
   };
   const card = (label, section, note) => {
     const b = button('', label, () => insert(structuredClone(section)), 've-section-card');
     const thumb = el('div', { className: 've-thumb-frame' });
     let html = '';
     try { html = sectionHTML(section); } catch { /* a section without content cannot be shown */ }
-    if (html) thumb.append(Object.assign(document.createElement('iframe'), { srcdoc: html, tabIndex: -1, loading: 'lazy', title: '' }));
+    if (html) thumb.append(Object.assign(document.createElement('iframe'), { sandbox: '', srcdoc: html, tabIndex: -1, loading: 'lazy', title: '' }));
     else thumb.append(el('span', {}, 'Leerer Abschnitt'));
     b.append(thumb, el('strong', {}, label), note ? el('small', {}, note) : null);
     return b;
@@ -773,10 +773,16 @@ function drawBar() {
   bar.replaceChildren(left, center, right);
 }
 
+let saving = null;
 async function save() {
+  // One save at a time; a click during a save saves what changed meanwhile once it is done.
+  if (saving) { await saving; return save(); }
   const changes = [];
+  // What each file is saved as: edits made while the request runs stay unsaved.
+  const sent = new Map();
   for (const path of changedPaths()) {
     const f = files.get(path);
+    sent.set(path, f.data === null ? null : canon(f.data));
     if (f.data === null) changes.push({ operation: 'delete', path, sha: f.sha });
     else changes.push({ operation: f.saved === null ? 'create' : 'update', path, ...(f.sha && { sha: f.sha }), content: encodeBase64(new TextEncoder().encode(fileText(f.data))) });
   }
@@ -784,17 +790,24 @@ async function save() {
   if (!changes.length) return;
   const titles = changes.filter((c) => c.path.endsWith('.json')).map((c) => files.get(c.path)?.data?.title ?? c.path.split('/').pop().replace(/\.json$/, ''));
   toast('Wird gespeichert …');
+  const request = api(`${REPO}/contents`, { method: 'POST', body: { branch, message: `Visueller Editor: ${[...new Set(titles)].join(', ') || 'Bilder'}`, files: changes } });
+  saving = request.catch(() => {});
   try {
-    const result = await api(`${REPO}/contents`, { method: 'POST', body: { branch, message: `Visueller Editor: ${[...new Set(titles)].join(', ') || 'Bilder'}`, files: changes } });
+    const result = await request;
     for (const [i, c] of changes.entries()) {
       if (uploads.has(c.path)) { uploads.get(c.path).saved = true; continue; }
       const f = files.get(c.path);
-      if (c.operation === 'delete') files.delete(c.path);
-      else { f.saved = canon(f.data); f.sha = result.files?.[i]?.sha ?? f.sha; }
+      if (!f) continue;
+      if (c.operation === 'delete') {
+        if (f.data === null) files.delete(c.path);
+        else Object.assign(f, { saved: null, sha: undefined });
+      } else Object.assign(f, { saved: sent.get(c.path), sha: result.files?.[i]?.sha ?? f.sha });
     }
     toast('Gespeichert. Die Website wird neu erstellt.');
   } catch (error) {
     toast(error.status === 403 ? `Nicht erlaubt: ${error.message}` : `Speichern fehlgeschlagen: ${error.message}`, true);
+  } finally {
+    saving = null;
   }
   drawBar();
   drawPages();

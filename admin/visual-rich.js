@@ -1,6 +1,7 @@
 // Rich text in the visual editor: an editable element holds the HTML that the site's Markdown
 // renders, and its content is turned back into Markdown on every change. Only what the CMS's
 // rich-text field offers survives: paragraphs, line breaks, bold, italic, links, headings, lists.
+import { markdown } from 'werft';
 
 const BLOCKS = new Set(['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'blockquote', 'section', 'article']);
 
@@ -51,6 +52,13 @@ export function toMarkdown(root) {
   }
   flush();
   return blocks.join('\n\n');
+}
+
+// Whether a text survives being edited this way. Markdown the conversion cannot write back (code,
+// images, nested lists, escaped characters) is edited as Markdown source instead.
+export function editableAsRich(value) {
+  const html = markdown(value);
+  return markdown(toMarkdown(new DOMParser().parseFromString(html, 'text/html').body)) === html;
 }
 
 // A small formatting bar for an editable element in `doc` (the page frame or the editor itself).
