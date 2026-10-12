@@ -106,6 +106,17 @@ test('commits a change, then refuses a stale one', async () => {
   assert.deepEqual(log.map((c) => c.commit.message), ['Edit start', 'init']);
 });
 
+test('names the files saved along with an entry in the commit message', async () => {
+  // Sveltia's message for an entry saved with an upload ends in " +1".
+  const token = await signIn('admin@test', 'admin-password');
+  const files = [
+    { operation: 'create', path: 'assets/img/neu.jpg', content: b64('jpg') },
+    { operation: 'create', path: 'content/pages/upload.json', content: b64('{"title":"U"}') },
+  ];
+  assert.equal((await call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'Neu: Seite „upload“ +1', files } })).status, 201);
+  assert.equal(commits.at(-1).message, 'Neu: Seite „upload“, Datei neu.jpg');
+});
+
 test('moves and deletes files', async () => {
   const token = await signIn('admin@test', 'admin-password');
   const created = await call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'add', files: [{ operation: 'create', path: 'content/pages/alt.json', content: b64('{"title":"Alt"}') }] } });

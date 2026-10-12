@@ -30,6 +30,15 @@ const fromBase64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0))
 const numericId = (email) => [...email].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) || 1;
 const avatar = (name) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" fill="#231f1b"/><text x="20" y="26" font-family="sans-serif" font-size="18" fill="#faf4e8" text-anchor="middle">${(name || '?').trim()[0].toUpperCase().replace(/[<&]/, '?')}</text></svg>`)}`;
 
+// Sveltia appends " +N" to the message of an entry saved with N more files (its uploads), e.g.
+// "Geändert: Seite „index“ +1". The history names them instead.
+function describeFiles(message, paths) {
+  const match = /^([\s\S]*) \+(\d+)$/.exec(message);
+  const files = paths.filter((p) => !p.endsWith('.json'));
+  if (!match || Number(match[2]) !== files.length) return message;
+  return `${match[1]}, ${files.length === 1 ? 'Datei' : 'Dateien'} ${files.map((p) => p.split('/').pop()).join(', ')}`;
+}
+
 async function sha256(text) {
   return base64url.encode(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(text))));
 }
@@ -188,7 +197,7 @@ export function createGateway(options) {
       changes.push({ path, data });
     }
     if (!changes.length) return error(422, 'No changes.');
-    const message = String(body.message ?? 'Update content').slice(0, 2000);
+    const message = describeFiles(String(body.message ?? 'Update content'), changes.map((c) => c.path)).slice(0, 2000);
     let result;
     try {
       result = await storage.commit({ branch, parent: head.sha, message, author: { name: user.name ?? user.email, email: user.email }, changes });
