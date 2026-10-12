@@ -80,7 +80,7 @@ show every part.
 1. **package.json**: depend on a tagged werft version and add the scripts.
    ```json
    { "type": "module", "scripts": { "build": "werft build", "dev": "werft dev" },
-     "dependencies": { "werft": "github:ORGNAME/werft#v0.1.0" } }
+     "dependencies": { "werft": "github:frontierdsgn/werft#v0.1.0" } }
    ```
    A new werft version is a new tag; a site moves to it by changing the tag and running
    `npm install`. To try an unreleased werft in a site, depend on a local checkout with
