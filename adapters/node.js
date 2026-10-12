@@ -22,10 +22,15 @@ async function send(res, response) {
   res.end(Buffer.from(await response.arrayBuffer()));
 }
 
+// Whether `file` lies inside `dir` (a prefix test would also accept a sibling such as _site-old).
+const inside = (dir, file) => { const rel = path.relative(dir, file); return !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`); };
+
 async function serveFile(res, outDir, pathname) {
   let file = path.join(outDir, decodeURIComponent(pathname));
-  if (!file.startsWith(outDir)) return false;
+  if (!inside(outDir, file)) return false;
   try {
+    // Symbolic links in the output must not lead out of it either.
+    if (!inside(await fs.realpath(outDir), await fs.realpath(file))) return false;
     if ((await fs.stat(file)).isDirectory()) {
       if (!pathname.endsWith('/')) { res.writeHead(301, { location: `${pathname}/` }); res.end(); return true; }
       file = path.join(file, 'index.html');
