@@ -3,7 +3,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
-import { buildToDisk } from '../lib/node.js';
+import { buildToDisk, loadSite } from '../lib/node.js';
 import { USERS_FILE, hashPassword, parseUsers, serializeUsers, findUser } from '../gateway/auth.js';
 import { ROLES } from '../gateway/roles.js';
 
@@ -40,6 +40,16 @@ const commands = {
   },
   dev: () => serveCommand(true),
   serve: () => serveCommand(false),
+  // Sends the built site to werft-publish.php on PHP web space (WERFT_PUBLISH_URL, WERFT_PUBLISH_SECRET).
+  async publish() {
+    const { publish } = await import('../lib/publish.js');
+    const { root, site } = await loadSite(positional[0] ?? '.');
+    await publish({
+      outDir: path.resolve(root, option('out') ?? site.output ?? '_site'), url: process.env.WERFT_PUBLISH_URL, secret: process.env.WERFT_PUBLISH_SECRET,
+      // The admin needs the gateway, which PHP web space cannot run; editors use the build host's admin.
+      exclude: site.admin === false ? [] : [site.admin ?? 'admin'], log: console.log,
+    });
+  },
   secret() {
     console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url'));
   },
@@ -84,7 +94,8 @@ const commands = {
   dev [dir] [--port 8787]                     Local server: site, /admin and gateway on this git checkout
   serve [dir] [--port] [--host]               Same for production; needs WERFT_SECRET, publishes scheduled entries
   user list|add|set|remove [email] [dir]      Manage .werft/users.json (--role, --name, --password)
-  secret                                      Print a new random WERFT_SECRET
+  publish [dir]                               Send the build to werft-publish.php (WERFT_PUBLISH_URL, WERFT_PUBLISH_SECRET)
+  secret                                      Print a new random secret
 
 Roles: ${Object.entries(ROLES).map(([k, r]) => `${k} (${r.label})`).join(', ')}`);
   },
