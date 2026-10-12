@@ -16,7 +16,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "release": "node scripts/release.js release",
+    "update-sites": "node scripts/release.js sites"
   },
   "dependencies": {
     "@sveltia/cms": "0.235.0",

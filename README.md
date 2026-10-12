@@ -106,7 +106,8 @@ show every part.
    { "type": "module", "scripts": { "build": "werft build", "dev": "werft dev" },
      "dependencies": { "werft": "github:frontierdsgn/werft#v0.3.0" } }
    ```
-   A new werft version is a new tag; a site moves to it with
+   A new werft version is a new tag; sites in the frontierdsgn organization move to it on their
+   own (see [Releasing](#releasing)). Any other site moves with
    `npm install github:frontierdsgn/werft#vX.Y.Z`, which updates `package.json` and
    `package-lock.json` (a plain `npm install` keeps the commit in the lockfile). To try an unreleased werft in a site, depend on a local checkout with
    `"werft": "file:../werft"` and add `install-links=true` to the site's `.npmrc`: npm then
@@ -272,6 +273,28 @@ Dates are entered in the editor's time zone and stored in UTC.
 - The admin loads its fonts from cdn.jsdelivr.net: werft serves Sveltia's prebuilt bundle, and only
   Sveltia's module build (which needs a bundler such as Vite) avoids that. The public site loads
   nothing from there.
+
+## Releasing
+
+```sh
+npm run release -- minor          # or patch, major, 1.2.3; --dry-run pushes nothing
+npm run update-sites              # again, e.g. for a new site or after a held-back one
+```
+
+`release` tests `origin/main` in a fresh clone, sets the version in `package.json`,
+`package-lock.json` and this README, commits "werft x.y.z" with the commits since the last tag,
+tags `vx.y.z` and pushes. Then it updates the sites: every repository in the frontierdsgn
+organization whose root `package.json` depends on `github:frontierdsgn/werft` gets the new tag on
+its default branch, one commit with `package.json` and `package-lock.json`, and Cloudflare rebuilds
+it. Before committing, it builds each site with its old and its new werft. If the public pages
+differ (anything outside `admin/` and `_werft/build.json`), the site is held back and the changed
+files are listed; check them with `npm run dev` in the site, then run
+`npm run update-sites -- --accept-changes`. A site whose build fails is left as it is. Branches
+other than the default branch, and sites outside the organization, keep their version.
+
+The script ([scripts/release.js](scripts/release.js)) needs git, npm and `gh`, signed in with push
+access to the organization's repositories. It works in temporary clones and leaves local
+checkouts alone; pull afterwards.
 
 ## Known limits
 
