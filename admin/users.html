@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Benutzer · Redaktion</title>
+<link rel="stylesheet" href="./admin.css">
+<script type="importmap">{ "imports": { "werft": "./werft/index.js", "marked": "./vendor/marked.esm.js" } }</script>
+<script type="module" src="./users.js"></script>
+</head>
+<body><main class="werft-page" id="main" hidden>
+<h1>Benutzer</h1>
+<p class="note">Administratoren dürfen alles. Redakteure bearbeiten alle Seiten, Beiträge, Muster, Formulare und Medien. Autoren veröffentlichen eigene Beiträge und laden Medien hoch. Mitarbeiter reichen eigene Beiträge zur Prüfung ein.</p>
+<table><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th></th></tr></thead><tbody id="users"></tbody></table>
+<h2 id="form-title">Benutzer anlegen</h2>
+<form class="inline" id="user-form">
+<label>E-Mail<input name="email" type="email" required autocomplete="off"></label>
+<label>Name<input name="name" required></label>
+<label>Rolle<select name="role"></select></label>
+<label>Passwort<input name="password" type="password" minlength="10" autocomplete="new-password" placeholder="mind. 10 Zeichen"></label>
+<button type="submit">Speichern</button><button type="reset" class="secondary">Neu</button>
+</form>
+<p class="error" id="error" role="alert"></p>
+</main></body>
+</html>

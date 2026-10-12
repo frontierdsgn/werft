@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Versionen · Redaktion</title>
+<link rel="stylesheet" href="./admin.css">
+<script type="importmap">{ "imports": { "werft": "./werft/index.js", "marked": "./vendor/marked.esm.js" } }</script>
+<script type="module" src="./revisions.js"></script>
+</head>
+<body><main class="werft-page" id="main" hidden>
+<h1>Versionen</h1>
+<p class="note">Jede Änderung ist gespeichert. Wählen Sie einen Inhalt, vergleichen Sie eine frühere Version mit der aktuellen und stellen Sie sie bei Bedarf wieder her.</p>
+<form class="inline" id="pick"><label>Inhalt<select id="path"></select></label></form>
+<h2 id="history-title">Verlauf</h2>
+<table><thead><tr><th>Datum</th><th>Von</th><th>Änderung</th><th></th></tr></thead><tbody id="history"></tbody></table>
+<section id="compare" hidden><h2 id="compare-title"></h2><p class="error" id="error" role="alert"></p><p><button type="button" id="restore">Diese Version wiederherstellen</button></p><pre id="diff"></pre></section>
+</main></body>
+</html>

@@ -1,0 +1,22 @@
+/* werft's own admin parts: sign-in form, tool bar, versions and users pages. */
+.werft-login{width:min(360px,calc(100vw - 32px));margin:12vh auto 0;background:#fff;padding:28px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.08);color:#231f1b;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+body:has(.werft-login){background:#f4f1ec;margin:0}
+.werft-login h1{font-size:20px;margin:0 0 4px}.werft-login p{margin:0 0 20px;color:#5c554d}
+.werft-login label{display:block;font-weight:600;margin:12px 0 4px}
+.werft-login input{width:100%;box-sizing:border-box;font:inherit;padding:9px 11px;border:1px solid #b9b1a6;border-radius:4px}
+.werft-login button{margin-top:20px;width:100%;font:inherit;font-weight:700;padding:10px;border:0;border-radius:4px;background:#231f1b;color:#fff;cursor:pointer}
+.werft-login .werft-error{color:#a3271b;margin:12px 0 0;min-height:1.5em}
+.werft-bar{position:fixed;right:12px;bottom:12px;z-index:10000;display:flex;gap:2px;padding:4px;border-radius:8px;background:#231f1b;box-shadow:0 2px 10px rgba(0,0,0,.25);font:600 13px/1 system-ui,-apple-system,"Segoe UI",sans-serif}
+.werft-bar a,.werft-bar button{color:#faf4e8;text-decoration:none!important;padding:7px 10px;border-radius:5px;border:0;background:none;font:inherit;cursor:pointer}
+.werft-bar a:hover,.werft-bar button:hover,.werft-bar [aria-current]{background:#4a423a}
+.werft-bar a:focus-visible,.werft-bar button:focus-visible,.werft-page :focus-visible{outline:3px solid #d9a521;outline-offset:2px}
+.werft-page{max-width:980px;margin:0 auto;padding:24px 16px 80px;color:#231f1b;font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.werft-page h1{font-size:24px;margin:0 0 16px}.werft-page h2{font-size:18px;margin:24px 0 8px}
+.werft-page table{width:100%;border-collapse:collapse}.werft-page th,.werft-page td{text-align:left;padding:6px 8px;border-bottom:1px solid #e3ddd4;vertical-align:top}
+.werft-page select,.werft-page input{font:inherit;padding:6px 8px;border:1px solid #b9b1a6;border-radius:4px}
+.werft-page button{font:inherit;font-weight:600;padding:6px 12px;border:0;border-radius:4px;background:#231f1b;color:#fff;cursor:pointer}
+.werft-page button.secondary{background:#e9e3da;color:#231f1b}
+.werft-page .note{color:#5c554d}.werft-page .error{color:#a3271b}
+.werft-page pre{white-space:pre-wrap;background:#f6f3ee;padding:12px;border-radius:6px;font:13px/1.45 ui-monospace,monospace;max-height:60vh;overflow:auto}
+.werft-page del{background:#fbe0dc;text-decoration:none}.werft-page ins{background:#dcf2dc;text-decoration:none}
+.werft-page form.inline{display:flex;flex-wrap:wrap;gap:8px;align-items:end}.werft-page form.inline label{display:flex;flex-direction:column;font-weight:600;font-size:13px;gap:4px}
