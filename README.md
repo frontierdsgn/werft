@@ -105,9 +105,14 @@ show every part.
      returns `ctx.html\`…\`` and escapes by default.
    - `renderPage(page, ctx)`: the page frame around `ctx.blocks(page.sections)`.
    - Optional: `menus` (location → label), `settingsFields`, `formFields`, `postType`
-     (`{ name, label, singular, fields }`), `staticDir` (CSS, JS, fonts copied as they are).
+     (`{ name, label, singular, fields, date }`), `staticDir` (CSS, JS, fonts copied as they are).
+     `date` names the post field that orders posts (default `publish_date`); declare it with
+     `fields.date(name, label)`, which stores an ISO date (`2026-11-14`) and shows it in the
+     editor's locale (14.11.2026 in a German browser). Older files with "14.11.2026" are read too.
    - `ctx` offers `settings`, `menu(id)`, `image(src)` (with width and height), `posts()`, `form(slug)`,
-     `md()`, `inline()`.
+     `md()`, `inline()`. `posts()` returns the published posts newest first by their date, posts
+     without a date last by slug; `posts({ slugs })` returns the named posts in that order, and
+     `limit` cuts the list. The admin lists posts newest first too.
 4. **Content**: `content/pages/<slug>.json` (`index` becomes `index.html`), `content/patterns/`,
    `content/forms/`, `content/<post type>/`, `content/settings/{site,menus,redirects}.json`.
    A page is `{ "title": "Start", "status": "published", "sections": [{ "type": "text", … }] }`.

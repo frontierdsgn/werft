@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cmsConfig } from '../lib/cms-config.js';
+import * as fields from '../lib/fields.js';
 
 test('preview links of a site below a base path include the base', () => {
   // Sveltia keeps only the origin of site_url, so "kontakt.html" would open /kontakt.html.
@@ -21,4 +22,12 @@ test('a theme without menus gets no menu settings', () => {
   const files = (theme) => cmsConfig({ site: { name: 'S' }, theme, origin: 'https://example.org' }).collections.find((c) => c.name === 'settings').files.map((f) => f.name);
   assert.deepEqual(files({ blocks: {} }), ['site', 'redirects']);
   assert.deepEqual(files({ blocks: {}, menus: { main: 'Hauptmenü' } }), ['site', 'menus', 'redirects']);
+});
+
+test('the admin lists posts newest first and stores dates as ISO dates', () => {
+  // A German "14.11.2026" in the file cannot be sorted; the browser still shows the date in the editor's locale.
+  const theme = { blocks: {}, postType: { name: 'events', label: 'V', singular: 'V', date: 'date', fields: [fields.string('title', 'Titel'), fields.date('date', 'Datum')] } };
+  const events = cmsConfig({ site: { name: 'S' }, theme, origin: 'https://example.org' }).collections.find((c) => c.name === 'events');
+  assert.deepEqual(events.sortable_fields.default, { field: 'date', direction: 'descending' });
+  assert.equal(events.fields.find((f) => f.name === 'date').format, 'YYYY-MM-DD');
 });
