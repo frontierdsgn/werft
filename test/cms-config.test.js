@@ -15,3 +15,10 @@ test('publish dates are stored in UTC', () => {
   const field = config.collections.find((c) => c.name === 'pages').fields.find((f) => f.name === 'publish_date');
   assert.equal(field.output_utc, true);
 });
+
+test('a theme without menus gets no menu settings', () => {
+  // Sveltia rejects the whole configuration when a file has no fields.
+  const files = (theme) => cmsConfig({ site: { name: 'S' }, theme, origin: 'https://example.org' }).collections.find((c) => c.name === 'settings').files.map((f) => f.name);
+  assert.deepEqual(files({ blocks: {} }), ['site', 'redirects']);
+  assert.deepEqual(files({ blocks: {}, menus: { main: 'Hauptmenü' } }), ['site', 'menus', 'redirects']);
+});

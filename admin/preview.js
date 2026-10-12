@@ -94,8 +94,10 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
           // The page's own styles come along; of its scripts only files run, not inline ones (they
           // could, e.g., lock the preview behind a password screen).
           const styles = [...parsed.head.querySelectorAll('style')].map((el) => el.outerHTML).join('');
-          const scripts = [...parsed.head.querySelectorAll('script[src]')].map((el) => new URL(el.getAttribute('src'), new URL(base, location.origin)).href);
-          if (alive) setState({ html: styles + parsed.body.innerHTML, className: parsed.body.className, lang: parsed.documentElement.lang, scripts });
+          const url = (el, attr) => new URL(el.getAttribute(attr), new URL(base, location.origin)).href;
+          const sheets = [...parsed.head.querySelectorAll('link[rel~="stylesheet"][href]')].map((el) => url(el, 'href'));
+          const scripts = [...parsed.head.querySelectorAll('script[src]')].map((el) => url(el, 'src'));
+          if (alive) setState({ html: styles + parsed.body.innerHTML, className: parsed.body.className, lang: parsed.documentElement.lang, sheets, scripts });
         })().catch((error) => alive && setState({ html: `<p style="padding:16px;font:14px system-ui">Vorschau nicht möglich: ${String(error.message).replace(/</g, '&lt;')}</p>`, className: '' }));
         return () => { alive = false; };
       }, [key, slug]);
@@ -103,6 +105,14 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
         if (!doc.querySelector('base')) doc.head.prepend(Object.assign(doc.createElement('base'), { href: new URL(base, location.origin).href }));
         doc.body.className = state.className;
         if (state.lang) doc.documentElement.lang = state.lang;
+        // Stylesheets stay while they are unchanged, so typing does not reload them.
+        const sheets = state.sheets ?? [];
+        doc.querySelectorAll('link[data-werft]').forEach((el) => { if (!sheets.includes(el.href)) el.remove(); });
+        for (const href of sheets) {
+          if ([...doc.querySelectorAll('link[data-werft]')].some((el) => el.href === href)) continue;
+          doc.head.append(Object.assign(doc.createElement('link'), { rel: 'stylesheet', href }));
+          doc.head.lastChild.setAttribute('data-werft', '');
+        }
         doc.querySelectorAll('script[data-werft]').forEach((el) => el.remove());
         for (const src of state.scripts ?? []) {
           const script = doc.createElement('script');
@@ -119,7 +129,6 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
     };
   }
 
-  CMS.registerPreviewStyle(`${base}assets/css/site.css`);
   // The CMS wraps the template in its own padding; the page brings its own.
   CMS.registerPreviewStyle('body{margin:0!important;padding:0!important}.werft-preview{display:contents}', { raw: true });
   for (const kind of ['pages', 'patterns', 'forms', 'site', 'menus', ...(theme.postType ? [theme.postType.name] : [])]) {
