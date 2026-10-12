@@ -74,6 +74,9 @@ export function toolbar(me, current) {
   nav.setAttribute('aria-label', 'werft');
   const links = [['./', 'Inhalte'], ['revisions.html', 'Versionen'], ...(me.role === 'administrator' ? [['users.html', 'Benutzer']] : [])];
   nav.innerHTML = links.map(([href, label]) => `<a href="${href}"${label === current ? ' aria-current="page"' : ''}>${label}</a>`).join('');
+  // Sveltia CMS gives every link to another page target="_blank" when the mouse is pressed on it
+  // (a mousedown listener on the body); werft's pages open in the same tab.
+  nav.addEventListener('mousedown', (event) => event.stopPropagation());
   const out = document.createElement('button');
   out.type = 'button';
   out.textContent = 'Abmelden';
