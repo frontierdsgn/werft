@@ -53,7 +53,7 @@ werft is version 0.1.0, licensed MIT. The admin is [Sveltia CMS](https://github.
 | Visual editing, preview | Form editor beside a live preview rendered by the site's own theme. |
 | Media library, alt text | Sveltia's media library; images are fields with file, alt text and caption. |
 | Menus, site settings, SEO | Menu locations the theme declares; site settings; SEO title, description and noindex per page. |
-| Revisions | Every save is a git commit. The Versionen page compares any version with the current one by content (the key order and the `false` defaults the CMS writes are no changes) and restores it. |
+| Revisions | Every save is a git commit. The Versionen page compares any version with the current one by content (the key order and the `false` defaults the CMS writes are no changes) and restores it after asking. |
 | Reusable blocks | Patterns: sections shared by several pages. |
 | Forms, redirects | Form definitions edited in the admin (the theme renders them); redirects written as `_redirects` and `.htaccess` (`/alt/*` to `/neu/:splat` works in both). |
 

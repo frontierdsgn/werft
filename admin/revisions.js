@@ -30,11 +30,11 @@ $('#path').innerHTML = files.map((p) => {
 const wanted = new URLSearchParams(location.search).get('path');
 if (wanted && files.includes(wanted)) $('#path').value = wanted;
 
-let selected;
+let selected, commits;
 async function showHistory() {
   const path = $('#path').value;
   $('#compare').hidden = true;
-  const commits = await api(`${REPO}/commits?sha=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}&limit=100`);
+  commits = await api(`${REPO}/commits?sha=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}&limit=100`);
   $('#history').innerHTML = commits.map((c, i) => `<tr><td>${dateTime(c.commit.author.date)}</td><td>${escapeHTML(c.commit.author.name)}</td><td>${escapeHTML(c.commit.message.split('\n')[0])}</td>
     <td>${i === 0 ? '<span class="note">aktuell</span>' : `<button type="button" class="secondary" data-sha="${c.sha}" data-date="${c.commit.author.date}">Vergleichen</button>`}</td></tr>`).join('');
 }
@@ -45,7 +45,8 @@ $('#history').addEventListener('click', async (event) => {
   if (!button) return;
   const path = $('#path').value;
   const [old, current] = await Promise.all([readAt(button.dataset.sha, path), readAt(branch, path)]);
-  selected = { path, text: old };
+  const title = (() => { try { return JSON.parse(current).title; } catch { return undefined; } })();
+  selected = { path, text: old, title, sha: button.dataset.sha };
   $('#compare-title').textContent = `Version vom ${dateTime(button.dataset.date)} im Vergleich zur aktuellen`;
   const lines = versionDiff(current ?? '', old ?? '');
   $('#diff').innerHTML = lines.some(([kind]) => kind !== ' ') ? diffHTML(lines) : '<span class="note">Keine inhaltlichen Unterschiede.</span>';
@@ -54,7 +55,18 @@ $('#history').addEventListener('click', async (event) => {
   $('#compare').scrollIntoView({ block: 'start' });
 });
 
-$('#restore').addEventListener('click', async () => {
+// Restoring replaces the current version, so it asks first and names both versions.
+const version = (c) => `${dateTime(c.commit.author.date)} von ${c.commit.author.name}`;
+$('#restore').addEventListener('click', () => {
+  const { path, title, sha } = selected;
+  const label = $('#path').selectedOptions[0].textContent;
+  $('#confirm-text').textContent = `${label}${title ? ` („${title}“)` : ''}: Die aktuelle Version (${version(commits[0])}) wird durch die Version vom ${version(commits.find((c) => c.sha === sha))} ersetzt. Die aktuelle Version bleibt im Verlauf erhalten.`;
+  $('#confirm').returnValue = '';
+  $('#confirm').showModal();
+});
+
+$('#confirm').addEventListener('close', async () => {
+  if ($('#confirm').returnValue !== 'restore') return;
   const { path, text } = selected;
   try {
     const { sha } = await api(`${REPO}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`);

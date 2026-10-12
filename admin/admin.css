@@ -20,3 +20,4 @@ body:has(.werft-login){background:#f4f1ec;margin:0}
 .werft-page pre{white-space:pre-wrap;background:#f6f3ee;padding:12px;border-radius:6px;font:13px/1.45 ui-monospace,monospace;max-height:60vh;overflow:auto}
 .werft-page del{background:#fbe0dc;text-decoration:none}.werft-page ins{background:#dcf2dc;text-decoration:none}
 .werft-page form.inline{display:flex;flex-wrap:wrap;gap:8px;align-items:end}.werft-page form.inline label{display:flex;flex-direction:column;font-weight:600;font-size:13px;gap:4px}
+.werft-page dialog{max-width:min(520px,calc(100vw - 32px));border:0;border-radius:8px;padding:20px 24px;box-shadow:0 8px 30px rgba(0,0,0,.25);color:inherit}.werft-page dialog::backdrop{background:rgba(35,31,27,.45)}.werft-page dialog h2{margin-top:0}.werft-page dialog .actions{display:flex;gap:8px;justify-content:flex-end;margin-bottom:0}
