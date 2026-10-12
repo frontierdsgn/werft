@@ -28,8 +28,9 @@ export function classify(path, { contentDir = 'content', postType, mediaDirs = [
   return 'code';
 }
 
-const PUBLISHED = (data) => {
-  try { return (JSON.parse(data).status ?? 'published') === 'published'; } catch { return true; }
+// The status an entry's text is saved with; a file without one is published.
+const statusOf = (data) => {
+  try { return JSON.parse(data).status ?? 'published'; } catch { return 'published'; }
 };
 
 // Returns null when `user` may make `change`, otherwise the reason it may not.
@@ -50,12 +51,17 @@ export function denial(user, change, site) {
       return own ? null : 'Autoren dürfen nur eigene Beiträge ändern.';
     case 'contributor':
       if (kind !== 'post' || !own) return 'Mitarbeiter dürfen nur eigene Beiträge ändern.';
-      if (change.operation !== 'delete' && PUBLISHED(change.text)) return 'Mitarbeiter dürfen Beiträge nur als Entwurf oder zur Prüfung speichern.';
+      if (change.operation !== 'delete' && !statuses(user.role).includes(statusOf(change.text))) return 'Mitarbeiter dürfen Beiträge nur als Entwurf oder zur Prüfung speichern.';
       if (change.operation === 'delete' && change.wasPublished) return 'Mitarbeiter dürfen veröffentlichte Beiträge nicht löschen.';
       return null;
     default:
       return 'Unbekannte Rolle.';
   }
+}
+
+// The statuses a role may save its entries with, for the admin's status field.
+export function statuses(role) {
+  return role === 'contributor' ? ['draft', 'pending'] : ['draft', 'pending', 'published'];
 }
 
 // Which kinds of content a role can change at all, for the admin's collection list.

@@ -10,7 +10,7 @@
 //   /api/werft/tick                       publish scheduled entries that are due
 //   /api/werft/api/v1/...                 Gitea API subset
 import { USERS_FILE, base64url, hashPassword, verifyPassword, signToken, readToken, stampOf, parseUsers, serializeUsers, findUser, publicUser } from './auth.js';
-import { ROLES, denial, classify, editable } from './roles.js';
+import { ROLES, denial, classify, editable, statuses } from './roles.js';
 import { loginPage } from './login-page.js';
 import { loadContent, isScheduled } from '../lib/content.js';
 
@@ -367,7 +367,7 @@ export function createGateway(options) {
       const user = await authenticate(request);
       if (!user) return error(401, 'Bitte anmelden.');
       if (path === '/tick') return await tick(url);
-      if (path === '/me') return json({ ...publicUser(user), editable: editable(user.role), roles: ROLES });
+      if (path === '/me') return json({ ...publicUser(user), editable: editable(user.role), statuses: statuses(user.role), roles: ROLES });
       if (path === '/users') return await usersApi(request, user);
       if (path.startsWith('/api/v1/')) return await gitea(request, url, user, path.slice(7));
       return error(404, 'Not found');

@@ -31,3 +31,12 @@ test('the admin lists posts newest first and stores dates as ISO dates', () => {
   assert.deepEqual(events.sortable_fields.default, { field: 'date', direction: 'descending' });
   assert.equal(events.fields.find((f) => f.name === 'date').format, 'YYYY-MM-DD');
 });
+
+test('the status field offers only the statuses the user may save', () => {
+  // A contributor who picks "Veröffentlicht" is refused by the gateway after filling in the form.
+  const theme = { blocks: {}, postType: { name: 'events', label: 'E', singular: 'E', fields: [] } };
+  const options = (statuses) => cmsConfig({ site: { name: 'S' }, theme, origin: 'https://example.org', editable: ['post'], statuses })
+    .collections.find((c) => c.name === 'events').fields.find((f) => f.name === 'status').options.map((o) => o.value);
+  assert.deepEqual(options(['draft', 'pending']), ['draft', 'pending']);
+  assert.deepEqual(options(undefined), ['draft', 'pending', 'published']);
+});
