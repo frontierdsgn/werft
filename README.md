@@ -82,8 +82,9 @@ show every part.
    { "type": "module", "scripts": { "build": "werft build", "dev": "werft dev" },
      "dependencies": { "werft": "github:frontierdsgn/werft#v0.2.0" } }
    ```
-   A new werft version is a new tag; a site moves to it by changing the tag and running
-   `npm install`. To try an unreleased werft in a site, depend on a local checkout with
+   A new werft version is a new tag; a site moves to it with
+   `npm install github:frontierdsgn/werft#vX.Y.Z`, which updates `package.json` and
+   `package-lock.json` (a plain `npm install` keeps the commit in the lockfile). To try an unreleased werft in a site, depend on a local checkout with
    `"werft": "file:../werft"` and add `install-links=true` to the site's `.npmrc`: npm then
    installs a copy of werft with its own dependencies. After changing werft, reinstall it in the
    site: `rm -rf node_modules/werft && npm install`.
