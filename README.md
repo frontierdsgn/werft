@@ -17,8 +17,9 @@ werft is version 0.2.0, licensed MIT. The admin is [Sveltia CMS](https://github.
 │ /admin               │  HTTP  │ gateway  /api/werft/...              │
 │ Sveltia CMS          ├───────▶│  sign-in, users, roles, scheduling   │
 │ + werft preview,     │        │  Gitea API subset for Sveltia        │
-│   Versionen,         │        └──────────────────┬───────────────────┘
-│   Benutzer pages     │                           │ one commit per save
+│   visual editor,     │        └──────────────────┬───────────────────┘
+│   Versionen,         │                           │ one commit per save
+│   Benutzer pages     │                           │
 └──────────────────────┘                           ▼
                                 ┌──────────────────────────────────────┐
                                 │ git: local checkout or GitHub (REST) │
@@ -50,12 +51,34 @@ werft is version 0.2.0, licensed MIT. The admin is [Sveltia CMS](https://github.
 | Login at /admin, users, roles | Own e-mail/password logins, no GitHub account needed. Roles Administrator, Redakteur, Autor, Mitarbeiter with WordPress's rules ([roles.js](gateway/roles.js)), enforced by the gateway. Users page for administrators. |
 | Pages and posts | Pages built from sections (the theme's blocks), plus one post type per theme (e.g. events). Add, delete, reorder sections. |
 | Draft, pending review, publish, schedule | Status per entry; a publish date in the future schedules it (see [Scheduling](#scheduling)). Contributors are offered only "Entwurf" and "Zur Prüfung"; when the gateway refuses a change for the editor's role, the admin says so instead of "try again later". |
-| Visual editing, preview | Form editor beside a live preview rendered by the site's own theme. A post without a page of its own (no `renderPost` in the theme) is previewed marked on the page that lists it, else alone in the theme's listing section, else as a card of its fields. |
+| Visual editing, preview | The [visual editor](#visual-editor): click a text on the page and type, click an image to swap it. The classic form editor (Sveltia) stays beside it: form beside a live preview rendered by the site's own theme. A post without a page of its own (no `renderPost` in the theme) is previewed marked on the page that lists it, else alone in the theme's listing section, else as a card of its fields. |
 | Media library, alt text | Sveltia's media library; images are fields with file, alt text and caption. |
 | Menus, site settings, SEO | Menu locations the theme declares; site settings; SEO title, description and noindex per page. |
 | Revisions | Every save is a git commit. The Versionen page compares any version with the current one by content (the key order and the `false` defaults the CMS writes are no changes) and restores it after asking. |
 | Reusable blocks | Patterns: sections shared by several pages. |
 | Forms, redirects | Form definitions edited in the admin (the theme renders them); redirects written as `_redirects` and `.htaccess` (`/alt/*` to `/neu/:splat` works in both). |
+
+## Visual editor
+
+`/admin/visual.html` ("Visueller Editor" in the admin's toolbar) shows the site as the theme renders
+it and edits it there, like Squarespace's page editor:
+
+- Hover outlines a section; a click on a text edits it in place (rich text gets a bar for bold,
+  italic, links, headings and lists), a click on an image opens the media library with upload. Texts
+  that cannot be edited in place (a link address, a value the theme turns into a class or an
+  anchor) open a small dialog; "Abschnitt bearbeiten" shows all fields of a section as a form.
+- Layout follows the theme: no free positioning or resizing. Behind the lock ("Layout gesperrt")
+  sections and list items can be added from the theme's blocks and patterns (with thumbnails),
+  duplicated, moved and removed.
+- Undo and redo (Ctrl+Z, Ctrl+Y), desktop and mobile width, a pages list with page settings, new
+  pages and posts, site settings and menus.
+- "Speichern" (Ctrl+S) writes every changed file and upload in one commit.
+
+How it finds the content on the page ([visual-map.js](admin/visual-map.js)): it renders the page a
+second time with each text wrapped in invisible private-use markers and keeps a marker only where
+the page without markers is unchanged, so a value the theme compares or slugifies is never marked.
+Themes need nothing extra. Theme scripts do not run in the editor (e.g. a mobile menu shows open),
+and the classic editor ("Klassische Ansicht") remains for everything else.
 
 ## Commands
 

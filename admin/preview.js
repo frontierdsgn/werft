@@ -68,6 +68,16 @@ function addedElement(shown, hidden) {
 
 const parse = (text) => new DOMParser().parseFromString(text, 'text/html');
 
+// The preview runs on the admin's origin, next to the signed-in user's tokens: whatever a theme
+// lets through, no event handler or javascript: URL reaches it.
+export function disarm(doc) {
+  for (const el of doc.querySelectorAll('*')) {
+    for (const { name, value } of [...el.attributes]) {
+      if (name.startsWith('on') || (['href', 'src', 'action', 'formaction', 'poster', 'xlink:href'].includes(name) && !safeURL(value))) el.removeAttribute(name);
+    }
+  }
+}
+
 // A post as the site shows it, for any theme: its own page when the theme has post pages; else the
 // page that lists it, with the post marked; else the post alone in a block that lists posts; else
 // its data. Drafts and scheduled posts are shown as if published.
@@ -145,13 +155,7 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
             text = theme.renderPage(page, createContext({ site, theme, content, media: index, now: new Date(), preview: true }).for(page)).value;
           }
           const parsed = parse(text);
-          // The preview runs on the admin's origin, next to the signed-in user's tokens: whatever a
-          // theme lets through, no event handler or javascript: URL reaches it.
-          for (const el of parsed.querySelectorAll('*')) {
-            for (const { name, value } of [...el.attributes]) {
-              if (name.startsWith('on') || (['href', 'src', 'action', 'formaction', 'poster', 'xlink:href'].includes(name) && !safeURL(value))) el.removeAttribute(name);
-            }
-          }
+          disarm(parsed);
           // The preview frame has no address of its own: links and images become absolute. Files
           // uploaded but not yet on the site come from the CMS's local copy.
           const siteURL = new URL(base, location.origin);
