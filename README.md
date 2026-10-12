@@ -5,7 +5,7 @@ theme turns it into static HTML, and editors work in a browser admin at `/admin`
 logins and WordPress-style roles. The same site runs on Cloudflare Pages, on any Node server, and
 (with a build host) on PHP web space such as IONOS.
 
-werft is version 0.2.0, licensed MIT. The admin is [Sveltia CMS](https://github.com/sveltia/sveltia-cms)
+werft is version 0.3.0, licensed MIT. The admin is [Sveltia CMS](https://github.com/sveltia/sveltia-cms)
 (MIT), used unmodified; werft adds the parts Sveltia lacks. Why Sveltia and not another CMS:
 [EVALUATION.md](EVALUATION.md).
 
@@ -104,7 +104,7 @@ show every part.
 1. **package.json**: depend on a tagged werft version and add the scripts.
    ```json
    { "type": "module", "scripts": { "build": "werft build", "dev": "werft dev" },
-     "dependencies": { "werft": "github:frontierdsgn/werft#v0.2.0" } }
+     "dependencies": { "werft": "github:frontierdsgn/werft#v0.3.0" } }
    ```
    A new werft version is a new tag; a site moves to it with
    `npm install github:frontierdsgn/werft#vX.Y.Z`, which updates `package.json` and
