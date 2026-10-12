@@ -31,6 +31,9 @@ export function pagesFunction({ site, theme, fetch: request = (...args) => fetch
       secret: env.WERFT_SECRET,
       branch: env.WERFT_BRANCH || 'main',
       tickKey: env.WERFT_TICK_KEY || undefined,
+      // Each binary file is one GitHub request; with the gateway's own requests, 30 stay below the
+      // free plan's 50 per invocation.
+      maxFiles: 30,
       site: gatewaySite(site, theme),
       // The build the Pages project is serving right now.
       lastBuild: async (url) => {

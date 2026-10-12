@@ -5,6 +5,17 @@
 // The token needs "Contents: read and write" on that one repository (fine-grained token).
 
 const decodeBase64 = (text) => Uint8Array.from(atob(text.replace(/\s/g, '')), (c) => c.charCodeAt(0));
+// Text goes into the tree request itself; only other files need a request each.
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+const asText = (bytes) => { try { return utf8.decode(bytes); } catch { return null; } };
+// Git's object id of a blob, as GitHub would report it.
+async function blobId(bytes) {
+  const header = new TextEncoder().encode(`blob ${bytes.length}\0`);
+  const object = new Uint8Array(header.length + bytes.length);
+  object.set(header);
+  object.set(bytes, header.length);
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-1', object))].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 const encodeBase64 = (bytes) => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
 
 export function githubStorage({ owner, repo, token, dir = '', api = 'https://api.github.com', fetch: request = globalThis.fetch.bind(globalThis) }) {
@@ -93,10 +104,12 @@ export function githubStorage({ owner, repo, token, dir = '', api = 'https://api
     const base = await commitObject(parent);
     const entries = await Promise.all(changes.map(async ({ path, data }) => {
       if (!data) return { path: full(path), mode: '100644', type: 'blob', sha: null };
+      const text = asText(data);
+      if (text != null) return { path: full(path), mode: '100644', type: 'blob', content: text, id: await blobId(data) };
       const { data: blob } = await gh('/git/blobs', { method: 'POST', body: { content: encodeBase64(data), encoding: 'base64' } });
       return { path: full(path), mode: '100644', type: 'blob', sha: blob.sha };
     }));
-    const { data: newTree } = await gh('/git/trees', { method: 'POST', body: { base_tree: base.tree.sha, tree: entries } });
+    const { data: newTree } = await gh('/git/trees', { method: 'POST', body: { base_tree: base.tree.sha, tree: entries.map(({ id, ...e }) => e) } });
     const date = new Date().toISOString();
     const { data: created } = await gh('/git/commits', { method: 'POST', body: { message, tree: newTree.sha, parents: [parent], author: { ...author, date } } });
     try {
@@ -107,7 +120,7 @@ export function githubStorage({ owner, repo, token, dir = '', api = 'https://api
       throw e;
     }
     commits.set(created.sha, Promise.resolve(created));
-    const blobsByPath = Object.fromEntries(entries.filter((e) => e.sha).map((e) => [prefix ? e.path.slice(prefix.length + 1) : e.path, e.sha]));
+    const blobsByPath = Object.fromEntries(entries.filter((e) => e.sha || e.id).map((e) => [prefix ? e.path.slice(prefix.length + 1) : e.path, e.sha ?? e.id]));
     return { sha: created.sha, date: created.committer?.date ?? date, blobs: blobsByPath };
   }
 

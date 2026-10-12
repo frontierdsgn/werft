@@ -38,7 +38,7 @@ async function sha256(text) {
 export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [] });
 
 // options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs }, owner, repo,
-//   onCommit?(commit), onTick?(), tickKey?, now?() }
+//   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?() }
 export function createGateway(options) {
   const { storage, secret, branch = 'main', site, onCommit, onTick } = options;
   const owner = options.owner ?? 'werft';
@@ -153,6 +153,9 @@ export function createGateway(options) {
     const head = await storage.head(branch);
     const files = await treeAt(head.sha);
     const blobOf = (p) => files.find((f) => f.path === p);
+    if (options.maxFiles && (body.files ?? []).length > options.maxFiles) {
+      return error(413, `Bitte höchstens ${options.maxFiles} Dateien auf einmal speichern oder hochladen.`);
+    }
     const changes = [];
     const touched = new Set();
     for (const file of body.files ?? []) {
@@ -171,8 +174,11 @@ export function createGateway(options) {
         if (!existing) return error(404, `${source} does not exist.`);
         if (file.sha && file.sha !== existing.sha) return error(409, `${source} was changed by someone else.`);
       }
-      const creator = file.operation === 'create' ? null : await storage.creator(branch, source);
-      const old = existing && file.operation !== 'create' && classify(source, site) === 'post' ? decoder.decode(await storage.read(head.sha, source)) : '';
+      // Who added a post and whether it was published only matter to authors and contributors, and
+      // each costs a storage request.
+      const ownPostsOnly = ['author', 'contributor'].includes(user.role) && file.operation !== 'create' && classify(source, site) === 'post';
+      const creator = ownPostsOnly ? await storage.creator(branch, source) : null;
+      const old = ownPostsOnly && user.role === 'contributor' ? decoder.decode(await storage.read(head.sha, source)) : '';
       const wasPublished = !!old && (() => { try { return (JSON.parse(old).status ?? 'published') === 'published'; } catch { return true; } })();
       for (const [p, operation] of source !== path ? [[source, 'delete'], [path, 'create']] : [[path, file.operation]]) {
         const reason = denial(user, { operation, path: p, text: data && decoder.decode(data), creator, wasPublished }, site);

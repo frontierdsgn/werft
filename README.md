@@ -146,7 +146,8 @@ Fine-grained tokens expire; renew the token before its expiry date or saving sto
 
 Limits of the free plan that apply: Pages Functions share the Workers free plan's daily request
 quota, with 50 outgoing requests and 10 ms CPU time per request. The gateway reads up to 100 content
-files in one GraphQL request to stay below the request limit. Signing in hashes the password with
+files in one GraphQL request and sends text files with the commit; each image costs one request, so
+one save takes at most 30 files (30 images measured at 39 requests against a stand-in GitHub). Signing in hashes the password with
 PBKDF2 (100,000 iterations, the most Workers allow); on this machine that takes about 22 ms in Node.
 Whether Cloudflare counts it against the 10 ms limit is unknown: after the first deploy, sign in and
 check the Functions log for CPU-limit errors. If it fails, lower the iterations for a user

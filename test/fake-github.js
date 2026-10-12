@@ -6,6 +6,8 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
   const objects = new Map();
   const refs = new Map();
   const put = (object) => { const sha = createHash('sha1').update(JSON.stringify(object)).digest('hex'); objects.set(sha, object); return sha; };
+  // Blobs under their real git object id, as GitHub names them.
+  const putBlob = (bytes) => { const sha = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'); objects.set(sha, { type: 'blob', data: bytes.toString('base64') }); return sha; };
   const requests = [];
 
   // flat: Map path → blob sha; returns the root tree's sha.
@@ -38,7 +40,7 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
 
   // Seeds a branch with one commit holding `files` (path → text).
   function seed(files, { branch = 'main', author = { name: 'Ada', email: 'admin@test' } } = {}) {
-    const flat = new Map(Object.entries(files).map(([p, text]) => [p, put({ type: 'blob', data: Buffer.from(text).toString('base64') })]));
+    const flat = new Map(Object.entries(files).map(([p, text]) => [p, putBlob(Buffer.from(text))]));
     refs.set(branch, makeCommit({ message: 'init', tree: writeTree(flat), parents: [], author }));
   }
 
@@ -76,10 +78,10 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
       return json({ sha: m[1], tree: objects.get(m[1]).entries, truncated: false });
     }
     if ((m = path.match(/^\/git\/blobs\/(\w+)$/))) return objects.get(m[1])?.type === 'blob' ? json({ sha: m[1], content: objects.get(m[1]).data, encoding: 'base64' }) : json({}, 404);
-    if (path === '/git/blobs' && method === 'POST') return json({ sha: put({ type: 'blob', data: body.content }) }, 201);
+    if (path === '/git/blobs' && method === 'POST') return json({ sha: putBlob(Buffer.from(body.content, body.encoding === 'base64' ? 'base64' : 'utf8')) }, 201);
     if (path === '/git/trees' && method === 'POST') {
       const flat = flatten(body.base_tree);
-      for (const e of body.tree) { if (e.sha === null) flat.delete(e.path); else flat.set(e.path, e.sha); }
+      for (const e of body.tree) { if (e.sha === null) flat.delete(e.path); else flat.set(e.path, e.content != null ? putBlob(Buffer.from(e.content, 'utf8')) : e.sha); }
       return json({ sha: writeTree(flat) }, 201);
     }
     if (path === '/git/commits' && method === 'POST') { const sha = makeCommit(body); return json(commitJSON(sha), 201); }

@@ -28,6 +28,10 @@ test('refuses a commit on a stale parent and keeps files outside the site', asyn
   const first = await storage.commit({ branch: 'main', parent, message: 'one', author: { name: 'A', email: 'a@test' }, changes: [{ path: 'new/c.json', data: bytes('c') }] });
   assert.equal(new TextDecoder().decode(await storage.read(first.sha, 'new/c.json')), 'c');
   assert.equal(first.blobs['new/c.json'], (await storage.tree(first.sha)).find((e) => e.path === 'new/c.json').sha);
+  assert.ok(!hub.requests.some((r) => r.startsWith('POST') && r.includes('/git/blobs')), 'text needs no request of its own');
+  const image = Uint8Array.from([0xff, 0xd8, 0xff]);
+  const second = await storage.commit({ branch: 'main', parent: first.sha, message: 'image', author: { name: 'A', email: 'a@test' }, changes: [{ path: 'x.jpg', data: image }] });
+  assert.deepEqual(await storage.read(second.sha, 'x.jpg'), image);
   await assert.rejects(storage.commit({ branch: 'main', parent, message: 'two', author: { name: 'A', email: 'a@test' }, changes: [{ path: 'a.json', data: null }] }), { status: 409 });
   assert.equal(hub.fileAt('main', 'b.txt'), 'root');
   assert.equal(hub.fileAt('main', 'site/a.json'), '{}');

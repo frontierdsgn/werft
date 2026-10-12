@@ -17,11 +17,14 @@ async function setup(env = {}) {
   });
   const hooks = [];
   const request = (url, init) => (url.startsWith(hub.api) ? hub.fetch(url, init) : (hooks.push(url), new Response('{}')));
-  const onRequest = pagesFunction({ site, theme, fetch: request });
   const assets = { fetch: async (url) => (new URL(url).pathname === '/sub/_werft/build.json' ? Response.json({ built_at: '2020-01-01T00:00:00Z' }) : new Response('', { status: 404 })) };
   const fullEnv = { WERFT_SECRET: 's'.repeat(32), GITHUB_TOKEN: 't', WERFT_REPO: `${hub.owner}/${hub.repo}`, WERFT_DIR: 'web', ASSETS: assets, ...env };
-  const call = (path, init) => onRequest({ request: new Request(`https://x.pages.dev${path}`, init), env: fullEnv });
-  return { call, hooks };
+  // Each instance starts with empty caches, like a new Workers isolate.
+  const instance = () => {
+    const onRequest = pagesFunction({ site, theme, fetch: request });
+    return (path, init) => onRequest({ request: new Request(`https://x.pages.dev${path}`, init), env: fullEnv });
+  };
+  return { call: instance(), instance, hooks, hub };
 }
 
 test('signs in against the users file in the site directory', async () => {
@@ -46,4 +49,21 @@ test('explains missing configuration', async () => {
   const response = await call('/api/werft/status');
   assert.equal(response.status, 500);
   assert.match((await response.json()).message, /WERFT_REPO/);
+});
+
+test('a save stays within the free plan limit of 50 outgoing requests', async () => {
+  const { call, instance, hub } = await setup();
+  const { access_token: token } = await (await call('/api/werft/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'admin@test', password: 'admin-password' }) })).json();
+  const upload = (n) => instance()('/api/werft/api/v1/repos/werft/site/contents', {
+    method: 'POST', headers: { authorization: `token ${token}`, 'content-type': 'application/json' },
+    // Binary files: each needs its own request to GitHub.
+    body: JSON.stringify({ branch: 'main', message: 'upload', files: Array.from({ length: n }, (_, i) => ({ operation: 'create', path: `assets/img/${n}-${i}.jpg`, content: Buffer.from([0xff, 0xd8, i]).toString('base64') })) }),
+  });
+  const before = hub.requests.length;
+  assert.equal((await upload(30)).status, 201);
+  const used = hub.requests.length - before;
+  assert.ok(used <= 50, `${used} requests`);
+  const refused = await upload(31);
+  assert.equal(refused.status, 413);
+  assert.match((await refused.json()).message, /höchstens 30/);
 });
