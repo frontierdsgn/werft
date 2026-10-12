@@ -1,6 +1,6 @@
 {
   "name": "werft",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Git-based, host-independent CMS core: static build, theme API, admin (Sveltia CMS) and auth gateway.",
   "type": "module",
   "license": "MIT",
