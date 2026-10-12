@@ -33,3 +33,13 @@ test('refuses a commit on a stale parent and keeps files outside the site', asyn
   assert.equal(hub.fileAt('main', 'site/a.json'), '{}');
   await assert.rejects(storage.head('nope'), { status: 404 });
 });
+
+test('reads many files with one request', async () => {
+  const { storage, hub } = setup();
+  const { sha } = await storage.head('main');
+  await storage.tree(sha);
+  const before = hub.requests.length;
+  const files = await storage.readMany(sha, ['a.json', 'nope.json', 'a.json']);
+  assert.deepEqual(files.map((b) => b && new TextDecoder().decode(b)), ['{}', null, '{}']);
+  assert.deepEqual(hub.requests.slice(before), ['POST /graphql']);
+});

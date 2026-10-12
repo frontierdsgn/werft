@@ -48,6 +48,18 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
     const u = new URL(url);
     const method = init.method ?? 'GET';
     requests.push(`${method} ${u.pathname}${u.search}`);
+    if (u.pathname === '/graphql' && method === 'POST') {
+      // Answers the blob queries githubStorage.readMany sends: variable eN → alias fN.
+      const { variables } = JSON.parse(init.body);
+      const result = {};
+      for (const [key, expression] of Object.entries(variables)) {
+        if (!/^e\d+$/.test(key)) continue;
+        const [commit, ...rest] = expression.split(':');
+        const sha = objects.get(commit) && flatten(objects.get(commit).tree).get(rest.join(':'));
+        result[`f${key.slice(1)}`] = sha ? { text: Buffer.from(objects.get(sha).data, 'base64').toString(), isBinary: false, isTruncated: false } : null;
+      }
+      return json({ data: { repository: result } });
+    }
     const base = `/repos/${owner}/${repo}`;
     if (!u.pathname.startsWith(base) || !init.headers?.authorization) return json({ message: 'Not Found' }, 404);
     const path = u.pathname.slice(base.length);

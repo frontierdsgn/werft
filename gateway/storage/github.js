@@ -14,8 +14,8 @@ export function githubStorage({ owner, repo, token, dir = '', api = 'https://api
   const trees = new Map();
   const blobs = new Map();
 
-  async function gh(path, { method = 'GET', body } = {}) {
-    const response = await request(`${api}/repos/${owner}/${repo}${path}`, {
+  async function gh(path, { method = 'GET', body, root = `/repos/${owner}/${repo}` } = {}) {
+    const response = await request(`${api}${root}${path}`, {
       method,
       headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'werft', ...(body && { 'content-type': 'application/json' }) },
       body: body && JSON.stringify(body),
@@ -68,6 +68,27 @@ export function githubStorage({ owner, repo, token, dir = '', api = 'https://api
     return blobs.get(entry.sha);
   }
 
+  // Many files in one GraphQL request (Cloudflare's free plan allows 50 outgoing requests per
+  // invocation, and the admin loads up to 50 files at once). Binary or very large files fall back
+  // to one REST request each.
+  async function readMany(sha, paths) {
+    const files = await tree(sha);
+    const entries = paths.map((p) => files.find((e) => e.path === p) ?? null);
+    const missing = [...new Set(entries.filter((e) => e && !blobs.has(e.sha)).map((e) => e.path))];
+    for (let i = 0; i < missing.length; i += 100) {
+      const chunk = missing.slice(i, i + 100);
+      const variables = { owner, name: repo, ...Object.fromEntries(chunk.map((p, j) => [`e${j}`, `${sha}:${full(p)}`])) };
+      const query = `query(${['$owner: String!', '$name: String!', ...chunk.map((_, j) => `$e${j}: String!`)].join(', ')}) { repository(owner: $owner, name: $name) { ${chunk.map((_, j) => `f${j}: object(expression: $e${j}) { ... on Blob { text isBinary isTruncated } }`).join(' ')} } }`;
+      const { data } = await gh('/graphql', { method: 'POST', body: { query, variables }, root: '' });
+      if (data.errors) throw new Error(`GitHub GraphQL: ${data.errors[0].message}`);
+      chunk.forEach((p, j) => {
+        const blob = data.data.repository[`f${j}`];
+        if (blob && blob.text != null && !blob.isBinary && !blob.isTruncated) blobs.set(entries.find((e) => e?.path === p).sha, new TextEncoder().encode(blob.text));
+      });
+    }
+    return Promise.all(entries.map((e) => (e ? read(sha, e.path) : null)));
+  }
+
   async function commit({ branch, parent, message, author, changes }) {
     const base = await commitObject(parent);
     const entries = await Promise.all(changes.map(async ({ path, data }) => {
@@ -106,5 +127,5 @@ export function githubStorage({ owner, repo, token, dir = '', api = 'https://api
     return page.data.at(-1)?.commit.author.email ?? null;
   }
 
-  return { kind: 'github', head, tree, read, commit, log, creator };
+  return { kind: 'github', head, tree, read, readMany, commit, log, creator };
 }

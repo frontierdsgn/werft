@@ -131,6 +131,8 @@ export function createGateway(options) {
     return (await storage.tree(sha)).filter((e) => visible(e.path));
   }
 
+  const readMany = (sha, paths) => (storage.readMany ? storage.readMany(sha, paths) : Promise.all(paths.map((p) => storage.read(sha, p))));
+
   function profile(user) {
     return { id: numericId(user.email), login: user.email, login_name: user.email, full_name: user.name ?? user.email, email: user.email, avatar_url: avatar(user.name ?? user.email), html_url: '', is_admin: user.role === 'administrator', werft_role: user.role };
   }
@@ -218,12 +220,13 @@ export function createGateway(options) {
       const sha = await resolveRef(q.get('ref'));
       const files = await treeAt(sha);
       const { files: paths = [] } = await request.json();
-      return json(await Promise.all(paths.map(async (p) => {
-        const entry = files.find((f) => f.path === p);
+      const entries = paths.map((p) => files.find((f) => f.path === p) ?? null);
+      const contents = await readMany(sha, entries.filter(Boolean).map((e) => e.path));
+      return json(entries.map((entry) => {
         if (!entry) return null;
-        const bytes = await storage.read(sha, p);
-        return { name: p.split('/').pop(), path: p, sha: entry.sha, type: 'file', size: entry.size, encoding: 'base64', content: toBase64(bytes) };
-      })));
+        const bytes = contents.shift();
+        return { name: entry.path.split('/').pop(), path: entry.path, sha: entry.sha, type: 'file', size: entry.size, encoding: 'base64', content: toBase64(bytes) };
+      }));
     }
     if (sub.startsWith('/raw/')) {
       const path = decodeURIComponent(sub.slice(5));
@@ -301,10 +304,11 @@ export function createGateway(options) {
   // when an entry's publish date has passed since the last build.
   async function tick(url) {
     const head = await storage.head(branch);
-    const files = await treeAt(head.sha);
+    const files = (await treeAt(head.sha)).filter((f) => f.path.startsWith(`${site.contentDir}/`));
+    const texts = new Map((await readMany(head.sha, files.map((f) => f.path))).map((b, i) => [files[i].path, b && decoder.decode(b)]));
     const store = {
       list: async (dir) => files.filter((f) => f.path.startsWith(`${dir}/`)).map((f) => f.path.slice(dir.length + 1)),
-      readText: async (p) => { const b = await storage.read(head.sha, p); if (!b) throw Object.assign(new Error(p), { status: 404 }); return decoder.decode(b); },
+      readText: async (p) => { if (texts.get(p) == null) throw Object.assign(new Error(p), { status: 404 }); return texts.get(p); },
     };
     const content = await loadContent({ site: { contentDir: site.contentDir }, theme: { postType: site.postType ? { name: site.postType } : undefined }, store });
     const entries = [...content.pages, ...content.posts];
