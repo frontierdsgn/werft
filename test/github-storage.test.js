@@ -1,7 +1,10 @@
-// GitHub storage details the gateway contract does not reach: paged history, conflicts, branches.
+// GitHub storage details the gateway contract does not reach: paged history, conflicts, branches,
+// GitHub App tokens.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { githubStorage } from '../gateway/storage/github.js';
+import { githubApp } from '../gateway/storage/github-app.js';
 import { fakeGitHub } from './fake-github.js';
 
 const setup = () => {
@@ -46,4 +49,44 @@ test('reads many files with one request', async () => {
   const files = await storage.readMany(sha, ['a.json', 'nope.json', 'a.json']);
   assert.deepEqual(files.map((b) => b && new TextDecoder().decode(b)), ['{}', null, '{}']);
   assert.deepEqual(hub.requests.slice(before), ['POST /graphql']);
+});
+
+test('reuses a GitHub App token until five minutes before it expires', async () => {
+  const keys = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+  let now = Date.now();
+  const hub = fakeGitHub({ app: { id: 42, slug: 'werft', publicKey: keys.publicKey }, now: () => now });
+  // Line breaks pasted as spaces still give a usable key.
+  const app = (clock) => githubApp({ appId: 42, privateKey: keys.privateKey.replace(/\n/g, ' '), owner: hub.owner, repo: hub.repo, api: hub.api, fetch: hub.fetch, now: clock });
+  const auth = app(() => now);
+  const [first, same] = await Promise.all([auth(), auth()]);
+  assert.equal(same.token, first.token);
+  now += 54 * 60 * 1000;
+  assert.equal((await auth()).token, first.token);
+  now += 2 * 60 * 1000;
+  assert.notEqual((await auth()).token, first.token);
+  assert.deepEqual(hub.requests.filter((r) => !r.startsWith('POST /app/')), ['GET /repos/o/r/installation', 'GET /users/werft%5Bbot%5D'], 'installation and bot are looked up once');
+  assert.equal(hub.tokens.size, 2);
+  // GitHub refuses a JWT from a clock that runs ahead.
+  await assert.rejects(app(() => now + 15 * 60 * 1000)(), /401/);
+});
+
+test('finds the GitHub App again after it was reinstalled', async () => {
+  const keys = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+  let now = Date.now();
+  const hub = fakeGitHub({ app: { id: 42, slug: 'werft', publicKey: keys.publicKey }, now: () => now });
+  const auth = githubApp({ appId: 42, privateKey: keys.privateKey, owner: hub.owner, repo: hub.repo, api: hub.api, fetch: hub.fetch, now: () => now });
+  await auth();
+  hub.reinstall();
+  now += 56 * 60 * 1000;
+  await assert.rejects(auth(), /404/);
+  assert.ok((await auth()).token);
+});
+
+test('explains a PKCS#1 key and a repository without the GitHub App', async () => {
+  const keys = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+  const hub = fakeGitHub({ app: { id: 42, slug: 'werft', publicKey: keys.publicKey } });
+  const app = (privateKey, repo) => githubApp({ appId: 42, privateKey, owner: hub.owner, repo, api: hub.api, fetch: hub.fetch })();
+  const pkcs1 = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs1', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } }).privateKey;
+  await assert.rejects(app(pkcs1, hub.repo), /openssl pkcs8 -topk8/);
+  await assert.rejects(app(keys.privateKey, 'other'), /not installed on o\/other/);
 });

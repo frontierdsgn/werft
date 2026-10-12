@@ -2,7 +2,9 @@
 // is one commit made with the Git data API; the branch only moves forward, so a concurrent save
 // fails instead of overwriting. Paths are relative to `dir`, the site's directory in the repository.
 //
-// The token needs "Contents: read and write" on that one repository (fine-grained token).
+// The token needs "Contents: read and write" on that one repository: a fine-grained token, or
+// `auth`, a function resolving to { token, committer } such as githubApp (./github-app.js) returns.
+// The committer, if given, makes the commits; the editor is always the author.
 
 const decodeBase64 = (text) => Uint8Array.from(atob(text.replace(/\s/g, '')), (c) => c.charCodeAt(0));
 // Text goes into the tree request itself; only other files need a request each.
@@ -18,7 +20,7 @@ async function blobId(bytes) {
 }
 const encodeBase64 = (bytes) => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
 
-export function githubStorage({ owner, repo, token, dir = '', api = 'https://api.github.com', fetch: request = globalThis.fetch.bind(globalThis) }) {
+export function githubStorage({ owner, repo, token, auth = async () => ({ token }), dir = '', api = 'https://api.github.com', fetch: request = globalThis.fetch.bind(globalThis) }) {
   const prefix = dir.replace(/^\/+|\/+$/g, '');
   const full = (p) => (prefix ? `${prefix}/${p}` : p);
   const commits = new Map();
@@ -26,9 +28,10 @@ export function githubStorage({ owner, repo, token, dir = '', api = 'https://api
   const blobs = new Map();
 
   async function gh(path, { method = 'GET', body, root = `/repos/${owner}/${repo}` } = {}) {
+    const { token: bearer } = await auth();
     const response = await request(`${api}${root}${path}`, {
       method,
-      headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'werft', ...(body && { 'content-type': 'application/json' }) },
+      headers: { authorization: `Bearer ${bearer}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'werft', ...(body && { 'content-type': 'application/json' }) },
       body: body && JSON.stringify(body),
     });
     if (!response.ok) {
@@ -111,7 +114,8 @@ export function githubStorage({ owner, repo, token, dir = '', api = 'https://api
     }));
     const { data: newTree } = await gh('/git/trees', { method: 'POST', body: { base_tree: base.tree.sha, tree: entries.map(({ id, ...e }) => e) } });
     const date = new Date().toISOString();
-    const { data: created } = await gh('/git/commits', { method: 'POST', body: { message, tree: newTree.sha, parents: [parent], author: { ...author, date } } });
+    const { committer } = await auth();
+    const { data: created } = await gh('/git/commits', { method: 'POST', body: { message, tree: newTree.sha, parents: [parent], author: { ...author, date }, ...(committer && { committer: { ...committer, date } }) } });
     try {
       await gh(`/git/refs/heads/${encodeURIComponent(branch)}`, { method: 'PATCH', body: { sha: created.sha, force: false } });
     } catch (e) {

@@ -1,8 +1,10 @@
 // An in-memory stand-in for the parts of GitHub's REST API that githubStorage uses: refs, the Git
-// data API (blobs, trees, commits) and the commit list with path filter and pagination.
-import { createHash } from 'node:crypto';
+// data API (blobs, trees, commits) and the commit list with path filter and pagination. With `app`
+// ({ id, slug, publicKey }), it is a GitHub App installed on the repository: it checks the app's
+// JWTs, issues installation tokens and accepts only those on the repository. `now` is its clock.
+import { createHash, verify } from 'node:crypto';
 
-export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.test' } = {}) {
+export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.test', app = null, tokenTtl = 3600, now = Date.now } = {}) {
   const objects = new Map();
   const refs = new Map();
   const put = (object) => { const sha = createHash('sha1').update(JSON.stringify(object)).digest('hex'); objects.set(sha, object); return sha; };
@@ -31,9 +33,9 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
     return out;
   }
 
-  function makeCommit({ message, tree, parents, author }) {
+  function makeCommit({ message, tree, parents, author, committer = author }) {
     const date = author.date ?? new Date().toISOString();
-    return put({ type: 'commit', message, tree, parents, author: { ...author, date }, committer: { ...author, date }, n: objects.size });
+    return put({ type: 'commit', message, tree, parents, author: { ...author, date }, committer: { ...committer, date: committer.date ?? date }, n: objects.size });
   }
 
   const commitJSON = (sha) => { const c = objects.get(sha); return { sha, message: c.message, tree: { sha: c.tree }, parents: c.parents.map((p) => ({ sha: p })), author: c.author, committer: c.committer }; };
@@ -46,10 +48,42 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
 
   const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', ...headers } });
 
+  // GitHub App: the issued installation tokens (token → { repositories, permissions, expires }).
+  const tokens = new Map();
+  const bearer = (init) => init.headers?.authorization?.replace(/^Bearer /, '');
+  let installation = 7;
+  // A JWT signed with the app's key, issued by the app, not issued in the future, expiring within
+  // the next 10 minutes.
+  const validJwt = (init) => {
+    const [header, payload, signature] = (bearer(init) ?? '').split('.');
+    if (!signature || !verify('sha256', Buffer.from(`${header}.${payload}`), app.publicKey, Buffer.from(signature, 'base64url'))) return false;
+    const { iss, iat, exp } = JSON.parse(Buffer.from(payload, 'base64url'));
+    const t = now() / 1000;
+    return JSON.parse(Buffer.from(header, 'base64url')).alg === 'RS256' && iss === String(app.id) && iat <= t && exp > t && exp <= t + 600;
+  };
+  const validToken = (init) => { const t = tokens.get(bearer(init)); return !!t && t.expires > now(); };
+  const authorized = (init) => (app ? validToken(init) : !!init.headers?.authorization);
+
   async function fetch(url, init = {}) {
     const u = new URL(url);
     const method = init.method ?? 'GET';
     requests.push(`${method} ${u.pathname}${u.search}`);
+    if (app && /^\/repos\/[^/]+\/[^/]+\/installation$/.test(u.pathname)) {
+      if (!validJwt(init)) return json({ message: 'Bad credentials' }, 401);
+      return u.pathname === `/repos/${owner}/${repo}/installation` ? json({ id: installation, app_id: app.id, app_slug: app.slug }) : json({ message: 'Not Found' }, 404);
+    }
+    const tokenFor = u.pathname.match(/^\/app\/installations\/(\d+)\/access_tokens$/)?.[1];
+    if (app && tokenFor && method === 'POST') {
+      if (!validJwt(init)) return json({ message: 'Bad credentials' }, 401);
+      if (Number(tokenFor) !== installation) return json({ message: 'Not Found' }, 404);
+      const { repositories, permissions } = JSON.parse(init.body);
+      const token = `ghs_${tokens.size + 1}`;
+      const expires = now() + tokenTtl * 1000;
+      tokens.set(token, { repositories, permissions, expires });
+      return json({ token, expires_at: new Date(expires).toISOString().replace(/\.\d+Z$/, 'Z'), permissions, repository_selection: 'selected' }, 201);
+    }
+    if (app && u.pathname === `/users/${encodeURIComponent(`${app.slug}[bot]`)}`) return validToken(init) ? json({ login: `${app.slug}[bot]`, id: 9000, type: 'Bot' }) : json({ message: 'Bad credentials' }, 401);
+    if (!authorized(init)) return json({ message: 'Bad credentials' }, 401);
     if (u.pathname === '/graphql' && method === 'POST') {
       // Answers the blob queries githubStorage.readMany sends: variable eN → alias fN.
       const { variables } = JSON.parse(init.body);
@@ -63,7 +97,7 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
       return json({ data: { repository: result } });
     }
     const base = `/repos/${owner}/${repo}`;
-    if (!u.pathname.startsWith(base) || !init.headers?.authorization) return json({ message: 'Not Found' }, 404);
+    if (!u.pathname.startsWith(base)) return json({ message: 'Not Found' }, 404);
     const path = u.pathname.slice(base.length);
     const body = init.body && JSON.parse(init.body);
     let m;
@@ -113,5 +147,7 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
   }
 
   const fileAt = (branch, path) => { const sha = flatten(objects.get(refs.get(branch)).tree).get(path); return sha && Buffer.from(objects.get(sha).data, 'base64').toString(); };
-  return { fetch, seed, fileAt, requests, owner, repo, api };
+  // The app is uninstalled and installed again: a new installation id.
+  const reinstall = () => { installation += 1; };
+  return { fetch, seed, fileAt, headCommit: (branch) => objects.get(refs.get(branch)), tokens, reinstall, requests, owner, repo, api };
 }

@@ -37,7 +37,8 @@ werft is version 0.2.0, licensed MIT. The admin is [Sveltia CMS](https://github.
   stores it through a storage driver. It uses only the Fetch API and Web Crypto, so the same code
   runs on Node and Cloudflare.
 - **Storage drivers**: [git.js](gateway/storage/git.js) commits to a local checkout;
-  [github.js](gateway/storage/github.js) commits through GitHub's REST API (GraphQL for bulk reads).
+  [github.js](gateway/storage/github.js) commits through GitHub's REST API (GraphQL for bulk reads),
+  signed in as a GitHub App ([github-app.js](gateway/storage/github-app.js)) or with a token.
 - **Build** ([lib/build.js](lib/build.js)): isomorphic; the CLI builds the site, and the admin uses
   the same code for its live preview, so the preview is the published page.
 - **Adapters**: [node.js](adapters/node.js) (`werft dev` / `werft serve`),
@@ -158,12 +159,15 @@ triggers a Cloudflare build.
 1. Pages → Create → Connect to Git → choose the repository.
 2. Build settings: root directory = the site's directory (e.g. `classic`), build command
    `npm run build`, output directory `_site`. Environment variable `NODE_VERSION` = `22`.
-3. Environment variables (Production; mark the first two as secrets):
+3. Environment variables (Production; mark `WERFT_SECRET`, `GITHUB_APP_PRIVATE_KEY` and
+   `GITHUB_TOKEN` as secrets):
 
    | Variable | Value |
    |---|---|
    | `WERFT_SECRET` | output of `npx werft secret` |
-   | `GITHUB_TOKEN` | fine-grained token, repository access to this one repository, permission "Contents: Read and write" |
+   | `GITHUB_APP_ID` | the werft GitHub App's client ID (its app ID works too), see [GitHub App](#github-app) |
+   | `GITHUB_APP_PRIVATE_KEY` | the app's private key, converted to PKCS#8 |
+   | `GITHUB_TOKEN` | instead of the app: fine-grained token, repository access to this one repository, permission "Contents: Read and write" |
    | `WERFT_REPO` | `owner/repository` |
    | `WERFT_DIR` | the site's directory in the repository (e.g. `classic`), empty for the root |
    | `WERFT_BRANCH` | production branch, default `main` |
@@ -173,12 +177,33 @@ triggers a Cloudflare build.
 
 4. Deploy, open `https://<project>.pages.dev/admin/`, sign in with a user from `.werft/users.json`.
 
-Fine-grained tokens expire; renew the token before its expiry date or saving stops working.
+With both set, the app is used. Fine-grained tokens expire; renew the token before its expiry date
+or saving stops working.
+
+#### GitHub App
+
+frontierdsgn owns one GitHub App, `werft`, for all sites. Commits made through it show `werft[bot]`
+as committer and the editor as author; editors still need no GitHub account.
+
+1. Create it once (organization settings → Developer settings → GitHub Apps → New): permission
+   "Repository contents: Read and write" and nothing else, webhook off, installable only on this
+   account unless clients install it on their own organizations ("Any account").
+2. Generate a private key. GitHub downloads it as PKCS#1; Web Crypto needs PKCS#8:
+   `openssl pkcs8 -topk8 -nocrypt -in werft.private-key.pem -out werft.pkcs8.pem`. Its content
+   goes into `GITHUB_APP_PRIVATE_KEY`; keep the files out of every repository.
+3. Install the app on the site repositories. One installation on frontierdsgn covers its sites
+   (choose "All repositories" or add each new one); a client with its own organization installs
+   the app there.
+
+The gateway signs a JWT with the key, finds the installation on `WERFT_REPO` and gets a token
+that lasts an hour and is limited to that repository and contents. It keeps the token until five
+minutes before it expires; a new one costs three requests.
 
 Limits of the free plan that apply: Pages Functions share the Workers free plan's daily request
 quota, with 50 outgoing requests and 10 ms CPU time per request. The gateway reads up to 100 content
 files in one GraphQL request and sends text files with the commit; each image costs one request, so
-one save takes at most 30 files (30 images measured at 39 requests against a stand-in GitHub). Signing in hashes the password with
+one save takes at most 30 files (30 images measured at 39 requests against a stand-in GitHub, 42
+with the GitHub App's token requests). Signing in hashes the password with
 PBKDF2 (100,000 iterations, the most Workers allow); on this machine that takes about 22 ms in Node.
 Whether Cloudflare counts it against the 10 ms limit is unknown: after the first deploy, sign in and
 check the Functions log for CPU-limit errors. If it fails, lower the iterations for a user
@@ -257,4 +282,5 @@ Dates are entered in the editor's time zone and stored in UTC.
 - Sveltia's media dialog lists stock photo services (Pexels, Pixabay, Unsplash); they only work
   with an API key the editor enters.
 - On Cloudflare each call of `/api/werft/tick` reads the content from GitHub with a handful of API
-  requests, which count against the token's rate limit; a cron every few minutes is fine.
+  requests, which count against the token's or the app installation's rate limit; a cron every
+  few minutes is fine.

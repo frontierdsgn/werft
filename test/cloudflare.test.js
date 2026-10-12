@@ -1,16 +1,20 @@
 // The Cloudflare Pages adapter: configuration from the environment, the GitHub storage below the
-// site directory, the deployed build as "last build" and the deploy hook for scheduled entries.
+// site directory, the deployed build as "last build", the deploy hook for scheduled entries, and
+// GitHub access through a GitHub App or a token.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { pagesFunction } from '../adapters/cloudflare.js';
 import { hashPassword, serializeUsers } from '../gateway/auth.js';
 import { fakeGitHub } from './fake-github.js';
 
 const site = { name: 'Test', content: 'content', base: 'sub' };
 const theme = { postType: { name: 'events' } };
+const keys = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+const appEnv = { GITHUB_TOKEN: '', GITHUB_APP_ID: 'Iv23liwerft', GITHUB_APP_PRIVATE_KEY: keys.privateKey };
 
 async function setup(env = {}) {
-  const hub = fakeGitHub({ api: 'https://api.github.com' });
+  const hub = fakeGitHub({ api: 'https://api.github.com', ...(env.GITHUB_APP_ID && { app: { id: env.GITHUB_APP_ID, slug: 'werft', publicKey: keys.publicKey } }) });
   hub.seed({
     'web/.werft/users.json': serializeUsers([{ email: 'admin@test', name: 'Ada', role: 'administrator', password: await hashPassword('admin-password', 1000) }]),
     'web/content/events/due.json': JSON.stringify({ title: 'Due', status: 'published', publish_date: '2020-01-02T00:00:00Z' }),
@@ -51,8 +55,29 @@ test('explains missing configuration', async () => {
   assert.match((await response.json()).message, /WERFT_REPO/);
 });
 
+test('saves through the GitHub App as its bot, with the editor as author', async () => {
+  const { call, hub } = await setup(appEnv);
+  const { access_token: token } = await (await call('/api/werft/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'admin@test', password: 'admin-password' }) })).json();
+  const saved = await call('/api/werft/api/v1/repos/werft/site/contents', {
+    method: 'POST', headers: { authorization: `token ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ branch: 'main', message: 'edit', files: [{ operation: 'create', path: 'content/pages/a.json', content: Buffer.from('{"title":"A","status":"published"}').toString('base64') }] }),
+  });
+  assert.equal(saved.status, 201);
+  assert.equal(hub.fileAt('main', 'web/content/pages/a.json'), '{"title":"A","status":"published"}');
+  const { author, committer } = hub.headCommit('main');
+  assert.deepEqual([author.name, author.email], ['Ada', 'admin@test']);
+  assert.deepEqual([committer.name, committer.email], ['werft[bot]', '9000+werft[bot]@users.noreply.github.com']);
+  assert.deepEqual([...hub.tokens.values()].map(({ repositories, permissions }) => ({ repositories, permissions })), [{ repositories: [hub.repo], permissions: { contents: 'write' } }], 'one token for the whole session, limited to the repository');
+});
+
+test('the GitHub App takes over from a token that is still set', async () => {
+  const { call } = await setup({ ...appEnv, GITHUB_TOKEN: 'old' });
+  assert.equal((await call('/api/werft/status')).status, 200);
+});
+
 test('a save stays within the free plan limit of 50 outgoing requests', async () => {
-  const { call, instance, hub } = await setup();
+  // With the GitHub App: a new isolate first needs three requests for its token.
+  const { call, instance, hub } = await setup(appEnv);
   const { access_token: token } = await (await call('/api/werft/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'admin@test', password: 'admin-password' }) })).json();
   const upload = (n) => instance()('/api/werft/api/v1/repos/werft/site/contents', {
     method: 'POST', headers: { authorization: `token ${token}`, 'content-type': 'application/json' },

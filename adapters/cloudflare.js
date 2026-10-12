@@ -10,7 +10,11 @@
 //
 // Environment (Pages project settings):
 //   WERFT_SECRET       random, at least 32 characters (secret; `werft secret` makes one)
-//   GITHUB_TOKEN       fine-grained token, "Contents: read and write" on the repository (secret)
+//   GITHUB_APP_ID      the GitHub App's client ID or app ID; the app has "Contents: read and write"
+//                      and is installed on the repository
+//   GITHUB_APP_PRIVATE_KEY  the app's private key as PKCS#8 PEM (secret; see gateway/storage/github-app.js)
+//   GITHUB_TOKEN       instead of the app: fine-grained token, "Contents: read and write" on the
+//                      repository (secret)
 //   WERFT_REPO         owner/repository
 //   WERFT_DIR          the site's directory in the repository ('' when it is the root)
 //   WERFT_BRANCH       production branch (default main)
@@ -19,20 +23,26 @@
 //   WERFT_GITHUB_API   optional, for GitHub Enterprise Server (default https://api.github.com)
 import { createGateway, gatewaySite } from '../gateway/core.js';
 import { githubStorage } from '../gateway/storage/github.js';
+import { githubApp } from '../gateway/storage/github-app.js';
 
 export function pagesFunction({ site, theme, fetch: request = (...args) => fetch(...args) }) {
   let gateway;
   const create = (env) => {
     const [owner, repo] = String(env.WERFT_REPO ?? '').split('/');
-    if (!owner || !repo || !env.GITHUB_TOKEN) throw new Error('Set WERFT_REPO (owner/repository) and GITHUB_TOKEN in the Pages project.');
+    const app = env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY;
+    if (!owner || !repo || !(app || env.GITHUB_TOKEN)) throw new Error('Set WERFT_REPO (owner/repository) and GITHUB_APP_ID with GITHUB_APP_PRIVATE_KEY, or GITHUB_TOKEN, in the Pages project.');
+    const api = env.WERFT_GITHUB_API || undefined;
     const base = site.base ? `/${site.base.replace(/^\/|\/$/g, '')}/` : '/';
     return createGateway({
-      storage: githubStorage({ owner, repo, token: env.GITHUB_TOKEN, dir: env.WERFT_DIR ?? '', api: env.WERFT_GITHUB_API || undefined, fetch: request }),
+      storage: githubStorage({
+        owner, repo, dir: env.WERFT_DIR ?? '', api, fetch: request,
+        ...(app ? { auth: githubApp({ appId: env.GITHUB_APP_ID, privateKey: env.GITHUB_APP_PRIVATE_KEY, owner, repo, api, fetch: request }) } : { token: env.GITHUB_TOKEN }),
+      }),
       secret: env.WERFT_SECRET,
       branch: env.WERFT_BRANCH || 'main',
       tickKey: env.WERFT_TICK_KEY || undefined,
-      // Each binary file is one GitHub request; with the gateway's own requests, 30 stay below the
-      // free plan's 50 per invocation.
+      // Each binary file is one GitHub request; with the gateway's own requests and the GitHub App's
+      // three for a new token, 30 stay below the free plan's 50 per invocation.
       maxFiles: 30,
       site: gatewaySite(site, theme),
       // The build the Pages project is serving right now.
