@@ -74,18 +74,19 @@ Tests: `npm test` in this directory (Node's test runner; the publish test needs 
 
 ## Setting up a new site
 
-A site is a directory with a `werft.config.js`, a theme and a `content/` folder. Copy the InselSalon
-site ([classic/](../../classic)) as a starting point; it shows every part.
+A site is a repository with a `werft.config.js`, a theme and a `content/` folder. The steps below
+show every part.
 
-1. **package.json**: depend on werft and add the scripts.
+1. **package.json**: depend on a tagged werft version and add the scripts.
    ```json
    { "type": "module", "scripts": { "build": "werft build", "dev": "werft dev" },
-     "dependencies": { "werft": "file:../packages/werft" } }
+     "dependencies": { "werft": "github:ORGNAME/werft#v0.1.0" } }
    ```
-   With a `file:` dependency, add `install-links=true` to the site's `.npmrc`: npm then installs a
-   copy of werft with its own dependencies, which a clean install on a build host needs. After
-   changing werft, reinstall it in the site: `rm -rf node_modules/werft && npm install`. A published
-   werft version (`"werft": "^0.1.0"`) needs neither.
+   A new werft version is a new tag; a site moves to it by changing the tag and running
+   `npm install`. To try an unreleased werft in a site, depend on a local checkout with
+   `"werft": "file:../werft"` and add `install-links=true` to the site's `.npmrc`: npm then
+   installs a copy of werft with its own dependencies. After changing werft, reinstall it in the
+   site: `rm -rf node_modules/werft && npm install`.
 2. **werft.config.js**:
    ```js
    export default {
