@@ -95,7 +95,8 @@ show every part.
      content: 'content',            // content directory
      mediaDirs: ['assets/img'],     // the first one receives uploads
      output: '_site',
-     base: '',                      // set when the site is served below a path, e.g. 'classic'
+     base: '',                      // set when the site is served below a path, e.g. 'salon'
+     passthrough: [{ from: '.', paths: ['alt'] }], // copied unchanged into the output
    };
    ```
 3. **Theme** (`theme/index.js`), a plain object:
