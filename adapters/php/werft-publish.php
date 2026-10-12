@@ -43,6 +43,16 @@ function safe_content(string $path, string $data): bool {
   return true;
 }
 
+// Whether writing or deleting $path stays in this directory: no symbolic link on the way, so a link
+// placed in the web space cannot redirect a write elsewhere.
+function contained(string $path): bool {
+  $root = realpath(__DIR__);
+  for ($p = $path; $p !== '.'; $p = dirname($p)) if (is_link(__DIR__ . '/' . $p)) return false;
+  for ($dir = dirname(__DIR__ . '/' . $path); !file_exists($dir); $dir = dirname($dir));
+  $real = realpath($dir);
+  return $real === $root || strpos($real, $root . '/') === 0;
+}
+
 function write_atomic(string $file, string $data): void {
   $dir = dirname($file);
   if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) throw new RuntimeException("Cannot create $dir");
@@ -67,19 +77,31 @@ try {
     case 'manifest':
       reply(200, ['files' => (object) manifest()]);
     case 'put':
+      $known = manifest();
+      $written = 0;
       foreach ($request['files'] ?? [] as $file) {
         $path = (string) ($file['path'] ?? '');
         $data = base64_decode((string) ($file['content'] ?? ''), true);
-        if (!safe_path($path) || $data === false || !safe_content($path, $data)) reply(422, ['message' => "Refused: $path"]);
-        write_atomic(__DIR__ . '/' . $path, $data);
+        if (!safe_path($path) || $data === false || !safe_content($path, $data) || !contained($path)) reply(422, ['message' => "Refused: $path"]);
+        $target = __DIR__ . '/' . $path;
+        // A file werft did not publish is only taken over when it already has the same content.
+        if (file_exists($target) && !isset($known[$path]) && (!is_file($target) || hash_file('sha256', $target) !== hash('sha256', $data))) {
+          if ($written) write_atomic(MANIFEST, "<?php return " . var_export($known, true) . ";\n");
+          reply(409, ['message' => "$path exists and was not published by werft; remove it from the web space first."]);
+        }
+        write_atomic($target, $data);
+        $known[$path] = hash('sha256', $data);
+        $written++;
       }
-      reply(200, ['written' => count($request['files'] ?? [])]);
+      // Recorded right away, so an interrupted publish can continue where it stopped.
+      write_atomic(MANIFEST, "<?php return " . var_export($known, true) . ";\n");
+      reply(200, ['written' => $written]);
     case 'delete':
       $known = manifest();
       $deleted = 0;
       foreach ($request['paths'] ?? [] as $path) {
         $path = (string) $path;
-        if (!isset($known[$path]) || !safe_path($path)) continue;
+        if (!isset($known[$path]) || !safe_path($path) || !contained($path)) continue;
         if (is_file(__DIR__ . '/' . $path) && unlink(__DIR__ . '/' . $path)) $deleted++;
         for ($dir = dirname($path); $dir !== '.' && @rmdir(__DIR__ . '/' . $dir); $dir = dirname($dir));
       }

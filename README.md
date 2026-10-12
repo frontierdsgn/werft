@@ -164,7 +164,9 @@ and pushed there:
 
 `werft publish` sends only changed files, signed with HMAC-SHA256 (requests older than 5 minutes are
 refused). The receiver only writes and deletes files it published itself, refuses PHP and other
-code files, and accepts `.htaccess` only with redirect lines. The admin is not published: editors
+code files, accepts `.htaccess` only with redirect lines and writes nothing through symbolic links.
+A file already in the web space with the same name and different content stops the publish:
+remove or rename it there first (identical files are taken over). The admin is not published: editors
 use the admin on the build host.
 
 With Cloudflare Pages as the build host, the domain points at IONOS, the admin stays at

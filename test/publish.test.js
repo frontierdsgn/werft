@@ -56,4 +56,11 @@ test('refuses bad signatures, paths outside the web space and code', { skip: !ha
   const deleteForeign = await signed(JSON.stringify({ action: 'delete', paths: ['foreign.html'] }));
   assert.equal((await deleteForeign.json()).deleted, 0);
   assert.equal(read('foreign.html'), 'not published by werft');
+  assert.equal((await put('foreign.html', 'replaced')).status, 409, 'files werft did not publish stay');
+  assert.equal(read('foreign.html'), 'not published by werft');
+  assert.equal((await put('foreign.html', 'not published by werft')).status, 200, 'unless they are the same');
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'werft-elsewhere-'));
+  fs.symlinkSync(elsewhere, path.join(web, 'linked'));
+  assert.equal((await put('linked/x.html', 'x')).status, 422, 'no writes through symbolic links');
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
 });
