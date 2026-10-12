@@ -13,6 +13,10 @@ export const ROLES = {
   contributor: { label: 'Mitarbeiter' },
 };
 
+// File types that count as media. Anything else (HTML, SVG, scripts) would run on the admin's origin
+// when opened, so only administrators may put it into a media folder.
+const MEDIA_TYPES = /\.(jpe?g|png|gif|webp|avif|pdf|mp4|webm|mp3|m4a|ogg)$/i;
+
 // What a repository path holds, relative to the site directory.
 export function classify(path, { contentDir = 'content', postType, mediaDirs = [] }) {
   if (path === '.werft' || path.startsWith('.werft/')) return 'private';
@@ -20,7 +24,7 @@ export function classify(path, { contentDir = 'content', postType, mediaDirs = [
   if (path.startsWith(`${contentDir}/settings/`)) return 'structure';
   if (postType && path.startsWith(`${contentDir}/${postType}/`)) return 'post';
   if (['pages', 'patterns', 'forms'].some((d) => path.startsWith(`${contentDir}/${d}/`))) return 'content';
-  if (mediaDirs.some((d) => path.startsWith(`${d}/`))) return 'media';
+  if (mediaDirs.some((d) => path.startsWith(`${d}/`)) && MEDIA_TYPES.test(path)) return 'media';
   return 'code';
 }
 

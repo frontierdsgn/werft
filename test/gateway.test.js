@@ -135,6 +135,10 @@ test('applies WordPress-style roles', async () => {
   assert.equal((await create(contrib, 'content/events/c.json', '{"title":"C","status":"published"}')).status, 403, 'contributors cannot publish');
   assert.equal((await create(contrib, 'content/events/c.json', '{"title":"C","status":"pending"}')).status, 201, 'contributors submit for review');
   assert.equal((await create(contrib, 'assets/img/x.png', 'x')).status, 403, 'contributors cannot upload');
+  assert.equal((await create(author, 'assets/img/photo.jpg', 'x')).status, 201, 'authors upload images');
+  for (const name of ['evil.html', 'evil.svg', 'evil.js', 'evil.jpg.html']) {
+    assert.equal((await create(author, `assets/img/${name}`, '<script>alert(1)</script>')).status, 403, `no ${name} as media`);
+  }
 });
 
 test('lets administrators manage users and revokes tokens of changed users', async () => {
