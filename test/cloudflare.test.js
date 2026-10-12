@@ -32,11 +32,12 @@ test('signs in against the users file in the site directory', async () => {
 });
 
 test('calls the deploy hook when a scheduled entry is due, if there is one', async () => {
-  const withHook = await setup({ WERFT_DEPLOY_HOOK: 'https://api.cloudflare.test/hook' });
-  assert.equal((await (await withHook.call('/api/werft/tick')).json()).rebuilt, true);
+  const withHook = await setup({ WERFT_DEPLOY_HOOK: 'https://api.cloudflare.test/hook', WERFT_TICK_KEY: 'k'.repeat(32) });
+  assert.equal((await withHook.call(`/api/werft/tick?key=${'x'.repeat(32)}`)).status, 401, 'a wrong key does not count');
+  assert.equal((await (await withHook.call(`/api/werft/tick?key=${'k'.repeat(32)}`)).json()).rebuilt, true);
   assert.deepEqual(withHook.hooks, ['https://api.cloudflare.test/hook']);
-  const without = await setup();
-  const result = await (await without.call('/api/werft/tick')).json();
+  const without = await setup({ WERFT_TICK_KEY: 'k'.repeat(32) });
+  const result = await (await without.call(`/api/werft/tick?key=${'k'.repeat(32)}`)).json();
   assert.deepEqual([result.rebuilt, result.due], [false, ['due']]);
 });
 

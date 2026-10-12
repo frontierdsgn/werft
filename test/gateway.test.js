@@ -170,13 +170,16 @@ test('asks for a rebuild when a scheduled entry falls due', async () => {
   const token = await signIn('admin@test', 'admin-password');
   const add = (slug, date) => call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'plan', files: [{ operation: 'create', path: `content/events/${slug}.json`, content: b64(JSON.stringify({ title: slug, status: 'published', publish_date: date })) }] } });
   await add('later', '2026-09-01T10:00:00Z');
-  let { data } = await call(`${ORIGIN}/api/werft/tick`);
+  assert.equal((await call(`${ORIGIN}/api/werft/tick`)).status, 401, 'not for anonymous callers');
+  let { data } = await call(`${ORIGIN}/api/werft/tick`, { token });
   assert.deepEqual([data.rebuilt, data.due, data.next_publish], [false, [], '2026-09-01T10:00:00Z']);
   await add('due', '2026-05-31T10:00:00Z');
   await add('old', '2025-12-31T10:00:00Z');
-  ({ data } = await call(`${ORIGIN}/api/werft/tick`));
+  ({ data } = await call(`${ORIGIN}/api/werft/tick`, { token }));
   assert.deepEqual([data.rebuilt, data.due], [true, ['due']], 'only entries due since the last build');
   assert.deepEqual(ticks.at(-1), ['due']);
+  ({ data } = await call(`${ORIGIN}/api/werft/tick`, { token }));
+  assert.deepEqual([data.rebuilt, data.pending, ticks.length], [false, true, 1], 'no second rebuild while the first runs');
 });
 
 test('completes the OAuth code flow with PKCE', async () => {

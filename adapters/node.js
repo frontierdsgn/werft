@@ -75,8 +75,10 @@ export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret
   const lastBuild = async () => {
     try { return JSON.parse(await fs.readFile(path.join(outDir, site.base ?? '', '_werft/build.json'), 'utf8')).built_at; } catch { return null; }
   };
+  // The server's own timer publishes scheduled entries; the key lets it call the tick.
+  const tickKey = crypto.randomUUID();
   const gateway = createGateway({
-    storage, secret, branch,
+    storage, secret, branch, tickKey,
     site: gatewaySite(site, theme),
     onCommit: (commit) => { rebuild(commit.message); },
     onTick: ({ due }) => rebuild(`scheduled: ${due.join(', ')}`),
@@ -107,6 +109,6 @@ export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret
     }
   });
   await new Promise((resolve) => server.listen(port, host, resolve));
-  const timer = tickMinutes > 0 && setInterval(() => gateway(new Request(`http://${host}:${port}/api/werft/tick`)).catch(() => {}), tickMinutes * 60000);
+  const timer = tickMinutes > 0 && setInterval(() => gateway(new Request(`http://${host}:${port}/api/werft/tick?key=${tickKey}`)).catch(() => {}), tickMinutes * 60000);
   return { server, rebuild, close: () => { if (timer) clearInterval(timer); server.close(); }, url: `http://${host}:${port}` };
 }

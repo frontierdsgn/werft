@@ -137,6 +137,7 @@ triggers a Cloudflare build.
    | `WERFT_DIR` | the site's directory in the repository (e.g. `classic`), empty for the root |
    | `WERFT_BRANCH` | production branch, default `main` |
    | `WERFT_DEPLOY_HOOK` | optional: a deploy hook URL (Settings → Builds → Deploy hooks), for scheduled publishing |
+   | `WERFT_TICK_KEY` | optional, secret: lets a cron service publish scheduled entries (see [Scheduling](#scheduling)) |
    | `WERFT_GITHUB_API` | optional: GitHub Enterprise Server API URL |
 
 4. Deploy, open `https://<project>.pages.dev/admin/`, sign in with a user from `.werft/users.json`.
@@ -193,12 +194,14 @@ the local checkout. Without `WERFT_SECRET`, sessions end when the server stops.
 An entry with status "Veröffentlicht" and a future "Veröffentlichen am" date is left out of the
 build until it is due. Publishing it changes no file, so something must rebuild the site after the
 date passes. The gateway's `/api/werft/tick` does that when an entry has fallen due since the last
-build; it is public and does nothing otherwise.
+build, once per due entry (again after 15 minutes if that build did not publish it), and does
+nothing otherwise. It needs a signed-in user or the tick key.
 
 - `werft serve` calls it every 5 minutes.
-- On Cloudflare Pages it needs `WERFT_DEPLOY_HOOK`, and something must call
-  `https://<site>/api/werft/tick`: every admin page load does; for an exact time, use an external
-  cron service or a Cloudflare Worker with a cron trigger that requests that URL.
+- On Cloudflare Pages it needs `WERFT_DEPLOY_HOOK`, and something must call it: every admin page
+  load does. For an exact time, set `WERFT_TICK_KEY` (e.g. the output of `npx werft secret`) and
+  let an external cron service or a Cloudflare Worker with a cron trigger request
+  `https://<site>/api/werft/tick?key=<WERFT_TICK_KEY>`.
 
 Dates are entered in the editor's time zone and stored in UTC.
 
@@ -219,5 +222,5 @@ Dates are entered in the editor's time zone and stored in UTC.
   (e.g. `"noindex": false`). The built HTML does not change.
 - Sveltia's media dialog lists stock photo services (Pexels, Pixabay, Unsplash); they only work
   with an API key the editor enters.
-- `/api/werft/tick` is public; on Cloudflare each call reads the content from GitHub with a handful
-  of API requests, which count against the token's rate limit.
+- On Cloudflare each call of `/api/werft/tick` reads the content from GitHub with a handful of API
+  requests, which count against the token's rate limit; a cron every few minutes is fine.

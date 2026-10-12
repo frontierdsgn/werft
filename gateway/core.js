@@ -38,7 +38,7 @@ async function sha256(text) {
 export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [] });
 
 // options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs }, owner, repo,
-//   onCommit?(commit), onTick?(), now?() }
+//   onCommit?(commit), onTick?(), tickKey?, now?() }
 export function createGateway(options) {
   const { storage, secret, branch = 'main', site, onCommit, onTick } = options;
   const owner = options.owner ?? 'werft';
@@ -313,8 +313,14 @@ export function createGateway(options) {
     return json({ users: next.map(publicUser) });
   }
 
-  // Publishes due scheduled entries by asking the host to rebuild. Anyone may call it: it only acts
-  // when an entry's publish date has passed since the last build.
+  // Due entries already handed to the host for a rebuild, so repeated calls (every admin page load)
+  // do not start one build after another while the first runs. A rebuild that did not happen is
+  // asked for again after RETRY_TICK.
+  let ticked = { key: '', at: 0 };
+  const RETRY_TICK = 15 * 60 * 1000;
+
+  // Publishes due scheduled entries by asking the host to rebuild once an entry's publish date has
+  // passed since the last build. Signed-in users and holders of options.tickKey may call it.
   async function tick(url) {
     const head = await storage.head(branch);
     const files = (await treeAt(head.sha)).filter((f) => f.path.startsWith(`${site.contentDir}/`));
@@ -329,9 +335,12 @@ export function createGateway(options) {
     const due = entries.filter((e) => e.publish_date && (e.status ?? 'published') === 'published'
       && Date.parse(e.publish_date) <= now() && (!lastBuild || Date.parse(e.publish_date) > Date.parse(lastBuild)));
     const next = entries.filter((e) => isScheduled(e, new Date(now()))).map((e) => e.publish_date).sort()[0] ?? null;
+    const key = JSON.stringify([lastBuild, due.map((e) => e.slug)]);
+    const pending = due.length > 0 && ticked.key === key && now() - ticked.at < RETRY_TICK;
     // onTick returns false when the host cannot rebuild on request.
-    const rebuilt = due.length > 0 && !!onTick && (await onTick({ due: due.map((e) => e.slug) })) !== false;
-    return json({ rebuilt, due: due.map((e) => e.slug), next_publish: next, last_build: lastBuild ?? null });
+    const rebuilt = due.length > 0 && !pending && !!onTick && (await onTick({ due: due.map((e) => e.slug) })) !== false;
+    if (rebuilt) ticked = { key, at: now() };
+    return json({ rebuilt, pending, due: due.map((e) => e.slug), next_publish: next, last_build: lastBuild ?? null });
   }
 
   return async function handle(request) {
@@ -346,10 +355,12 @@ export function createGateway(options) {
         const user = await signIn(email, password);
         return user ? json({ ...(await issueTokens(user)), user: publicUser(user) }) : error(401, 'E-Mail oder Passwort stimmt nicht.');
       }
-      if (path === '/tick') return await tick(url);
+      if (path === '/tick' && options.tickKey && url.searchParams.get('key')
+        && (await sha256(url.searchParams.get('key'))) === (await sha256(options.tickKey))) return await tick(url);
       if (path === '/status') return json({ ok: true, storage: storage.kind, branch, has_users: (await loadUsers()).users.length > 0 });
       const user = await authenticate(request);
       if (!user) return error(401, 'Bitte anmelden.');
+      if (path === '/tick') return await tick(url);
       if (path === '/me') return json({ ...publicUser(user), editable: editable(user.role), roles: ROLES });
       if (path === '/users') return await usersApi(request, user);
       if (path.startsWith('/api/v1/')) return await gitea(request, url, user, path.slice(7));
