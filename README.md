@@ -50,7 +50,7 @@ werft is version 0.1.0, licensed MIT. The admin is [Sveltia CMS](https://github.
 | Login at /admin, users, roles | Own e-mail/password logins, no GitHub account needed. Roles Administrator, Redakteur, Autor, Mitarbeiter with WordPress's rules ([roles.js](gateway/roles.js)), enforced by the gateway. Users page for administrators. |
 | Pages and posts | Pages built from sections (the theme's blocks), plus one post type per theme (e.g. events). Add, delete, reorder sections. |
 | Draft, pending review, publish, schedule | Status per entry; a publish date in the future schedules it (see [Scheduling](#scheduling)). Contributors are offered only "Entwurf" and "Zur Prüfung"; when the gateway refuses a change for the editor's role, the admin says so instead of "try again later". |
-| Visual editing, preview | Form editor beside a live preview rendered by the site's own theme. |
+| Visual editing, preview | Form editor beside a live preview rendered by the site's own theme. A post without a page of its own (no `renderPost` in the theme) is previewed marked on the page that lists it, else alone in the theme's listing section, else as a card of its fields. |
 | Media library, alt text | Sveltia's media library; images are fields with file, alt text and caption. |
 | Menus, site settings, SEO | Menu locations the theme declares; site settings; SEO title, description and noindex per page. |
 | Revisions | Every save is a git commit. The Versionen page compares any version with the current one by content (the key order and the `false` defaults the CMS writes are no changes) and restores it after asking. |

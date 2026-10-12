@@ -1,6 +1,6 @@
 // Live preview in the CMS: renders the entry being edited with the site's own theme, in the browser,
 // so the preview is the page as it will be published.
-import { createContext, mediaPaths, safeURL } from 'werft';
+import { createContext, mediaPaths, safeURL, html } from 'werft';
 import { api } from './session.js';
 
 const REPO = '/api/v1/repos/werft/site';
@@ -47,11 +47,69 @@ function pageFor(kind, entry, content, theme) {
     case 'forms': content.forms = replaceIn(content.forms, entry);
       return content.pages.find((p) => mentions(p.sections, content, 'form', entry.slug)) ?? content.pages.find((p) => p.slug === 'index');
     case 'site': content.settings = entry; return content.pages.find((p) => p.slug === 'index');
-    case 'menus': content.menus = entry; return content.pages.find((p) => p.slug === 'index');
-    default: // posts
-      content.posts = replaceIn(content.posts, { status: 'published', ...entry });
-      return content.pages.find((p) => p.slug === theme.postType?.previewPage) ?? content.pages.find((p) => p.slug === 'index');
+    default: // menus
+      content.menus = entry; return content.pages.find((p) => p.slug === 'index');
   }
+}
+
+// The element a page gains when a post is added (a in `shown`, missing in `hidden`): the first
+// child that differs, followed down until the added element itself.
+function addedElement(shown, hidden) {
+  let a = shown.body, b = hidden.body;
+  for (;;) {
+    const i = [...a.children].findIndex((child, n) => child.outerHTML !== b.children[n]?.outerHTML);
+    if (i < 0) return a === shown.body ? null : a;
+    const next = b.children[i];
+    if (!next || (a.children.length > b.children.length && a.children[i + 1]?.outerHTML === next.outerHTML)) return a.children[i];
+    a = a.children[i];
+    b = next;
+  }
+}
+
+const parse = (text) => new DOMParser().parseFromString(text, 'text/html');
+
+// A post as the site shows it, for any theme: its own page when the theme has post pages; else the
+// page that lists it, with the post marked; else the post alone in a block that lists posts; else
+// its data. Drafts and scheduled posts are shown as if published.
+function postPreview(entry, content, { site, theme, media }) {
+  const post = { ...entry, status: 'published', publish_date: undefined };
+  const { label, previewPage } = theme.postType;
+  const title = post.title || post.slug;
+  const others = content.posts.filter((p) => p.slug !== post.slug);
+  const withPost = replaceIn(others, post);
+  const contextWith = (posts) => createContext({ site, theme, content: { ...content, posts }, media, now: new Date(), preview: true });
+  const render = (posts, page) => theme.renderPage(page, contextWith(posts).for(page)).value;
+  if (theme.renderPost && theme.postType.url) return { html: theme.renderPost(post, contextWith(withPost).for(post)).value };
+
+  const pages = [...content.pages].sort((a, b) => (b.slug === previewPage) - (a.slug === previewPage));
+  for (const page of pages) {
+    const shown = render(withPost, page);
+    const hidden = render(others, page);
+    if (shown === hidden) continue;
+    const doc = parse(shown);
+    addedElement(doc, parse(hidden))?.setAttribute('data-werft-focus', '');
+    return { html: doc.documentElement.outerHTML, focus: page.slug, note: `${label} haben keine eigene Seite. „${title}“ erscheint auf der Seite „${page.title}“ (markiert).` };
+  }
+
+  for (const [type, block] of Object.entries(theme.blocks)) {
+    const page = { slug: post.slug, title, sections: [{ type }] };
+    try {
+      const shown = render([post], page);
+      if (shown !== render([], page)) return { html: shown, note: `${label} haben keine eigene Seite, und „${title}“ steht noch auf keiner. So zeigt die Website sie im Abschnitt „${block.label}“.` };
+    } catch { /* the block needs fields a bare section lacks */ }
+  }
+
+  const value = (field) => {
+    const v = post[field.name];
+    if (field.widget === 'image' || v?.src) return html`<img src="${v?.src ?? v}" alt="" style="max-width:100%;max-height:50vh">`;
+    if (field.widget === 'datetime') return new Date(v).toLocaleString('de-DE', { dateStyle: 'long', ...(field.time_format !== false && { timeStyle: 'short' }) });
+    return typeof v === 'object' ? JSON.stringify(v) : String(v);
+  };
+  const fields = theme.postType.fields.filter((f) => post[f.name] != null && post[f.name] !== '');
+  return {
+    html: html`<body><dl style="margin:24px;font:16px/1.5 system-ui,sans-serif">${fields.map((f) => html`<dt style="font-weight:700;margin-top:12px">${f.label}</dt><dd style="margin:0">${value(f)}</dd>`)}</dl></body>`.value,
+    note: `${label} haben keine eigene Seite, und „${title}“ steht noch auf keiner. Hier ihre Angaben.`,
+  };
 }
 
 export function registerPreviews({ CMS, site, theme, base, branch }) {
@@ -80,10 +138,13 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
         (async () => {
           const index = await mediaIndex();
           const content = structuredClone(await (cache ??= loadContent(site, theme, branch)));
-          const page = pageFor(kind, { ...data, slug }, content, theme);
-          const ctx = createContext({ site, theme, content, media: index, now: new Date(), preview: true });
-          const html = theme.renderPage(page, ctx.for(page)).value;
-          const parsed = new DOMParser().parseFromString(html, 'text/html');
+          let text, note, focus;
+          if (kind === theme.postType?.name) ({ html: text, note, focus } = postPreview({ ...data, slug }, content, { site, theme, media: index }));
+          else {
+            const page = pageFor(kind, { ...data, slug }, content, theme);
+            text = theme.renderPage(page, createContext({ site, theme, content, media: index, now: new Date(), preview: true }).for(page)).value;
+          }
+          const parsed = parse(text);
           // The preview runs on the admin's origin, next to the signed-in user's tokens: whatever a
           // theme lets through, no event handler or javascript: URL reaches it.
           for (const el of parsed.querySelectorAll('*')) {
@@ -113,10 +174,31 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
           const url = (el, attr) => new URL(el.getAttribute(attr), new URL(base, location.origin)).href;
           const sheets = [...parsed.head.querySelectorAll('link[rel~="stylesheet"][href]')].map((el) => url(el, 'href'));
           const scripts = [...parsed.head.querySelectorAll('script[src]')].map((el) => url(el, 'src'));
-          if (alive) setState({ html: styles + parsed.body.innerHTML, className: parsed.body.className, lang: parsed.documentElement.lang, sheets, scripts });
+          if (note) {
+            const bar = parsed.createElement('p');
+            bar.className = 'werft-preview-note';
+            bar.textContent = note;
+            parsed.body.prepend(bar);
+          }
+          if (alive) setState({ html: styles + parsed.body.innerHTML, className: parsed.body.className, lang: parsed.documentElement.lang, sheets, scripts, focus });
         })().catch((error) => alive && setState({ html: `<p style="padding:16px;font:14px system-ui">Vorschau nicht möglich: ${String(error.message).replace(/</g, '&lt;')}</p>`, className: '' }));
         return () => { alive = false; };
       }, [key, slug]);
+      // The marked post comes into view when the preview first shows it, not on every keystroke. The
+      // page's styles and images still move it while they load, so it is followed for a moment
+      // unless the user scrolls.
+      const focused = React.useRef();
+      React.useEffect(() => {
+        if (!state.focus || focused.current === `${slug}:${state.focus}`) return undefined;
+        focused.current = `${slug}:${state.focus}`;
+        const follow = () => doc.querySelector('[data-werft-focus]')?.scrollIntoView({ block: 'center', behavior: 'instant' });
+        const observer = new doc.defaultView.ResizeObserver(follow);
+        observer.observe(doc.body);
+        const stop = () => observer.disconnect();
+        const timer = setTimeout(stop, 3000);
+        for (const type of ['wheel', 'touchstart', 'keydown', 'mousedown']) doc.addEventListener(type, stop, { once: true });
+        return () => { clearTimeout(timer); stop(); };
+      }, [state]);
       React.useEffect(() => {
         if (!doc.querySelector('base')) doc.head.prepend(Object.assign(doc.createElement('base'), { href: new URL(base, location.origin).href }));
         doc.body.className = state.className;
@@ -146,7 +228,10 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
   }
 
   // The CMS wraps the template in its own padding; the page brings its own.
-  CMS.registerPreviewStyle('body{margin:0!important;padding:0!important}.werft-preview{display:contents}', { raw: true });
+  // A post's preview says where it appears and marks it there.
+  CMS.registerPreviewStyle(`body{margin:0!important;padding:0!important}.werft-preview{display:contents}
+    .werft-preview-note{position:sticky;top:0;z-index:1000;margin:0;padding:8px 16px;background:#231f1b;color:#faf4e8;font:600 13px/1.4 system-ui,sans-serif}
+    [data-werft-focus]{outline:3px solid #d9a521!important;outline-offset:4px}`, { raw: true });
   for (const kind of ['pages', 'patterns', 'forms', 'site', 'menus', ...(theme.postType ? [theme.postType.name] : [])]) {
     CMS.registerPreviewTemplate(kind, Preview(kind));
   }
