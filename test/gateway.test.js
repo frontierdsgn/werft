@@ -1,6 +1,6 @@
 // Gateway contract: sign-in, the Gitea API subset Sveltia uses, conflicts and role checks, against
-// a throwaway git repository.
-import { test, before } from 'node:test';
+// each storage: a throwaway git repository and an in-memory GitHub.
+import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -8,36 +8,55 @@ import os from 'node:os';
 import path from 'node:path';
 import { createGateway } from '../gateway/core.js';
 import { gitStorage } from '../gateway/storage/git.js';
+import { githubStorage } from '../gateway/storage/github.js';
 import { hashPassword, serializeUsers } from '../gateway/auth.js';
+import { fakeGitHub } from './fake-github.js';
 
 const ORIGIN = 'https://site.test';
 const API = `${ORIGIN}/api/werft/api/v1/repos/werft/site`;
-let gateway, dir;
-const commits = [];
-
-const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); };
 const b64 = (text) => Buffer.from(text).toString('base64');
 
-before(async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'werft-gw-'));
-  dir = path.join(root, 'site');
+// The repository: the site lives in site/, next to a file the gateway must neither show nor lose.
+async function repoFiles() {
   const users = [
     { email: 'admin@test', name: 'Ada', role: 'administrator', password: await hashPassword('admin-password', 1000) },
     { email: 'author@test', name: 'Aut', role: 'author', password: await hashPassword('author-password', 1000) },
     { email: 'contrib@test', name: 'Con', role: 'contributor', password: await hashPassword('contrib-password', 1000) },
   ];
-  write('.werft/users.json', serializeUsers(users));
-  write('content/pages/index.json', '{"title":"Start","status":"published"}\n');
-  write('content/events/a.json', '{"title":"A","status":"published"}\n');
-  write('content/settings/site.json', '{"title":"Site"}\n');
-  write('outside.txt', 'not part of the site\n');
-  const git = (...args) => execFileSync('git', args, { cwd: root, env: { ...process.env, GIT_AUTHOR_NAME: 'Ada', GIT_AUTHOR_EMAIL: 'admin@test', GIT_COMMITTER_NAME: 'Ada', GIT_COMMITTER_EMAIL: 'admin@test' } });
-  fs.renameSync(path.join(dir, 'outside.txt'), path.join(root, 'outside.txt'));
-  git('init', '--quiet', '-b', 'main');
-  git('add', '.');
-  git('commit', '--quiet', '-m', 'init');
+  return {
+    'site/.werft/users.json': serializeUsers(users),
+    'site/content/pages/index.json': '{"title":"Start","status":"published"}\n',
+    'site/content/events/a.json': '{"title":"A","status":"published"}\n',
+    'site/content/settings/site.json': '{"title":"Site"}\n',
+    'outside.txt': 'not part of the site\n',
+  };
+}
+
+const storages = {
+  async git(files) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'werft-gw-'));
+    for (const [rel, text] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text); }
+    const git = (...args) => execFileSync('git', args, { cwd: root, env: { ...process.env, GIT_AUTHOR_NAME: 'Ada', GIT_AUTHOR_EMAIL: 'admin@test', GIT_COMMITTER_NAME: 'Ada', GIT_COMMITTER_EMAIL: 'admin@test' } });
+    git('init', '--quiet', '-b', 'main');
+    git('add', '.');
+    git('commit', '--quiet', '-m', 'init');
+    return { storage: await gitStorage(path.join(root, 'site')), outside: () => fs.readFileSync(path.join(root, 'outside.txt'), 'utf8'), working: (rel) => (fs.existsSync(path.join(root, 'site', rel)) ? fs.readFileSync(path.join(root, 'site', rel), 'utf8') : null) };
+  },
+  async github(files) {
+    const hub = fakeGitHub();
+    hub.seed(files);
+    return { storage: githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', dir: 'site', api: hub.api, fetch: hub.fetch }), outside: () => hub.fileAt('main', 'outside.txt'), working: (rel) => hub.fileAt('main', `site/${rel}`) };
+  },
+};
+
+for (const [kind, setup] of Object.entries(storages)) describe(`gateway on ${kind} storage`, () => {
+let gateway, store;
+const commits = [];
+
+before(async () => {
+  store = await setup(await repoFiles());
   gateway = createGateway({
-    storage: await gitStorage(dir), secret: 'x'.repeat(32), branch: 'main', iterations: 1000,
+    storage: store.storage, secret: 'x'.repeat(32), branch: 'main', iterations: 1000,
     site: { name: 'Test', contentDir: 'content', postType: 'events', mediaDirs: ['assets/img'] },
     onCommit: (c) => commits.push(c),
   });
@@ -76,7 +95,7 @@ test('commits a change, then refuses a stale one', async () => {
   const update = (text) => call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'Edit start', files: [{ operation: 'update', path: 'content/pages/index.json', content: b64(text), sha: file.sha }] } });
   const first = await update('{"title":"Neu","status":"published"}\n');
   assert.equal(first.status, 201);
-  assert.equal(fs.readFileSync(path.join(dir, 'content/pages/index.json'), 'utf8'), '{"title":"Neu","status":"published"}\n');
+  assert.equal(store.working('content/pages/index.json'), '{"title":"Neu","status":"published"}\n');
   assert.equal(commits.at(-1).author, 'admin@test');
   assert.equal((await update('{"title":"Alt"}\n')).status, 409);
   const { data: log } = await call('/commits?sha=main&path=content/pages/index.json&limit=100', { token });
@@ -88,11 +107,12 @@ test('moves and deletes files', async () => {
   const created = await call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'add', files: [{ operation: 'create', path: 'content/pages/alt.json', content: b64('{"title":"Alt"}') }] } });
   const moved = await call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'rename', files: [{ operation: 'update', path: 'content/pages/neu.json', from_path: 'content/pages/alt.json', content: b64('{"title":"Neu"}'), sha: created.data.files[0].sha }] } });
   assert.equal(moved.status, 201);
-  assert.ok(!fs.existsSync(path.join(dir, 'content/pages/alt.json')));
+  assert.equal(store.working('content/pages/alt.json') ?? null, null, 'the old name is gone');
   const deleted = await call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'remove', files: [{ operation: 'delete', path: 'content/pages/neu.json', sha: moved.data.files[0].sha }] } });
   assert.equal(deleted.status, 201);
   const { data } = await call('/git/trees/main?recursive=1', { token });
   assert.ok(!data.tree.some((e) => e.path.startsWith('content/pages/neu')));
+  assert.equal(store.outside(), 'not part of the site\n');
 });
 
 test('applies WordPress-style roles', async () => {
@@ -133,4 +153,5 @@ test('completes the OAuth code flow with PKCE', async () => {
   assert.ok(token.data.access_token);
   const wrong = await call(`${ORIGIN}/api/werft/login/oauth/access_token`, { method: 'POST', body: { grant_type: 'authorization_code', code: back.searchParams.get('code'), redirect_uri: `${ORIGIN}/admin/`, code_verifier: 'x'.repeat(43) } });
   assert.equal(wrong.status, 400);
+});
 });
