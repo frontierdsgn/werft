@@ -62,9 +62,18 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
 
   function Preview(kind) {
     return function WerftPreview({ entry, getAsset, document: doc }) {
-      const data = JSON.parse(JSON.stringify(entry.get('data').toJS()), mediaPaths(site));
+      // A file uploaded but not saved yet is a blob: URL in the entry, which a theme would drop as an
+      // unsafe address. The theme gets a media path for it; the preview shows the file itself.
+      const revive = mediaPaths(site);
+      const uploads = new Map();
+      const data = JSON.parse(JSON.stringify(entry.get('data').toJS()), (key, value) => {
+        if (typeof value !== 'string' || !value.startsWith('blob:')) return revive(key, value);
+        const path = [...uploads].find(([, url]) => url === value)?.[0] ?? `${mediaDir}/werft-upload-${uploads.size + 1}`;
+        uploads.set(path, value);
+        return path;
+      });
       const slug = entry.get('slug') || 'neu';
-      const key = JSON.stringify(data);
+      const key = JSON.stringify([data, [...uploads]]);
       const [state, setState] = React.useState({ html: '', className: '' });
       React.useEffect(() => {
         let alive = true;
@@ -89,7 +98,7 @@ export function registerPreviews({ CMS, site, theme, base, branch }) {
             for (const name of ['src', 'href']) {
               const value = el.getAttribute(name);
               if (!value || value.startsWith('#')) continue;
-              el.setAttribute(name, value.startsWith(`${mediaDir}/`) && !(value in index) ? String(getAsset(`${base}${value}`) ?? value) : new URL(value, siteURL).href);
+              el.setAttribute(name, uploads.get(value) ?? (value.startsWith(`${mediaDir}/`) && !(value in index) ? String(getAsset(`${base}${value}`) ?? value) : new URL(value, siteURL).href));
             }
             const srcset = el.getAttribute('srcset');
             if (srcset) {
