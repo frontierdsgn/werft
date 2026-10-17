@@ -8,10 +8,13 @@
 //   /api/werft/login/oauth/access_token   renews tokens (refresh-token grant)
 //   /api/werft/me, /api/werft/users       current user; user management (administrators)
 //   /api/werft/tick                       publish scheduled entries that are due
+//   /api/werft/forms/<form>               form submissions from visitors (see submissions.js)
+//   /api/werft/submissions                read and delete them (administrators and editors)
 //   /api/werft/api/v1/repos/<o>/<r>/...   files, commits and saves (git/trees, file-contents, raw,
 //                                         contents, commits)
 import { USERS_FILE, base64url, hashPassword, verifyPassword, signToken, readToken, stampOf, parseUsers, serializeUsers, findUser, publicUser } from './auth.js';
 import { ROLES, denial, classify, editable, statuses } from './roles.js';
+import { submissions } from './submissions.js';
 import { loadContent, isScheduled } from '../lib/content.js';
 
 const PREFIX = '/api/werft';
@@ -274,6 +277,8 @@ export function createGateway(options) {
     return json({ rebuilt, pending, due: due.map((e) => e.slug), next_publish: next, last_build: lastBuild ?? null });
   }
 
+  const forms = submissions({ storage, branch, site, now });
+
   return async function handle(request) {
     const url = new URL(request.url);
     if (url.pathname !== PREFIX && !url.pathname.startsWith(`${PREFIX}/`)) return null;
@@ -287,12 +292,14 @@ export function createGateway(options) {
       }
       if (path === '/tick' && options.tickKey && url.searchParams.get('key')
         && (await sha256(url.searchParams.get('key'))) === (await sha256(options.tickKey))) return await tick(url);
+      if (path.startsWith('/forms/')) return await forms.receive(request, url, decodeURIComponent(path.slice(7)));
       if (path === '/status') return json({ ok: true, storage: storage.kind, branch, has_users: (await loadUsers()).users.length > 0 });
       const user = await authenticate(request);
       if (!user) return error(401, 'Bitte anmelden.');
       if (path === '/tick') return await tick(url);
       if (path === '/me') return json({ ...publicUser(user), editable: editable(user.role), statuses: statuses(user.role), roles: ROLES });
       if (path === '/users') return await usersApi(request, user);
+      if (path === '/submissions') return await forms.api(request, user);
       if (path.startsWith('/api/v1/')) return await gitea(request, url, user, path.slice(7));
       return error(404, 'Not found');
     } catch (e) {

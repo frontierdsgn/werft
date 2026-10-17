@@ -61,12 +61,12 @@ content. Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md
 | Menus, site settings, SEO | Menu locations the theme declares; site settings; SEO title, description and noindex per page. |
 | Revisions | Every save is a git commit. "Frühere Versionen" under each entry compares a version with the current one by content and brings it back as an unsaved change. |
 | Reusable blocks | Patterns: sections shared by several pages. |
-| Forms, redirects | Form definitions edited in the admin (the theme renders them); redirects written as `_redirects` and `.htaccess` (`/alt/*` to `/neu/:splat` works in both). |
+| Forms, redirects | Form definitions edited in the admin (the theme renders them); visitors' submissions kept in the repository and shown under "Einsendungen" (see [Form submissions](#form-submissions)); redirects written as `_redirects` and `.htaccess` (`/alt/*` to `/neu/:splat` works in both). |
 
 ## Editor
 
 `/admin` is one app. The sidebar lists everything that can be edited (pages, the theme's post type,
-site settings, menus, images, users; patterns, forms and redirects folded under "Weitere Inhalte")
+site settings, menus, images, form submissions, users; patterns, forms and redirects folded under "Weitere Inhalte")
 and is the same in both views. A switch at its top changes the view; the editor remembers the last
 one, and unsaved changes, undo and "Speichern" carry over between them.
 
@@ -152,7 +152,7 @@ show every part.
      without a date last by slug; `posts({ slugs })` returns the named posts in that order, and
      `limit` cuts the list. The admin lists posts newest first too.
 4. **Content**: `content/pages/<slug>.json` (`index` becomes `index.html`), `content/patterns/`,
-   `content/forms/`, `content/<post type>/`, `content/settings/{site,menus,redirects}.json`.
+   `content/forms/` (see [Form submissions](#form-submissions)), `content/<post type>/`, `content/settings/{site,menus,redirects}.json`.
    A page is `{ "title": "Start", "status": "published", "sections": [{ "type": "text", … }] }`.
    Write the status into files you create by hand: the build publishes a file without one, but the
    admin shows it as "Entwurf" and saving it there would unpublish it.
@@ -188,7 +188,9 @@ triggers a Cloudflare build.
    | `WERFT_TICK_KEY` | optional, secret: lets a cron service publish scheduled entries (see [Scheduling](#scheduling)) |
    | `WERFT_GITHUB_API` | optional: GitHub Enterprise Server API URL |
 
-4. Deploy, open `https://<project>.pages.dev/admin/`, sign in with a user from `.werft/users.json`.
+4. If the site has forms: Settings → Build → Build watch paths, exclude `*.werft/submissions/*`,
+   so a [form submission](#form-submissions) does not start a build.
+5. Deploy, open `https://<project>.pages.dev/admin/`, sign in with a user from `.werft/users.json`.
 
 With both set, the app is used. Fine-grained tokens expire; renew the token before its expiry date
 or saving stops working.
@@ -277,6 +279,36 @@ nothing otherwise. It needs a signed-in user or the tick key.
   `https://<site>/api/werft/tick?key=<WERFT_TICK_KEY>`.
 
 Dates are entered in the editor's time zone and stored in UTC.
+
+## Form submissions
+
+A form posts to the gateway at `/api/werft/forms/<form>`, where `<form>` is a file in
+`content/forms/` ([submissions.js](gateway/submissions.js)). The gateway commits each submission as
+`.werft/submissions/<form>/<time>-<random>.json`; no other service is involved. Administrators and
+editors read them in the editor under "Einsendungen" (shown when the site has a form), download
+them as CSV and delete them (a deleted submission stays in the git history). Submissions hold personal data: keep the repository
+private.
+
+```html
+<form method="post" action="/api/werft/forms/newsletter">
+  <label>E-Mail <input name="email" type="email" required></label>
+  <input name="_gotcha" tabindex="-1" autocomplete="off" hidden>  <!-- bots fill it in -->
+  <input name="_redirect" type="hidden" value="/danke.html">       <!-- optional -->
+  <button>Abonnieren</button>
+</form>
+```
+
+- The body is urlencoded, multipart (files are dropped) or JSON; repeated names become lists. At
+  most 50 fields and 20,000 characters; fields whose name starts with `_` are not stored.
+- A filled-in `_gotcha` gets the normal reply and stores nothing.
+- A plain form post gets a short thank-you page with a link back, or a redirect to `_redirect` (a
+  path on the site the form was on). A request with `Accept: application/json` gets `{ "ok": true }`
+  or `{ "message": … }` with the status.
+- A submission is not a content change: `werft serve` does not rebuild for it, and on Cloudflare
+  Pages the build watch paths above keep it from starting a build (the free plan has 500 a month).
+- On PHP web space the form's `action` is the build host's gateway, e.g.
+  `https://<project>.pages.dev/api/werft/forms/newsletter`.
+- No notification is sent; look at "Einsendungen".
 
 ## Browser and host requirements
 

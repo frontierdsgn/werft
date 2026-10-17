@@ -180,6 +180,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .ve-people li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-top:1px solid var(--ve-line)}
 .ve-people li>div:first-child{display:flex;flex-direction:column}
 .ve-people small{color:var(--ve-muted);font-size:13px}
+.ve-submissions small{color:inherit;font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere}
 .ve-user-form{display:flex;flex-direction:column;gap:14px}
 
 /* ---- Forms (side panel and form view) ---- */
