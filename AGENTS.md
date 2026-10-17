@@ -17,7 +17,8 @@ werft is the shared core of many websites. Read [README.md](README.md) before ch
 ## Contributing from outside
 - Fork the repository, branch from `main`, open a pull request against `main`. One gap or feature
   per pull request, with what it solves and how you verified it.
-- `npm test` passes. A new contract gets a test through the public interface; a fix gets a test
+- `npm test` passes (GitHub Actions runs it on every pull request; a first-time contributor's run
+  starts once a maintainer approves it). A new contract gets a test through the public interface; a fix gets a test
   that fails without it. Update the README where behaviour or setup changes.
 - Do not change the version or tag a release: the maintainers merge and release
   (`npm run release`, see the README).
