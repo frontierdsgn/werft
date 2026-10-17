@@ -338,6 +338,11 @@ The script ([scripts/release.js](scripts/release.js)) needs git, npm and `gh`, s
 access to the organization's repositories. It works in temporary clones and leaves local
 checkouts alone; pull afterwards.
 
+## Contributing
+
+Pull requests are welcome, also from forks. Every change must be useful to any werft site, not
+only to one: the rules are in [AGENTS.md](AGENTS.md).
+
 ## Known limits
 
 - On Cloudflare each call of `/api/werft/tick` reads the content from GitHub with a handful of API
