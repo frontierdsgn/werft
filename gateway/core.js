@@ -1,24 +1,22 @@
-// The werft gateway: the server half of the admin. It speaks the subset of the Gitea REST API that
-// Sveltia CMS's Gitea backend uses, signs editors in with werft's own users and roles, and stores
-// every change as a git commit through a storage driver (local git, GitHub). It only uses the Fetch
-// API (Request/Response) and Web Crypto, so the same code runs on Node, Cloudflare and Deno.
+// The werft gateway: the server half of the admin. It signs editors in with werft's own users and
+// roles, serves the site's files to the editor and stores every change as a git commit through a
+// storage driver (local git, GitHub). Its file API follows the shape of Gitea's REST API. It only
+// uses the Fetch API (Request/Response) and Web Crypto, so the same code runs on Node, Cloudflare
+// and Deno.
 //
-//   /api/werft/login/oauth/authorize      sign-in page (OAuth 2 authorization code + PKCE)
-//   /api/werft/login/oauth/access_token   token endpoint (code and refresh-token grants)
-//   /api/werft/session                    sign-in with e-mail and password → tokens (admin page)
+//   /api/werft/session                    sign-in with e-mail and password → tokens
+//   /api/werft/login/oauth/access_token   renews tokens (refresh-token grant)
 //   /api/werft/me, /api/werft/users       current user; user management (administrators)
 //   /api/werft/tick                       publish scheduled entries that are due
-//   /api/werft/api/v1/...                 Gitea API subset
+//   /api/werft/api/v1/repos/<o>/<r>/...   files, commits and saves (git/trees, file-contents, raw,
+//                                         contents, commits)
 import { USERS_FILE, base64url, hashPassword, verifyPassword, signToken, readToken, stampOf, parseUsers, serializeUsers, findUser, publicUser } from './auth.js';
 import { ROLES, denial, classify, editable, statuses } from './roles.js';
-import { loginPage } from './login-page.js';
 import { loadContent, isScheduled } from '../lib/content.js';
 
 const PREFIX = '/api/werft';
 const ACCESS_TTL = 12 * 3600;
 const REFRESH_TTL = 30 * 24 * 3600;
-const CODE_TTL = 120;
-const MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', avif: 'image/avif', pdf: 'application/pdf', json: 'application/json', md: 'text/markdown', txt: 'text/plain', html: 'text/html', css: 'text/css', js: 'text/javascript' };
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -27,17 +25,6 @@ const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(d
 const error = (status, message) => json({ message }, status);
 const toBase64 = (bytes) => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
 const fromBase64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
-const numericId = (email) => [...email].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) || 1;
-const avatar = (name) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" fill="#231f1b"/><text x="20" y="26" font-family="sans-serif" font-size="18" fill="#faf4e8" text-anchor="middle">${(name || '?').trim()[0].toUpperCase().replace(/[<&]/, '?')}</text></svg>`)}`;
-
-// Sveltia appends " +N" to the message of an entry saved with N more files (its uploads), e.g.
-// "Geändert: Seite „index“ +1". The history names them instead.
-function describeFiles(message, paths) {
-  const match = /^([\s\S]*) \+(\d+)$/.exec(message);
-  const files = paths.filter((p) => !p.endsWith('.json'));
-  if (!match || Number(match[2]) !== files.length) return message;
-  return `${match[1]}, ${files.length === 1 ? 'Datei' : 'Dateien'} ${files.map((p) => p.split('/').pop()).join(', ')}`;
-}
 
 async function sha256(text) {
   return base64url.encode(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(text))));
@@ -46,12 +33,10 @@ async function sha256(text) {
 // The gateway's view of a site (werft.config.js and its theme).
 export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [] });
 
-// options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs }, owner, repo,
+// options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs },
 //   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?() }
 export function createGateway(options) {
   const { storage, secret, branch = 'main', site, onCommit, onTick } = options;
-  const owner = options.owner ?? 'werft';
-  const repo = options.repo ?? 'site';
   const now = options.now ?? (() => Date.now());
   if (!secret || secret.length < 32) throw new Error('WERFT_SECRET must be set to at least 32 characters.');
 
@@ -97,40 +82,16 @@ export function createGateway(options) {
     return ok && user ? user : null;
   }
 
-  // ---- OAuth (for Sveltia's own "Sign in" button) ----
-  async function authorize(request, url) {
-    const params = request.method === 'POST' ? new URLSearchParams(await request.text()) : url.searchParams;
-    const query = Object.fromEntries(['client_id', 'redirect_uri', 'state', 'code_challenge', 'code_challenge_method', 'scope', 'response_type'].map((k) => [k, params.get(k) ?? '']));
-    const redirect = (() => { try { return new URL(query.redirect_uri); } catch { return null; } })();
-    // The CMS must live on the same origin as the gateway.
-    if (!redirect || redirect.origin !== url.origin) return error(400, 'redirect_uri must be on this site.');
-    if (request.method !== 'POST') return new Response(loginPage({ site: site.name, query }), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
-    const user = await signIn(params.get('email'), params.get('password'));
-    if (!user) return new Response(loginPage({ site: site.name, query, email: params.get('email'), failed: true }), { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } });
-    const code = await signToken(secret, { typ: 'code', sub: user.email, stamp: await stampOf(user), challenge: query.code_challenge, redirect: query.redirect_uri, exp: Math.floor(now() / 1000) + CODE_TTL });
-    redirect.searchParams.set('code', code);
-    redirect.searchParams.set('state', query.state);
-    return Response.redirect(redirect.href, 302);
-  }
-
+  // Renews the tokens of a session (OAuth 2 refresh-token grant).
   async function accessToken(request) {
     const type = request.headers.get('content-type') ?? '';
     const body = type.includes('json') ? await request.json() : Object.fromEntries(new URLSearchParams(await request.text()));
-    if (body.grant_type === 'refresh_token') {
-      const user = await userFromToken(body.refresh_token, 'refresh');
-      return user ? json(await issueTokens(user)) : json({ error: 'invalid_grant' }, 400);
-    }
-    if (body.grant_type === 'authorization_code') {
-      const payload = await readToken(secret, body.code, now());
-      const user = payload?.typ === 'code' && findUser((await loadUsers()).users, payload.sub);
-      const verified = user && (await stampOf(user)) === payload.stamp && payload.redirect === body.redirect_uri
-        && (!payload.challenge || (await sha256(body.code_verifier ?? '')) === payload.challenge);
-      return verified ? json(await issueTokens(user)) : json({ error: 'invalid_grant' }, 400);
-    }
-    return json({ error: 'unsupported_grant_type' }, 400);
+    if (body.grant_type !== 'refresh_token') return json({ error: 'unsupported_grant_type' }, 400);
+    const user = await userFromToken(body.refresh_token, 'refresh');
+    return user ? json(await issueTokens(user)) : json({ error: 'invalid_grant' }, 400);
   }
 
-  // ---- Gitea API ----
+  // ---- Files ----
   async function resolveRef(ref) {
     if (!ref || ref === branch) return (await storage.head(branch)).sha;
     if (/^[0-9a-f]{40,64}$/.test(ref)) return ref;
@@ -144,18 +105,6 @@ export function createGateway(options) {
   }
 
   const readMany = (sha, paths) => (storage.readMany ? storage.readMany(sha, paths) : Promise.all(paths.map((p) => storage.read(sha, p))));
-
-  function profile(user) {
-    return { id: numericId(user.email), login: user.email, login_name: user.email, full_name: user.name ?? user.email, email: user.email, avatar_url: avatar(user.name ?? user.email), html_url: '', is_admin: user.role === 'administrator', werft_role: user.role };
-  }
-
-  const repoInfo = (user, defaultBranch) => ({
-    id: 1, name: repo, full_name: `${owner}/${repo}`, owner: { id: 1, login: owner }, private: true, empty: false, archived: false, fork: false,
-    default_branch: defaultBranch, html_url: '', has_pull_requests: false,
-    permissions: { admin: user.role === 'administrator', push: true, pull: true },
-  });
-
-  const commitURL = (sha) => `${PREFIX}/commit/${sha}`;
 
   async function changeFiles(user, body) {
     if ((body.branch ?? branch) !== branch || body.new_branch) return error(422, `Only the ${branch} branch can be changed.`);
@@ -197,7 +146,7 @@ export function createGateway(options) {
       changes.push({ path, data });
     }
     if (!changes.length) return error(422, 'No changes.');
-    const message = describeFiles(String(body.message ?? 'Update content'), changes.map((c) => c.path)).slice(0, 2000);
+    const message = String(body.message ?? 'Update content').slice(0, 2000);
     let result;
     try {
       result = await storage.commit({ branch, parent: head.sha, message, author: { name: user.name ?? user.email, email: user.email }, changes });
@@ -207,32 +156,22 @@ export function createGateway(options) {
     }
     await onCommit?.({ ...result, message, author: user.email, paths: changes.map((c) => c.path) });
     return json({
-      commit: { sha: result.sha, created: result.date, html_url: commitURL(result.sha), message, parents: [{ sha: head.sha }] },
+      commit: { sha: result.sha, created: result.date, message, parents: [{ sha: head.sha }] },
       files: (body.files ?? []).map((f) => (f.operation === 'delete' ? null : { path: f.path, sha: result.blobs[f.path] ?? '', type: 'file' })),
     }, 201);
   }
 
   const giteaCommit = (c) => ({
-    sha: c.sha, url: commitURL(c.sha), html_url: commitURL(c.sha), created: c.date,
-    commit: { message: c.message, author: { name: c.author.name, email: c.author.email, date: c.date }, committer: { name: c.author.name, email: c.author.email, date: c.date } },
-    author: { login: c.author.email, avatar_url: avatar(c.author.name) },
+    sha: c.sha, created: c.date,
+    commit: { message: c.message, author: { name: c.author.name, email: c.author.email, date: c.date } },
   });
 
   async function gitea(request, url, user, rest) {
     const method = request.method;
-    if (rest === '/version') return json({ version: '1.24.0' });
-    if (rest === '/settings/api') return json({ max_response_items: 50, default_paging_num: 50, default_git_trees_per_page: 100000, default_max_blob_size: 10485760, default_max_response_size: 10485760 });
-    if (rest === '/user') return json(profile(user));
-    const match = rest.match(/^\/repos\/[^/]+\/[^/]+(\/.*)?$/);
+    const match = rest.match(/^\/repos\/[^/]+\/[^/]+(\/.*)$/);
     if (!match) return error(404, 'Not found');
-    const sub = match[1] ?? '';
+    const sub = match[1];
     const q = url.searchParams;
-    if (!sub) return json(repoInfo(user, branch));
-    if (sub.startsWith('/branches/')) {
-      if (decodeURIComponent(sub.slice(10)) !== branch) return error(404, 'Branch not found');
-      const head = await storage.head(branch);
-      return json({ name: branch, commit: { id: head.sha, message: head.message, timestamp: head.date }, protected: false, user_can_push: true, user_can_merge: false });
-    }
     if (sub.startsWith('/git/trees/')) {
       const sha = await resolveRef(decodeURIComponent(sub.slice(11)));
       const page = Number(q.get('page') ?? 1);
@@ -256,36 +195,13 @@ export function createGateway(options) {
       const bytes = visible(path) && await storage.read(await resolveRef(q.get('ref')), path);
       return bytes ? new Response(bytes, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } }) : error(404, 'Not found');
     }
-    if (sub.startsWith('/media/')) {
-      const [ref, ...parts] = sub.slice(7).split('/');
-      const path = parts.map(decodeURIComponent).join('/');
-      const bytes = visible(path) && await storage.read(await resolveRef(decodeURIComponent(ref)), path);
-      const type = MIME[path.split('.').pop().toLowerCase()] ?? 'application/octet-stream';
-      return bytes ? new Response(bytes, { headers: { 'content-type': type, 'cache-control': 'private, max-age=60' } }) : error(404, 'Not found');
-    }
     if (sub === '/contents' && method === 'POST') return changeFiles(user, await request.json());
-    if (sub === '/contents' || sub.startsWith('/contents/')) {
-      const path = decodeURIComponent(sub.slice(10)).replace(/^\/+|\/+$/g, '');
-      const sha = await resolveRef(q.get('ref'));
-      const files = await treeAt(sha);
-      const file = files.find((f) => f.path === path);
-      if (file) return json({ name: path.split('/').pop(), path, sha: file.sha, type: 'file', size: file.size });
-      const prefix = path ? `${path}/` : '';
-      const entries = new Map();
-      for (const f of files.filter((f) => f.path.startsWith(prefix))) {
-        const [name, ...more] = f.path.slice(prefix.length).split('/');
-        entries.set(name, more.length ? { name, path: prefix + name, type: 'dir', sha: '' } : { name, path: f.path, type: 'file', sha: f.sha, size: f.size });
-      }
-      return entries.size ? json([...entries.values()]) : error(404, 'Not found');
-    }
     if (sub === '/commits') {
       const path = q.get('path') ?? '';
       if (path && !visible(path)) return json([]);
       const limit = Math.min(Number(q.get('limit') ?? 30), 100);
       return json((await storage.log({ branch, path, limit })).map(giteaCommit));
     }
-    if (/^\/commits\/[^/]+\/status$/.test(sub)) return json({ state: '', statuses: [], total_count: 0 });
-    if (sub === '/pulls' || sub.startsWith('/pulls')) return json([]);
     return error(404, 'Not found');
   }
 
@@ -363,7 +279,6 @@ export function createGateway(options) {
     if (url.pathname !== PREFIX && !url.pathname.startsWith(`${PREFIX}/`)) return null;
     const path = url.pathname.slice(PREFIX.length);
     try {
-      if (path === '/login/oauth/authorize') return await authorize(request, url);
       if (path === '/login/oauth/access_token' && request.method === 'POST') return await accessToken(request);
       if (path === '/session' && request.method === 'POST') {
         const { email, password } = await request.json();

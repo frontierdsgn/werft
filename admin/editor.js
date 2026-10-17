@@ -1,14 +1,17 @@
-// The visual editor: each page as the site will publish it, edited where it appears. Texts are
-// changed on the page, images replaced by clicking them, sections and list entries added, moved
-// and removed once the layout is unlocked. Changes stay in the browser until "Speichern", which
-// stores every changed file in one commit through the gateway, as the CMS does.
-import { cmsConfig } from 'werft/cms-config';
+// The editor: the site's pages, posts and settings in two views that share the sidebar, the top bar
+// and the unsaved changes. "Auf der Seite" shows each page as the site will publish it and edits it
+// where it appears: texts are changed on the page, images replaced by clicking them, sections and
+// list entries added, moved and removed once the layout is unlocked. "Formular" shows the same
+// content as large, plain forms beside a live preview (form-view.js). Changes stay in the browser
+// until "Speichern", which stores every changed file in one commit through the gateway.
+import { schema as adminSchema } from 'werft/schema';
 import { createContext, mediaPaths, markdown, raw, escape, imageSize } from 'werft';
 import { requireUser, loadSite, api, signOut } from './session.js';
-import { disarm } from './preview.js';
+import { disarm, postPreview } from './preview.js';
 import { pageRenderer, mapDocument, getAt, setAt, textOf } from './visual-map.js';
 import { buildForm, emptyValue } from './visual-form.js';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
+import { formView, mediaView, usersView } from './form-view.js';
 
 const REPO = '/api/v1/repos/werft/site';
 const { site, theme, base } = await loadSite();
@@ -18,7 +21,7 @@ const contentDir = site.contentDir ?? site.content ?? 'content';
 const mediaDir = site.mediaDirs?.[0] ?? 'assets/img';
 const siteURL = new URL(base, location.origin).href;
 const can = (kind) => (me.editable ?? []).includes(kind);
-const schema = cmsConfig({ site, theme, origin: location.origin, branch, editable: me.editable, statuses: me.statuses });
+const schema = adminSchema({ site, theme, editable: me.editable, statuses: me.statuses });
 const collection = (name) => schema.collections.find((c) => c.name === name);
 const settingsFile = (name) => collection('settings')?.files.find((f) => f.name === name);
 const postType = theme.postType;
@@ -55,17 +58,18 @@ for (const f of (await api(`${REPO}/file-contents?ref=${encodeURIComponent(branc
 }
 const media = await fetch(`${base}_werft/media.json`).then((r) => (r.ok ? r.json() : {}), () => ({}));
 const uploads = new Map(); // site-relative path → { base64, url }
+const removed = new Set(); // media files to delete with the next save
 
 const FOLDERS = { page: 'pages', pattern: 'patterns', form: 'forms', post: postType?.name };
+const SETTINGS = { settings: 'site', menus: 'menus', redirects: 'redirects' };
 function fileOf(source) {
   const [kind, slug] = source.split(':');
-  if (kind === 'settings') return `${contentDir}/settings/site.json`;
-  if (kind === 'menus') return `${contentDir}/settings/menus.json`;
+  if (SETTINGS[kind]) return `${contentDir}/settings/${SETTINGS[kind]}.json`;
   return `${contentDir}/${FOLDERS[kind]}/${slug}.json`;
 }
 function dataOf(source) {
   const path = fileOf(source);
-  if (!files.has(path)) files.set(path, { sha: null, saved: null, data: ['settings', 'menus'].includes(source) ? {} : null });
+  if (!files.has(path)) files.set(path, { sha: null, saved: null, data: SETTINGS[source] ? (source === 'redirects' ? { redirects: [] } : {}) : null });
   return files.get(path).data;
 }
 const slugsIn = (folder) => [...files].filter(([p, f]) => f.data && p.startsWith(`${contentDir}/${folder}/`)).map(([p]) => p.split('/').pop().replace(/\.json$/, ''));
@@ -83,7 +87,7 @@ function content() {
 }
 
 const changedPaths = () => [...files].filter(([, f]) => (f.data === null ? f.saved !== null : canon(f.data) !== f.saved)).map(([p]) => p);
-const isDirty = () => changedPaths().length > 0 || [...uploads.values()].some((u) => !u.saved);
+const isDirty = () => changedPaths().length > 0 || [...uploads.values()].some((u) => !u.saved) || removed.size > 0;
 
 // ---- Schema: the field definitions the CMS uses, looked up by path ----
 function topFields(source) {
@@ -92,7 +96,7 @@ function topFields(source) {
   if (kind === 'pattern') return collection('patterns')?.fields;
   if (kind === 'form') return collection('forms')?.fields;
   if (kind === 'post') return collection(postType?.name)?.fields;
-  return settingsFile(kind === 'settings' ? 'site' : 'menus')?.fields;
+  return settingsFile(SETTINGS[kind])?.fields;
 }
 function schemaAt(source, path) {
   let node = { widget: 'object', fields: topFields(source) ?? [], label: sourceLabel(source) };
@@ -116,6 +120,7 @@ function sourceLabel(source) {
   if (kind === 'pattern') return `Muster „${dataOf(source)?.title ?? slug}“`;
   if (kind === 'settings') return 'Website';
   if (kind === 'menus') return 'Menüs';
+  if (kind === 'redirects') return 'Weiterleitungen';
   if (kind === 'form') return `Formular „${dataOf(source)?.title ?? slug}“`;
   if (kind === 'post') return `${postType?.singular ?? 'Beitrag'} „${dataOf(source)?.title ?? slug}“`;
   return 'Seite';
@@ -129,6 +134,12 @@ const sharedNote = (source) => ({
 
 // ---- Editor state ----
 let current = slugsIn('pages').includes('index') ? 'index' : slugsIn('pages')[0];
+// The view, and what the form view shows: a source (page:<slug>, post:<slug>, settings, …), or
+// `media` or `users`. Both come from the address, then from the last visit.
+const [hashView, hashOpen] = decodeURIComponent(location.hash.slice(1)).split('/');
+let view = ['visual', 'form'].includes(hashView) ? hashView : localStorage.getItem('werft.view') === 'visual' ? 'visual' : 'form';
+let selection = `page:${current}`;
+let showPreview = innerWidth >= 1200;
 let editing = false;
 let locked = true;
 let device = 'desktop';
@@ -138,10 +149,14 @@ let selected = null; // section index
 let active = null; // { el, source, path, mode }
 const undoStack = [];
 const redoStack = [];
+const onPage = () => editing && view === 'visual';
 
-const snapshot = () => JSON.stringify([...files].map(([p, f]) => [p, f.data]));
+const snapshot = () => JSON.stringify([...files].map(([p, f]) => [p, f.data]).concat([['', [...removed]]]));
 function restore(snap) {
   const data = new Map(JSON.parse(snap));
+  removed.clear();
+  for (const path of data.get('') ?? []) removed.add(path);
+  data.delete('');
   for (const [path, f] of [...files]) {
     if (data.has(path)) f.data = data.get(path);
     else if (f.saved === null) files.delete(path);
@@ -154,26 +169,29 @@ function checkpoint() {
   if (undoStack.length > 100) undoStack.shift();
   redoStack.length = 0;
 }
+// After a change outside a form: the page and the form are drawn again.
+function refresh() {
+  closePanel();
+  draw();
+  if (view === 'form') drawForm();
+}
 // A change made by a toolbar or dialog: one undo step, then the page is drawn again.
 function change(fn) {
   checkpoint();
   fn();
-  closePanel();
-  draw();
+  refresh();
 }
 function undo() {
   if (!undoStack.length) return;
   redoStack.push(snapshot());
   restore(undoStack.pop());
-  closePanel();
-  draw();
+  refresh();
 }
 function redo() {
   if (!redoStack.length) return;
   undoStack.push(snapshot());
   restore(redoStack.pop());
-  closePanel();
-  draw();
+  refresh();
 }
 
 // ---- Page frame ----
@@ -186,7 +204,9 @@ const frameStyle = doc.createElement('style');
 frameStyle.textContent = `html.ve-editing [data-werft-field][contenteditable]{cursor:text;outline:none}
   html.ve-editing a,html.ve-editing button,html.ve-editing summary{cursor:default}
   html.ve-editing [data-werft-image],html.ve-editing [data-werft-part]{cursor:pointer}
-  [contenteditable]:empty::before{content:"…";opacity:.4}`;
+  [contenteditable]:empty::before{content:"…";opacity:.4}
+  .ve-preview-note{position:sticky;top:0;z-index:1000;margin:0;padding:10px 16px;background:#1f1c19;color:#fff;font:600 15px/1.4 system-ui,sans-serif}
+  [data-werft-focus]{outline:4px solid #2563eb!important;outline-offset:4px}`;
 for (const node of [baseEl, frameStyle]) node.dataset.ve = '';
 
 const PLAIN = (() => { const d = document.createElement('div'); d.contentEditable = 'plaintext-only'; return d.contentEditable === 'plaintext-only' ? 'plaintext-only' : 'true'; })();
@@ -200,11 +220,36 @@ const renderer = pageRenderer({
   editable: (source) => ({ settings: can('settings'), menus: can('structure') })[source] ?? can('content'),
 });
 
+// The page the form view previews for its selection: the page itself; for a pattern or a form the
+// first page that shows it; for site settings and menus the page last open.
+function previewPage(data) {
+  const [kind, slug] = selection.split(':');
+  if (kind === 'page') return slug;
+  const shows = (sections, seen = new Set()) => (sections ?? []).some((s) => (kind === 'pattern' ? s.pattern === slug : s.form === slug)
+    || (s.type === 'pattern' && !seen.has(s.pattern) && seen.add(s.pattern) && shows(data.patterns.find((p) => p.slug === s.pattern)?.sections, seen)));
+  if (kind === 'pattern' || kind === 'form') {
+    const page = [...data.pages].sort((a, b) => (b.slug === current) - (a.slug === current)).find((p) => shows(p.sections));
+    if (page) return page.slug;
+    // A pattern no page uses yet is shown alone.
+    if (kind === 'pattern') { data.pages.push({ slug: '', title: dataOf(selection)?.title ?? '', sections: [{ type: 'pattern', pattern: slug }] }); return ''; }
+  }
+  return current;
+}
+const hasPreview = () => view === 'visual' || !['media', 'users', 'redirects'].includes(selection);
+
 function draw() {
   const pageList = slugsIn('pages');
   if (!pageList.includes(current)) current = pageList.includes('index') ? 'index' : pageList[0];
-  const result = renderer(content(), current);
+  if (view === 'form' && selection.startsWith('page:') && pageList.includes(selection.slice(5))) current = selection.slice(5);
+  const data = content();
+  let result;
+  if (view === 'form' && selection.startsWith('post:') && dataOf(selection)) {
+    // A post as the site shows it: its own page, or marked on the page that lists it.
+    const post = postPreview({ ...JSON.parse(JSON.stringify(dataOf(selection)), mediaPaths(site)), slug: selection.slice(5) }, data, { site, theme, media });
+    result = { html: post.html, texts: [], images: [], note: post.note };
+  } else result = renderer(data, view === 'form' ? previewPage(data) : current);
   const parsed = new DOMParser().parseFromString(result.html, 'text/html');
+  if (result.note) parsed.body.prepend(Object.assign(parsed.createElement('p'), { className: 've-preview-note', textContent: result.note }));
   // Nothing of the page runs in the editor: no scripts, handlers, redirects or frames.
   parsed.querySelectorAll('script, noscript, base, meta[http-equiv], iframe, object, embed').forEach((n) => n.remove());
   disarm(parsed);
@@ -239,12 +284,17 @@ function draw() {
   doc.body.replaceWith(doc.importNode(parsed.body, true));
   model = { ...mapDocument(doc, result), texts: new Map(result.texts.map((t) => [t.id, t])), imageList: result.images };
   win.scrollTo(0, scroll);
+  // A post marked on its listing page comes into view when it is first shown, not on every change.
+  const focus = doc.querySelector('[data-werft-focus]');
+  if (focus && focused !== selection) focus.scrollIntoView({ block: 'center' });
+  focused = view === 'form' ? selection : null;
   hover = {};
   active = null;
   applyMode();
   drawBar();
   drawPages();
 }
+let focused = null;
 
 // How a text is edited: in place as plain text, in place as rich text, or in a small dialog.
 function modeOf(text, entry) {
@@ -256,13 +306,13 @@ function modeOf(text, entry) {
 }
 
 function applyMode() {
-  doc.documentElement.classList.toggle('ve-editing', editing);
+  doc.documentElement.classList.toggle('ve-editing', onPage());
   for (const [id, entries] of model.fields) {
     const text = model.texts.get(id);
     for (const entry of entries) {
       if (!entry.el) continue;
       const mode = modeOf(text, entry);
-      if (editing && mode !== 'dialog') entry.el.contentEditable = mode === 'rich' ? 'true' : PLAIN;
+      if (onPage() && mode !== 'dialog') entry.el.contentEditable = mode === 'rich' ? 'true' : PLAIN;
       else entry.el.removeAttribute('contenteditable');
       entry.el.spellcheck = true;
     }
@@ -290,7 +340,7 @@ function setText(text, value, except) {
 
 doc.addEventListener('focusin', (event) => {
   const node = fieldOf(event.target);
-  if (!editing || !node?.isContentEditable) return;
+  if (!onPage() || !node?.isContentEditable) return;
   const text = textFor(node);
   active = { el: node, source: text.source, path: text.path, mode: modeOf(text, entryFor(node)), started: false };
   paint();
@@ -337,8 +387,8 @@ doc.addEventListener('mousemove', (event) => {
   const t = event.target;
   const next = {
     section: sectionOf(t), item: itemOf(t),
-    field: editing ? (fieldOf(t) ?? t.closest?.('[data-werft-part]')) : null,
-    image: editing ? t.closest?.('[data-werft-image]') : null,
+    field: onPage() ? (fieldOf(t) ?? t.closest?.('[data-werft-part]')) : null,
+    image: onPage() ? t.closest?.('[data-werft-image]') : null,
   };
   if (next.section !== hover.section || next.item !== hover.item || next.field !== hover.field || next.image !== hover.image) { hover = next; paint(); }
 });
@@ -348,6 +398,13 @@ doc.addEventListener('submit', (event) => event.preventDefault(), true);
 doc.addEventListener('click', (event) => {
   const t = event.target;
   const link = t.closest?.('a[href]');
+  if (view === 'form') {
+    // A click on a section of the previewed page opens it in the form.
+    event.preventDefault();
+    const index = sectionOf(t);
+    if (index != null && selection === `page:${current}`) formHandle?.reveal(['sections', index]);
+    return;
+  }
   if (!editing) {
     if (!link) return;
     event.preventDefault();
@@ -408,7 +465,7 @@ function paintNow() {
   overlay.replaceChildren();
   if (!model) return;
   const page = pageData();
-  if (editing && !page.sections?.length) {
+  if (onPage() && !page.sections?.length) {
     // The empty page gets room where its sections will be.
     const main = doc.querySelector('main') ?? doc.body;
     main.style.minHeight = '320px';
@@ -417,7 +474,7 @@ function paintNow() {
     empty.append(el('p', {}, 'Diese Seite hat noch keine Abschnitte.'), button('+ Abschnitt hinzufügen', null, () => addSection(0), 've-primary'));
     overlay.append(empty);
   }
-  if (!editing) return;
+  if (!onPage()) return;
 
   const index = hover.section ?? selected;
   const sectionRect = index != null && rectOf(model.sections.get(index) ?? []);
@@ -511,6 +568,17 @@ function ownerOf(source, path) {
   return { source, path: at, label: def.label ?? 'Abschnitt', title: def.label ?? sourceLabel(source) };
 }
 
+// What a form needs from the editor (see buildForm).
+const titleOf = (folder, slug) => files.get(`${contentDir}/${folder}/${slug}.json`)?.data?.title ?? slug;
+const formContext = (onChange) => ({
+  onChange, pickImage, mediaURL,
+  suggest: (field) => (field.name === 'url' ? slugsIn('pages').map((slug) => ({ value: `${slug}.html`, label: titleOf('pages', slug) })) : []),
+  choices: (name) => slugsIn(name).map((slug) => ({ label: titleOf(name, slug), value: slug })),
+  // A new entry of a list with several kinds: a section from the picker with examples. Other such
+  // lists (none in today's schema) start with the first kind.
+  pickItem: (field) => (field.name === 'sections' ? pickSection({ patterns: field.types.some((t) => t.name === 'pattern') }) : undefined),
+});
+
 // ---- Side panel ----
 const panel = $('#ve-panel');
 function closePanel() { panel.hidden = true; panel.replaceChildren(); }
@@ -521,17 +589,12 @@ function openPanel(title, source, path, { fields, extra } = {}) {
   const defs = fields ?? schemaAt(source, path)?.fields ?? [];
   const snapshotBefore = snapshot();
   let started = false;
-  const form = buildForm(defs, holder, {
-    onChange: () => {
-      if (!started) { undoStack.push(snapshotBefore); redoStack.length = 0; started = true; }
-      drawBar();
-      clearTimeout(drawSoon);
-      drawSoon = setTimeout(() => { const keep = panel.scrollTop; draw(); panel.scrollTop = keep; }, 300);
-    },
-    pickImage, mediaURL,
-    suggest: (field) => (field.name === 'url' ? slugsIn('pages').map((slug) => ({ value: `${slug}.html`, label: files.get(`${contentDir}/pages/${slug}.json`).data.title ?? slug })) : []),
-    choices: (name) => slugsIn(name).map((slug) => ({ label: files.get(`${contentDir}/${name}/${slug}.json`)?.data?.title ?? slug, value: slug })),
-  });
+  const form = buildForm(defs, holder, formContext(() => {
+    if (!started) { undoStack.push(snapshotBefore); redoStack.length = 0; started = true; }
+    drawBar();
+    clearTimeout(drawSoon);
+    drawSoon = setTimeout(() => { const keep = panel.scrollTop; draw(); panel.scrollTop = keep; }, 300);
+  }));
   const note = sharedNote(source);
   panel.replaceChildren(
     el('header', {}, el('h2', {}, title), button('Fertig', null, closePanel, 've-primary')),
@@ -614,8 +677,7 @@ function pickImage(current) {
       // Stored like the CMS stores a picked file, unless the content names its files relative to the site.
       resolve(current && !String(current).startsWith('/') ? path : `${base}${path}`);
     };
-    const paths = [...new Set([...uploads.keys(), ...Object.keys(media).filter((p) => p.startsWith(`${mediaDir}/`))])];
-    grid.replaceChildren(...paths.map((path) => {
+    grid.replaceChildren(...images().map((path) => {
       const b = button('', path.split('/').pop(), () => choose(path), 've-media-item');
       b.append(el('img', { src: mediaURL(path), alt: '', loading: 'lazy' }), el('span', {}, path.split('/').pop()));
       if (String(current ?? '').replace(/^\/+/, '').endsWith(path)) b.classList.add('ve-current');
@@ -625,15 +687,7 @@ function pickImage(current) {
     input.value = '';
     input.onchange = async () => {
       const file = input.files[0];
-      if (!file) return;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const stem = file.name.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '');
-      let path = `${mediaDir}/${stem}`;
-      for (let n = 2; path in media || uploads.has(path); n++) path = `${mediaDir}/${stem.replace(/(\.[^.]+)?$/, `-${n}$1`)}`;
-      uploads.set(path, { base64: encodeBase64(bytes), url: URL.createObjectURL(file), saved: false });
-      // The theme sees the new file as one of the site's images, with its size.
-      media[path] = imageSize(bytes) ?? {};
-      choose(path);
+      if (file) choose(await upload(file));
     };
     dialog.querySelector('.ve-cancel').onclick = () => { dialog.close(); resolve(null); };
     dialog.showModal();
@@ -675,13 +729,20 @@ function sectionHTML(section) {
   return `<!doctype html><html lang="${escape(out.documentElement.lang)}"><head><base href="${escape(siteURL)}">${styles}<style>html,body{overflow:hidden;pointer-events:none}</style></head><body class="${escape(out.body.className)}"><main>${inner}</main></body></html>`;
 }
 function addSection(at) {
+  pickSection().then((section) => section && sectionTo(at, () => (pageData().sections ??= []).splice(at, 0, section)));
+}
+// Resolves with a new section chosen from the theme's blocks (and the patterns), or null.
+function pickSection({ patterns: withPatterns = true } = {}) {
   const dialog = $('#ve-sections');
   const grid = dialog.querySelector('.ve-section-grid');
   const found = examples();
+  let resolve;
+  const picked = new Promise((r) => { resolve = r; });
   const insert = (section) => {
+    resolve(section);
     dialog.close();
-    sectionTo(at, () => (pageData().sections ??= []).splice(at, 0, section));
   };
+  dialog.addEventListener('close', () => resolve(null), { once: true });
   const card = (label, section, note) => {
     const b = button('', label, () => insert(structuredClone(section)), 've-section-card');
     const thumb = el('div', { className: 've-thumb-frame' });
@@ -697,11 +758,12 @@ function addSection(at) {
     const fields = schemaAt(`page:${current}`, []).fields?.find((f) => f.name === 'sections')?.types?.find((t) => t.name === type)?.fields ?? block.fields ?? [];
     return card(block.label ?? type, example ?? { type, ...emptyValue({ widget: 'object', fields }) }, example ? 'mit Beispielinhalt' : null);
   });
-  const patterns = slugsIn('patterns').map((slug) => card(`Muster: ${files.get(`${contentDir}/patterns/${slug}.json`).data.title ?? slug}`, { type: 'pattern', pattern: slug }, 'auf mehreren Seiten gleich'));
+  const patterns = withPatterns ? slugsIn('patterns').map((slug) => card(`Muster: ${titleOf('patterns', slug)}`, { type: 'pattern', pattern: slug }, 'auf mehreren Seiten gleich')) : [];
   grid.replaceChildren(...cards, ...patterns);
   dialog.querySelector('.ve-cancel').onclick = () => dialog.close();
   dialog.showModal();
   for (const thumb of grid.querySelectorAll('.ve-thumb-frame')) thumb.style.setProperty('--ve-scale', thumb.clientWidth / 1200);
+  return picked;
 }
 
 // ---- Dialogs ----
@@ -743,21 +805,54 @@ const statusOf = (entry) => {
 };
 const pageURL = (slug) => `${siteURL}${slug === 'index' ? '' : `${slug}.html`}`;
 
+// The name of a source and what it is, for the top bar and the sidebar.
+function describe(source) {
+  const [kind, slug] = source.split(':');
+  const data = slug !== undefined ? dataOf(source) : null;
+  return {
+    page: { kind: 'Seite', title: data?.title ?? slug },
+    post: { kind: postType?.singular ?? 'Beitrag', title: data?.title ?? slug },
+    pattern: { kind: 'Muster', title: data?.title ?? slug },
+    form: { kind: 'Formular', title: data?.title ?? slug },
+    settings: { kind: 'Website', title: 'Website-Einstellungen' },
+    menus: { kind: 'Website', title: 'Menüs' },
+    redirects: { kind: 'Website', title: 'Weiterleitungen' },
+    media: { kind: 'Website', title: 'Bilder' },
+    users: { kind: 'Website', title: 'Benutzer' },
+  }[kind];
+}
+
 function drawBar() {
   const bar = $('#ve-top');
-  const page = pageData();
+  const shown = view === 'form' ? selection : `page:${current}`;
+  const { kind, title } = describe(shown) ?? {};
+  const data = /^(page|post|pattern|form):/.test(shown) ? dataOf(shown) : null;
   const left = el('div', { className: 've-top-left' });
-  if (editing) {
-    const saveButton = button('Speichern', 'Speichern (Strg+S)', save, 've-primary');
+  if (editing || view === 'form') {
+    const saveButton = button('Speichern', 'Speichern (Strg+S)', save, 've-primary ve-save');
     saveButton.disabled = !isDirty();
-    const undoButton = button('↶', 'Rückgängig (Strg+Z)', undo);
-    const redoButton = button('↷', 'Wiederholen (Strg+Umschalt+Z)', redo);
+    const undoButton = button('', 'Rückgängig (Strg+Z)', undo);
+    const redoButton = button('', 'Wiederholen (Strg+Umschalt+Z)', redo);
+    undoButton.append(el('span', { ariaHidden: 'true' }, '↶'), el('span', { className: 've-btn-text' }, 'Rückgängig'));
+    redoButton.append(el('span', { ariaHidden: 'true' }, '↷'), el('span', { className: 've-btn-text' }, 'Wiederholen'));
     undoButton.disabled = !undoStack.length;
     redoButton.disabled = !redoStack.length;
-    left.append(saveButton, button('Beenden', null, finish, 've-tool'), undoButton, redoButton);
+    left.append(saveButton, ...(view === 'visual' ? [button('Beenden', null, finish, 've-tool')] : []), undoButton, redoButton);
   } else left.append(button('Bearbeiten', null, startEditing, 've-primary'));
-  const center = el('div', { className: 've-top-center' }, el('strong', {}, page?.title ?? current), el('span', {}, `Seite · ${statusOf(page)}${isDirty() ? ' · ungespeicherte Änderungen' : ''}`));
+  const state = el('span', { className: isDirty() ? 've-state ve-unsaved' : 've-state' }, isDirty() ? 'Nicht gespeichert' : 'Alles gespeichert');
+  const center = el('div', { className: 've-top-center' }, el('strong', {}, title ?? ''),
+    el('span', {}, `${kind ?? ''}${data && /^(page|post):/.test(shown) ? ` · ${statusOf(data)}` : ''} · `, state));
   const right = el('div', { className: 've-top-right' });
+  if (view === 'form') {
+    if (hasPreview()) {
+      const toggle = button(showPreview ? 'Vorschau ausblenden' : 'Vorschau zeigen', null, () => { showPreview = !showPreview; layout(); drawBar(); }, `ve-tool${showPreview ? ' ve-on' : ''}`);
+      toggle.setAttribute('aria-pressed', String(showPreview));
+      right.append(toggle);
+    }
+    if (shown.startsWith('page:') && data) right.append(el('a', { href: pageURL(shown.slice(5)), target: '_blank', rel: 'noopener', className: 've-tool', title: 'Veröffentlichte Seite in neuem Tab' }, 'Ansehen ↗'));
+    bar.replaceChildren(left, center, right);
+    return;
+  }
   if (editing) {
     const lock = button(locked ? 'Layout gesperrt' : 'Layout entsperrt', locked ? 'Entsperren, um Abschnitte und Einträge hinzuzufügen, zu verschieben und zu entfernen' : 'Sperren: nur Texte und Bilder ändern', () => { locked = !locked; drawBar(); paint(); }, `ve-tool ve-lock${locked ? '' : ' ve-unlocked'}`);
     lock.setAttribute('aria-pressed', String(!locked));
@@ -787,15 +882,22 @@ async function save() {
     else changes.push({ operation: f.saved === null ? 'create' : 'update', path, ...(f.sha && { sha: f.sha }), content: encodeBase64(new TextEncoder().encode(fileText(f.data))) });
   }
   for (const [path, u] of uploads) if (!u.saved) changes.push({ operation: 'create', path, content: u.base64 });
+  for (const path of removed) changes.push({ operation: 'delete', path });
   if (!changes.length) return;
-  const titles = changes.filter((c) => c.path.endsWith('.json')).map((c) => files.get(c.path)?.data?.title ?? c.path.split('/').pop().replace(/\.json$/, ''));
+  const titles = changes.filter((c) => c.path.endsWith('.json')).map((c) => {
+    const data = files.get(c.path)?.data ?? JSON.parse(files.get(c.path)?.saved ?? '{}');
+    return data.title ?? describe(Object.keys(SETTINGS).find((k) => fileOf(k) === c.path) ?? '')?.title ?? c.path.split('/').pop().replace(/\.json$/, '');
+  });
+  const images = changes.filter((c) => !c.path.endsWith('.json')).map((c) => c.path.split('/').pop());
   toast('Wird gespeichert …');
-  const request = api(`${REPO}/contents`, { method: 'POST', body: { branch, message: `Visueller Editor: ${[...new Set(titles)].join(', ') || 'Bilder'}`, files: changes } });
+  const message = `Geändert: ${[...new Set(titles), ...images].join(', ')}`;
+  const request = api(`${REPO}/contents`, { method: 'POST', body: { branch, message, files: changes } });
   saving = request.catch(() => {});
   try {
     const result = await request;
     for (const [i, c] of changes.entries()) {
       if (uploads.has(c.path)) { uploads.get(c.path).saved = true; continue; }
+      if (removed.has(c.path)) { removed.delete(c.path); delete media[c.path]; continue; }
       const f = files.get(c.path);
       if (!f) continue;
       if (c.operation === 'delete') {
@@ -811,6 +913,7 @@ async function save() {
   }
   drawBar();
   drawPages();
+  if (view === 'form' && selection === 'media') drawForm();
 }
 
 async function finish() {
@@ -820,6 +923,7 @@ async function finish() {
     if (choice === 'other') { await save(); if (isDirty()) return; } else {
       for (const [path, f] of [...files]) { if (f.saved === null) files.delete(path); else f.data = JSON.parse(f.saved); }
       for (const [path, u] of [...uploads]) if (!u.saved) { uploads.delete(path); delete media[path]; }
+      removed.clear();
     }
   }
   undoStack.length = 0;
@@ -842,8 +946,9 @@ function toast(text, error = false) {
 
 function shortcuts(event, inField) {
   const mod = event.ctrlKey || event.metaKey;
-  if (mod && event.key.toLowerCase() === 's') { event.preventDefault(); if (editing) save(); return; }
-  if (!editing || inField || !mod) return;
+  const on = editing || view === 'form';
+  if (mod && event.key.toLowerCase() === 's') { event.preventDefault(); if (on) save(); return; }
+  if (!on || inField || !mod) return;
   if (event.key.toLowerCase() === 'z') { event.preventDefault(); if (event.shiftKey) redo(); else undo(); }
   if (event.key.toLowerCase() === 'y') { event.preventDefault(); redo(); }
 }
@@ -854,55 +959,168 @@ document.addEventListener('keydown', (event) => {
 window.addEventListener('beforeunload', (event) => { if (isDirty()) event.preventDefault(); });
 $('#ve-stage').addEventListener('mouseleave', () => { hover = {}; paint(); });
 
-// ---- Pages panel ----
+// ---- Sidebar: everything that can be opened, the same in both views ----
 function openPage(slug) {
   current = slug;
+  if (view === 'form') selection = `page:${slug}`;
   selected = null;
   closePanel();
   win.scrollTo(0, 0);
   draw();
+  if (view === 'form') drawForm(); else layout();
 }
 
+// Opens a source (page:<slug>, post:<slug>, pattern:<slug>, form:<slug>, settings, menus,
+// redirects) or `media` / `users`. The page view shows pages and opens the rest in its side panel;
+// what has no page of its own (patterns, images, users) opens in the form view.
+function open(source) {
+  const [kind, slug] = source.split(':');
+  if (view === 'visual') {
+    if (kind === 'page') return openPage(slug);
+    if (kind === 'post') return openPost(slug);
+    if (['settings', 'menus', 'redirects', 'form'].includes(kind)) return openPanel(describe(source).title, source, []);
+    return setView('form', source);
+  }
+  if (kind === 'page') return openPage(slug);
+  selection = source;
+  closePanel();
+  win.scrollTo(0, 0);
+  draw();
+  drawForm();
+}
+
+function setView(next, source) {
+  const target = source ?? (next === 'form' ? `page:${current}` : selection);
+  view = next;
+  localStorage.setItem('werft.view', view);
+  hover = {};
+  selected = null;
+  closePanel();
+  // Unsaved changes made in the form keep "Speichern" in view on the page.
+  if (view === 'visual' && isDirty()) editing = true;
+  if (view === 'form') selection = target;
+  else if (target.startsWith('page:') && dataOf(target)) current = target.slice(5);
+  layout();
+  draw();
+  if (view === 'form') drawForm();
+  else if (!target.startsWith('page:') && /^(post|settings|menus|redirects|form)\b/.test(target) && dataOf(target)) open(target);
+}
+
+// The view and whether the form view shows its preview, for the stylesheet; the address keeps both.
+function layout() {
+  const app = $('#ve-app');
+  app.dataset.view = view;
+  app.dataset.preview = String(view === 'visual' || (showPreview && hasPreview()));
+  for (const b of document.querySelectorAll('.ve-views button')) b.setAttribute('aria-pressed', String(b.dataset.view === view));
+  $('#ve-form').hidden = view !== 'form';
+  history.replaceState(null, '', `#${view}/${encodeURIComponent(view === 'form' ? selection : `page:${current}`)}`);
+}
+
+// The form view's preview: the page at a common laptop width, scaled down to the room beside the
+// form.
+const stage = $('#ve-stage');
+const PREVIEW_WIDTH = 1200;
+new ResizeObserver(() => {
+  if (!stage.clientWidth) return;
+  const scale = Math.min(1, stage.clientWidth / PREVIEW_WIDTH);
+  const style = $('#ve-app').style;
+  style.setProperty('--ve-preview-width', `${Math.max(PREVIEW_WIDTH, stage.clientWidth)}px`);
+  style.setProperty('--ve-preview-scale', scale);
+  style.setProperty('--ve-preview-height', `${stage.clientHeight / scale}px`);
+}).observe(stage);
+
+let formHandle = null;
+let formShows = null;
+function drawForm() {
+  const main = $('#ve-form');
+  const scroll = formShows === selection ? main.scrollTop : 0;
+  const show = selection === 'media' ? mediaView : selection === 'users' ? usersView : formView;
+  formHandle = show(app, main);
+  main.scrollTop = scroll;
+  formShows = selection;
+  layout();
+}
+
+let postsOpen = false;
+let moreOpen = false;
 function drawPages() {
   const list = $('#ve-pages');
+  const shown = view === 'form' ? selection : `page:${current}`;
+  const changed = new Set(changedPaths());
   const pages = slugsIn('pages').map((slug) => ({ slug, data: files.get(`${contentDir}/pages/${slug}.json`).data }))
     .sort((a, b) => (b.slug === 'index') - (a.slug === 'index') || String(a.data.title ?? a.slug).localeCompare(String(b.data.title ?? b.slug), 'de'));
-  const item = (label, sub, isCurrent, onOpen, onSettings) => {
+  // The second line names only what is worth noticing: the home page, a status other than published.
+  const note = (...parts) => parts.filter(Boolean).join(' · ');
+  const unusual = (data) => (statusOf(data) === STATUS.published ? '' : statusOf(data));
+  const item = (source, label, sub, onSettings) => {
+    const isCurrent = source === shown;
     const row = el('li', { className: isCurrent ? 've-current' : '' });
-    const open = button('', null, onOpen, 've-page');
-    open.append(el('span', {}, label), el('small', {}, sub));
-    if (isCurrent) open.setAttribute('aria-current', 'page');
-    row.append(open);
-    if (onSettings) row.append(button('⚙', `Einstellungen: ${label}`, onSettings, 've-icon'));
+    const openButton = button('', null, () => open(source), 've-page');
+    const edited = /:/.test(source) && changed.has(fileOf(source));
+    openButton.append(el('span', {}, label));
+    if (sub || edited) openButton.append(el('small', {}, sub, edited ? el('b', { className: 've-edited' }, `${sub ? ' · ' : ''}geändert`) : null));
+    if (isCurrent) openButton.setAttribute('aria-current', 'page');
+    row.append(openButton);
+    if (onSettings && view === 'visual') row.append(button('⚙', `Einstellungen: ${label}`, onSettings, 've-icon'));
     return row;
+  };
+  const group = (title, ...children) => el('section', { className: 've-group' }, el('h2', {}, title), ...children);
+  const folded = (title, isOpen, onToggle, ...children) => {
+    const details = el('details', { className: 've-group ve-folded', open: isOpen }, el('summary', {}, title), ...children);
+    details.addEventListener('toggle', () => onToggle(details.open));
+    return details;
   };
   const sections = [];
   if (can('content')) {
-    sections.push(el('h2', {}, 'Seiten'), el('ul', {}, ...pages.map(({ slug, data }) => item(data.title ?? slug, `${slug === 'index' ? 'Startseite' : `${slug}.html`} · ${statusOf(data)}${changedPaths().includes(`${contentDir}/pages/${slug}.json`) ? ' · geändert' : ''}`,
-      slug === current, () => openPage(slug), () => { if (slug !== current) openPage(slug); pageSettings(); }))),
-    button('+ Neue Seite', null, newPage, 've-tool ve-wide'));
+    sections.push(group('Seiten', el('ul', {}, ...pages.map(({ slug, data }) => item(`page:${slug}`, data.title ?? slug, note(slug === 'index' && 'Startseite', unusual(data)),
+      () => { if (slug !== current) openPage(slug); pageSettings(); }))),
+    button('+ Neue Seite', null, newPage, 've-tool ve-wide')));
   }
   if (postType && can('post')) {
+    const date = postType.date ?? 'publish_date';
     const posts = slugsIn(postType.name).map((slug) => ({ slug, data: files.get(`${contentDir}/${postType.name}/${slug}.json`).data }))
-      .sort((a, b) => String(b.data[postType.date ?? 'publish_date'] ?? '').localeCompare(String(a.data[postType.date ?? 'publish_date'] ?? '')));
-    const postList = el('ul', {}, ...posts.map(({ slug, data }) => item(data.title ?? slug, statusOf(data), false, () => openPost(slug))));
-    sections.push(el('details', { className: 've-posts' }, el('summary', {}, postType.label), postList, button(`+ ${postType.singular ?? 'Beitrag'}`, null, newPost, 've-tool ve-wide')));
+      .sort((a, b) => String(b.data[date] ?? '').localeCompare(String(a.data[date] ?? '')));
+    const when = (data) => (data[date] ? new Date(data[date]).toLocaleDateString('de-DE') : '');
+    sections.push(folded(`${postType.label} (${posts.length})`, postsOpen || shown.startsWith('post:'), (o) => { postsOpen = o; },
+      button(`+ ${postType.singular ?? 'Beitrag'} anlegen`, null, newPost, 've-tool ve-wide'),
+      el('ul', {}, ...posts.map(({ slug, data }) => item(`post:${slug}`, data.title ?? slug, note(when(data), unusual(data)))))));
   }
   const siteList = el('ul', {});
-  if (can('settings')) siteList.append(item('Website-Einstellungen', 'Name, Kontakt, Kopf- und Fußzeile', false, () => openPanel('Website-Einstellungen', 'settings', [])));
-  if (can('structure') && settingsFile('menus')) siteList.append(item('Menüs', 'Navigation', false, () => openPanel('Menüs', 'menus', [])));
-  if (siteList.children.length) sections.push(el('h2', {}, 'Website'), siteList);
+  if (can('settings')) siteList.append(item('settings', 'Website-Einstellungen', 'Name, Kontakt, Kopf- und Fußzeile'));
+  if (can('structure') && settingsFile('menus')) siteList.append(item('menus', 'Menüs', 'Navigation'));
+  if (can('media')) siteList.append(item('media', 'Bilder', 'Alle Bilder, neue hochladen'));
+  if (me.role === 'administrator') siteList.append(item('users', 'Benutzer', 'Wer die Website bearbeiten darf'));
+  if (siteList.children.length) sections.push(group('Website', siteList));
+  const more = [];
+  if (can('content')) {
+    more.push(el('h3', {}, 'Muster'), el('p', { className: 've-hint' }, 'Abschnitte, die auf mehreren Seiten gleich erscheinen.'),
+      el('ul', {}, ...slugsIn('patterns').map((slug) => item(`pattern:${slug}`, titleOf('patterns', slug), 'Muster'))),
+      button('+ Neues Muster', null, () => newEntry('pattern'), 've-tool ve-wide'));
+    if (collection('forms')) {
+      more.push(el('h3', {}, 'Formulare'), el('ul', {}, ...slugsIn('forms').map((slug) => item(`form:${slug}`, titleOf('forms', slug), 'Formular'))),
+        button('+ Neues Formular', null, () => newEntry('form'), 've-tool ve-wide'));
+    }
+  }
+  if (can('structure')) more.push(el('h3', {}, 'Weiterleitungen'), el('ul', {}, item('redirects', 'Weiterleitungen', 'Alte Adressen auf neue umleiten')));
+  if (more.length) sections.push(folded('Weitere Inhalte', moreOpen || /^(pattern|form:|redirects)/.test(shown), (o) => { moreOpen = o; }, ...more));
   list.replaceChildren(...sections);
 }
 
 function pageSettings() {
   const fields = (collection('pages')?.fields ?? []).filter((f) => f.name !== 'sections');
-  const extra = current === 'index' ? null : button('Seite löschen', null, async () => {
-    if (await confirmDialog('Seite löschen?', `„${pageData().title ?? current}“ wird beim nächsten Speichern gelöscht.`, 'Löschen')) {
-      change(() => { files.get(fileOf(`page:${current}`)).data = null; });
-    }
-  }, 've-tool ve-danger');
+  const extra = current === 'index' ? null : button('Seite löschen', null, () => removeEntry(`page:${current}`), 've-tool ve-danger');
   openPanel('Seiteneinstellungen', `page:${current}`, [], { fields, extra });
+}
+
+// Deletes a page, post, pattern or form with the next save, after asking.
+async function removeEntry(source) {
+  const { kind, title } = describe(source);
+  if (!(await confirmDialog(`${kind} löschen?`, `„${title}“ wird beim nächsten Speichern gelöscht. Bis dahin können Sie es mit „Rückgängig“ zurückholen.`, 'Löschen'))) return;
+  // Leave the entry first: the preview cannot render a page that is gone.
+  const home = slugsIn('pages').find((slug) => slug === 'index') ?? slugsIn('pages').find((slug) => `page:${slug}` !== source);
+  if (source === `page:${current}`) open(`page:${home}`);
+  else if (view === 'form' && selection === source) open(`page:${current}`);
+  change(() => { files.get(fileOf(source)).data = null; });
 }
 
 const slugify = (title) => title.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
@@ -918,14 +1136,23 @@ async function newPage() {
   openPage(slug);
 }
 
+// A new pattern or form, opened in the form view.
+async function newEntry(kind) {
+  const title = await promptDialog(kind === 'pattern' ? 'Neues Muster' : 'Neues Formular', 'Name');
+  if (!title) return;
+  const folder = FOLDERS[kind];
+  const slug = unique(folder, slugify(title));
+  change(() => { files.set(`${contentDir}/${folder}/${slug}.json`, { sha: null, saved: null, data: kind === 'pattern' ? { title, sections: [] } : { title } }); });
+  setView('form', `${kind}:${slug}`);
+}
+
 function openPost(slug) {
+  if (view === 'form') { open(`post:${slug}`); return; }
   // The page that lists the posts stays in view beside the post's details.
   const listing = postType.previewPage;
   if (listing && listing !== current && slugsIn('pages').includes(listing)) openPage(listing);
-  openPanel(`${postType.singular ?? 'Beitrag'}: ${files.get(`${contentDir}/${postType.name}/${slug}.json`).data.title ?? slug}`, `post:${slug}`, [], {
-    extra: button('Löschen', null, async () => {
-      if (await confirmDialog(`${postType.singular ?? 'Beitrag'} löschen?`, 'Wird beim nächsten Speichern gelöscht.', 'Löschen')) change(() => { files.get(fileOf(`post:${slug}`)).data = null; });
-    }, 've-tool ve-danger'),
+  openPanel(`${postType.singular ?? 'Beitrag'}: ${titleOf(postType.name, slug)}`, `post:${slug}`, [], {
+    extra: button('Löschen', null, () => removeEntry(`post:${slug}`), 've-tool ve-danger'),
   });
 }
 async function newPost() {
@@ -936,12 +1163,56 @@ async function newPost() {
   openPost(slug);
 }
 
+// ---- Images ----
+// Adds a file as an upload that is saved with the next save; returns its path on the site.
+async function upload(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const stem = file.name.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '');
+  let path = `${mediaDir}/${stem}`;
+  for (let n = 2; path in media || uploads.has(path); n++) path = `${mediaDir}/${stem.replace(/(\.[^.]+)?$/, `-${n}$1`)}`;
+  uploads.set(path, { base64: encodeBase64(bytes), url: URL.createObjectURL(file), saved: false });
+  // The theme sees the new file as one of the site's images, with its size.
+  media[path] = imageSize(bytes) ?? {};
+  drawBar();
+  return path;
+}
+const images = () => [...new Set([...uploads.keys(), ...Object.keys(media).filter((p) => p.startsWith(`${mediaDir}/`))])].filter((p) => !removed.has(p));
+// The entries that name an image.
+function usesOf(path) {
+  return [...files].filter(([, f]) => f.data && JSON.stringify(f.data).includes(path))
+    .map(([p]) => p.slice(contentDir.length + 1).replace(/\.json$/, ''))
+    .map((rest) => { const [folder, slug] = rest.split('/'); const kind = Object.keys(FOLDERS).find((k) => FOLDERS[k] === folder); return kind ? `${kind}:${slug}` : Object.keys(SETTINGS).find((k) => SETTINGS[k] === slug); })
+    .filter(Boolean).map((source) => describe(source)?.title);
+}
+function removeImage(path) {
+  const u = uploads.get(path);
+  if (u && !u.saved) { uploads.delete(path); delete media[path]; refresh(); drawBar(); } else change(() => removed.add(path));
+}
+
+// What the form view, the image library and the user list use of the editor.
+const app = {
+  site, theme, me, can, schema, branch, REPO, api, el, button,
+  get selection() { return selection; },
+  dataOf, describe, topFields, schemaAt, statusOf, sharedNote, fileOf,
+  savedText: (source) => files.get(fileOf(source))?.saved ?? null,
+  snapshot, pushUndo: (snap) => { undoStack.push(snap); if (undoStack.length > 100) undoStack.shift(); redoStack.length = 0; },
+  // After a change in a form: the top bar at once, the preview once typing pauses.
+  changed() { drawBar(); clearTimeout(drawSoon); drawSoon = setTimeout(draw, 300); },
+  change, open, removeEntry, confirmDialog, toast, formContext,
+  replaceData: (source, data) => { dataOf(source); files.get(fileOf(source)).data = data; },
+  images, mediaURL, upload, usesOf, removeImage, mayDeleteImages: ['administrator', 'editor'].includes(me.role),
+  isUnsaved: (path) => uploads.has(path) && !uploads.get(path).saved,
+};
+
 // ---- Start ----
 $('#ve-user').textContent = me.name ?? me.email;
 $('#ve-site').textContent = site.name;
-$('#ve-classic').href = './';
-if (me.role !== 'administrator') $('#ve-users').remove();
-$('#ve-signout').addEventListener('click', () => { signOut(); location.href = './visual.html'; });
+$('#ve-signout').addEventListener('click', () => { signOut(); location.href = './'; });
+for (const b of document.querySelectorAll('.ve-views button')) b.addEventListener('click', () => { if (b.dataset.view !== view) setView(b.dataset.view); });
 $('#ve-app').hidden = false;
-draw();
+if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'users'].includes(hashOpen)) {
+  if (hashOpen.startsWith('page:')) current = hashOpen.slice(5);
+  selection = hashOpen;
+}
+setView(view, selection);
 api('/tick').catch(() => {});

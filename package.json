@@ -1,7 +1,7 @@
 {
   "name": "werft",
   "version": "0.3.0",
-  "description": "Git-based, host-independent CMS core: static build, theme API, admin (Sveltia CMS) and auth gateway.",
+  "description": "Git-based, host-independent CMS: static build, theme API, editor and auth gateway.",
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -21,7 +21,6 @@
     "update-sites": "node scripts/release.js sites"
   },
   "dependencies": {
-    "@sveltia/cms": "0.235.0",
     "marked": "^18.1.1"
   },
   "files": [

@@ -1,9 +1,8 @@
-// Session of the werft admin. The tokens live where Sveltia CMS keeps its signed-in user, so the CMS
-// signs in automatically with the same session and renews it with the same refresh token.
-const KEY = 'sveltia-cms.user';
+// Session of the werft admin: the gateway's access and refresh tokens, kept in the browser.
+const KEY = 'werft.session';
 
 export const stored = () => { try { return JSON.parse(localStorage.getItem(KEY)) ?? {}; } catch { return {}; } };
-export const store = (tokens) => localStorage.setItem(KEY, JSON.stringify({ ...stored(), backendName: 'gitea', token: tokens.access_token, refreshToken: tokens.refresh_token }));
+export const store = (tokens) => localStorage.setItem(KEY, JSON.stringify({ token: tokens.access_token, refreshToken: tokens.refresh_token }));
 export const signOut = () => localStorage.removeItem(KEY);
 
 async function refresh() {
@@ -65,22 +64,4 @@ export async function loadSite() {
   const site = (await import(configURL)).default;
   const theme = (await import(new URL(site.theme, configURL))).default;
   return { site, theme, base: site.base ? `/${site.base.replace(/^\/+|\/+$/g, '')}/` : '/' };
-}
-
-// Small bar with werft's own pages next to the CMS.
-export function toolbar(me, current) {
-  const nav = document.createElement('nav');
-  nav.className = 'werft-bar';
-  nav.setAttribute('aria-label', 'werft');
-  const links = [['./', 'Inhalte'], ['visual.html', 'Visueller Editor'], ['revisions.html', 'Versionen'], ...(me.role === 'administrator' ? [['users.html', 'Benutzer']] : [])];
-  nav.innerHTML = links.map(([href, label]) => `<a href="${href}"${label === current ? ' aria-current="page"' : ''}>${label}</a>`).join('');
-  // Sveltia CMS gives every link to another page target="_blank" when the mouse is pressed on it
-  // (a mousedown listener on the body); werft's pages open in the same tab.
-  nav.addEventListener('mousedown', (event) => event.stopPropagation());
-  const out = document.createElement('button');
-  out.type = 'button';
-  out.textContent = 'Abmelden';
-  out.addEventListener('click', () => { signOut(); location.href = './'; });
-  nav.append(out);
-  document.body.append(nav);
 }

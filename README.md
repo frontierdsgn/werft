@@ -5,9 +5,9 @@ theme turns it into static HTML, and editors work in a browser admin at `/admin`
 logins and WordPress-style roles. The same site runs on Cloudflare Pages, on any Node server, and
 (with a build host) on PHP web space such as IONOS.
 
-werft is version 0.3.0, licensed MIT. The admin is [Sveltia CMS](https://github.com/sveltia/sveltia-cms)
-(MIT), used unmodified; werft adds the parts Sveltia lacks. Why Sveltia and not another CMS:
-[EVALUATION.md](EVALUATION.md).
+werft is version 0.3.0, licensed MIT. The admin is werft's own editor, built for people who are not
+technical: plain German labels, one clear action per place, one screen with two views of the same
+content. Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 
 ## How it fits together
 
@@ -15,12 +15,12 @@ werft is version 0.3.0, licensed MIT. The admin is [Sveltia CMS](https://github.
  Browser                         Host (Cloudflare Pages, Node, …)
 ┌──────────────────────┐        ┌──────────────────────────────────────┐
 │ /admin               │  HTTP  │ gateway  /api/werft/...              │
-│ Sveltia CMS          ├───────▶│  sign-in, users, roles, scheduling   │
-│ + werft preview,     │        │  Gitea API subset for Sveltia        │
-│   visual editor,     │        └──────────────────┬───────────────────┘
-│   Versionen,         │                           │ one commit per save
-│   Benutzer pages     │                           │
-└──────────────────────┘                           ▼
+│ werft editor:        ├───────▶│  sign-in, users, roles, scheduling,  │
+│  form view,          │        │  file API (read, save, versions)     │
+│  on-page view,       │        └──────────────────┬───────────────────┘
+│  live preview        │                           │ one commit per save
+└──────────────────────┘                           │
+                                                   ▼
                                 ┌──────────────────────────────────────┐
                                 │ git: local checkout or GitHub (REST) │
                                 └──────────────────┬───────────────────┘
@@ -31,8 +31,12 @@ werft is version 0.3.0, licensed MIT. The admin is [Sveltia CMS](https://github.
                                 └──────────────────────────────────────┘
 ```
 
-- **Gateway** ([gateway/core.js](gateway/core.js)): speaks the part of the Gitea API that Sveltia's
-  Gitea backend uses, so Sveltia needs no changes. It signs editors in with werft's own users
+- **Editor** ([admin/editor.js](admin/editor.js)): one app with a shared sidebar and two views,
+  "Formular" ([form-view.js](admin/form-view.js), fields beside a live preview) and "Auf der Seite"
+  (editing on the rendered page). Both read the fields from the site's schema
+  ([lib/schema.js](lib/schema.js)) and share undo, saving and the unsaved state.
+- **Gateway** ([gateway/core.js](gateway/core.js)): a small file API in the shape of Gitea's (tree,
+  file contents, one commit for many files, history). It signs editors in with werft's own users
   (`.werft/users.json`, PBKDF2 password hashes), checks every change against the editor's role, and
   stores it through a storage driver. It uses only the Fetch API and Web Crypto, so the same code
   runs on Node and Cloudflare.
@@ -49,37 +53,45 @@ werft is version 0.3.0, licensed MIT. The admin is [Sveltia CMS](https://github.
 
 | WordPress | werft |
 |---|---|
-| Login at /admin, users, roles | Own e-mail/password logins, no GitHub account needed. Roles Administrator, Redakteur, Autor, Mitarbeiter with WordPress's rules ([roles.js](gateway/roles.js)), enforced by the gateway. Users page for administrators. |
+| Login at /admin, users, roles | Own e-mail/password logins, no GitHub account needed. Roles Administrator, Redakteur, Autor, Mitarbeiter with WordPress's rules ([roles.js](gateway/roles.js)), enforced by the gateway. "Benutzer" in the editor for administrators. |
 | Pages and posts | Pages built from sections (the theme's blocks), plus one post type per theme (e.g. events). Add, delete, reorder sections. |
 | Draft, pending review, publish, schedule | Status per entry; a publish date in the future schedules it (see [Scheduling](#scheduling)). Contributors are offered only "Entwurf" and "Zur Prüfung"; when the gateway refuses a change for the editor's role, the admin says so instead of "try again later". |
-| Visual editing, preview | The [visual editor](#visual-editor): click a text on the page and type, click an image to swap it. The classic form editor (Sveltia) stays beside it: form beside a live preview rendered by the site's own theme. A post without a page of its own (no `renderPost` in the theme) is previewed marked on the page that lists it, else alone in the theme's listing section, else as a card of its fields. |
-| Media library, alt text | Sveltia's media library; images are fields with file, alt text and caption. |
+| Visual editing, preview | Two views of the same [editor](#editor), switched at the top of the sidebar: "Formular" shows the fields beside a live preview rendered by the site's own theme (a click on a section in the preview opens it in the form); "Auf der Seite" edits on the page itself. A post without a page of its own (no `renderPost` in the theme) is previewed marked on the page that lists it, else alone in the theme's listing section, else as a card of its fields. |
+| Media library, alt text | "Bilder": all images with where each is used; upload several at once, delete only unused ones (Administrator, Redakteur). Images are fields with file, alt text and caption. |
 | Menus, site settings, SEO | Menu locations the theme declares; site settings; SEO title, description and noindex per page. |
-| Revisions | Every save is a git commit. The Versionen page compares any version with the current one by content (the key order and the `false` defaults the CMS writes are no changes) and restores it after asking. |
+| Revisions | Every save is a git commit. "Frühere Versionen" under each entry compares a version with the current one by content and brings it back as an unsaved change. |
 | Reusable blocks | Patterns: sections shared by several pages. |
 | Forms, redirects | Form definitions edited in the admin (the theme renders them); redirects written as `_redirects` and `.htaccess` (`/alt/*` to `/neu/:splat` works in both). |
 
-## Visual editor
+## Editor
 
-`/admin/visual.html` ("Visueller Editor" in the admin's toolbar) shows the site as the theme renders
-it and edits it there, like Squarespace's page editor:
+`/admin` is one app. The sidebar lists everything that can be edited (pages, the theme's post type,
+site settings, menus, images, users; patterns, forms and redirects folded under "Weitere Inhalte")
+and is the same in both views. A switch at its top changes the view; the editor remembers the last
+one, and unsaved changes, undo and "Speichern" carry over between them.
 
-- Hover outlines a section; a click on a text edits it in place (rich text gets a bar for bold,
-  italic, links, headings and lists), a click on an image opens the media library with upload. Texts
+- **Formular** (the default): the entry as cards, from the top: title and main fields, the sections
+  as a list to open, move and remove ("Abschnitt hinzufügen" shows the theme's blocks and patterns
+  with thumbnails), "Sichtbarkeit" as choices with a sentence each, SEO folded, "Frühere Versionen".
+  The live preview sits beside it, renders the page at 1200 px width scaled to fit, and can be
+  hidden. Text is 15 px and controls 36–38 px high, so the form and the preview both have room;
+  actions carry words, only the move and remove tools in lists are icons with tooltips, and every
+  removal asks first.
+- **Auf der Seite**: the site as the theme renders it, edited there like Squarespace's page editor.
+  Hover outlines a section; a click on a text edits it in place (rich text gets a bar for bold,
+  italic, links, headings and lists), a click on an image opens the image picker with upload. Texts
   that cannot be edited in place (a link address, a value the theme turns into a class or an
   anchor) open a small dialog; "Abschnitt bearbeiten" shows all fields of a section as a form.
-- Layout follows the theme: no free positioning or resizing. Behind the lock ("Layout gesperrt")
-  sections and list items can be added from the theme's blocks and patterns (with thumbnails),
-  duplicated, moved and removed.
-- Undo and redo (Ctrl+Z, Ctrl+Y), desktop and mobile width, a pages list with page settings, new
-  pages and posts, site settings and menus.
-- "Speichern" (Ctrl+S) writes every changed file and upload in one commit.
+  Layout follows the theme: no free positioning or resizing. Behind the lock ("Layout gesperrt")
+  sections and list items can be added, duplicated, moved and removed. Desktop and mobile width.
+- Both: undo and redo (Ctrl+Z, Ctrl+Y); "Speichern" (Ctrl+S) writes every changed file and upload in
+  one commit. "Benutzer" (administrators only) changes users at once, without "Speichern".
 
-How it finds the content on the page ([visual-map.js](admin/visual-map.js)): it renders the page a
-second time with each text wrapped in invisible private-use markers and keeps a marker only where
-the page without markers is unchanged, so a value the theme compares or slugifies is never marked.
-Themes need nothing extra. Theme scripts do not run in the editor (e.g. a mobile menu shows open),
-and the classic editor ("Klassische Ansicht") remains for everything else.
+How "Auf der Seite" finds the content on the page ([visual-map.js](admin/visual-map.js)): it renders
+the page a second time with each text wrapped in invisible private-use markers and keeps a marker
+only where the page without markers is unchanged, so a value the theme compares or slugifies is
+never marked. Themes need nothing extra. Theme scripts do not run in the editor (e.g. a mobile menu
+shows open).
 
 ## Commands
 
@@ -268,12 +280,9 @@ Dates are entered in the editor's time zone and stored in UTC.
 
 ## Browser and host requirements
 
-- Admin: a current Chrome, Edge, Brave, Firefox or Safari (Sveltia uses `Uint8Array.prototype.toHex`,
-  available since Chrome 140, Firefox 133 and Safari 18.2).
+- Admin: a current Chrome, Edge, Brave, Firefox or Safari (import maps and ES modules). It loads
+  nothing from other hosts and uses the system font.
 - Build and `werft serve`: Node 20 or newer. Receiver: PHP 7.4 or newer.
-- The admin loads its fonts from cdn.jsdelivr.net: werft serves Sveltia's prebuilt bundle, and only
-  Sveltia's module build (which needs a bundler such as Vite) avoids that. The public site loads
-  nothing from there.
 
 ## Releasing
 
@@ -299,12 +308,6 @@ checkouts alone; pull afterwards.
 
 ## Known limits
 
-- Sveltia trims leading and trailing spaces of text fields on save; themes must add separators
-  themselves.
-- Sveltia rewrites a content file in its field order when it saves it, and writes default values
-  (e.g. `"noindex": false`). The built HTML does not change.
-- Sveltia's media dialog lists stock photo services (Pexels, Pixabay, Unsplash); they only work
-  with an API key the editor enters.
 - On Cloudflare each call of `/api/werft/tick` reads the content from GitHub with a handful of API
   requests, which count against the token's or the app installation's rate limit; a cron every
   few minutes is fine.
