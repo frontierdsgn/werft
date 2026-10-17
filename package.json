@@ -1,6 +1,6 @@
 {
   "name": "werft",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Git-based, host-independent CMS: static build, theme API, editor and auth gateway.",
   "type": "module",
   "license": "MIT",
