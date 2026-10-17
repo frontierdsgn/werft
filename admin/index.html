@@ -6,8 +6,48 @@
 <meta name="robots" content="noindex">
 <title>Redaktion</title>
 <link rel="stylesheet" href="./admin.css">
-<script type="importmap">{ "imports": { "werft": "./werft/index.js", "werft/cms-config": "./werft/cms-config.js", "marked": "./vendor/marked.esm.js" } }</script>
-<script type="module" src="./admin.js"></script>
+<script type="importmap">{ "imports": { "werft": "./werft/index.js", "werft/schema": "./werft/schema.js", "marked": "./vendor/marked.esm.js" } }</script>
+<script type="module" src="./editor.js"></script>
 </head>
-<body></body>
+<body>
+<div id="ve-app" hidden>
+<aside id="ve-side" aria-label="Inhalte">
+  <header><strong id="ve-site"></strong><span id="ve-user"></span></header>
+  <div class="ve-views" role="group" aria-label="Ansicht">
+    <button type="button" data-view="form">Formular</button>
+    <button type="button" data-view="visual">Auf der Seite</button>
+  </div>
+  <nav id="ve-pages"></nav>
+  <footer><button type="button" id="ve-signout">Abmelden</button></footer>
+</aside>
+<div id="ve-main">
+  <div id="ve-top" role="toolbar" aria-label="Editor"></div>
+  <div id="ve-body">
+    <main id="ve-form" hidden></main>
+    <div id="ve-stage" data-device="desktop">
+      <div id="ve-device">
+        <iframe id="ve-frame" title="Vorschau der Seite"></iframe>
+        <div id="ve-overlay"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<aside id="ve-panel" hidden aria-label="Einstellungen"></aside>
+<div id="ve-toast" role="status" hidden></div>
+
+<dialog id="ve-sections" class="ve-dialog ve-wide-dialog" aria-labelledby="ve-sections-title">
+  <header><h2 id="ve-sections-title">Abschnitt hinzufügen</h2><button type="button" class="ve-tool ve-cancel">Schließen</button></header>
+  <p class="ve-hint">Wählen Sie eine Vorlage. Abschnitte mit Beispielinhalt übernehmen den Inhalt eines vorhandenen Abschnitts; ändern Sie ihn danach.</p>
+  <div class="ve-section-grid"></div>
+</dialog>
+<dialog id="ve-media" class="ve-dialog ve-wide-dialog" aria-labelledby="ve-media-title">
+  <header><h2 id="ve-media-title">Bild wählen</h2><button type="button" class="ve-tool ve-cancel">Abbrechen</button></header>
+  <label class="ve-upload ve-primary">Neues Bild hochladen …<input type="file" accept="image/jpeg,image/png,image/gif,image/webp"></label>
+  <div class="ve-media-grid"></div>
+</dialog>
+<dialog id="ve-confirm" class="ve-dialog"><form method="dialog"><h2></h2><p></p><div class="ve-actions"></div></form></dialog>
+<dialog id="ve-prompt" class="ve-dialog"><form method="dialog"><h2></h2><label><span></span><input type="text" required></label>
+  <div class="ve-actions"><button value="ok" class="ve-primary">Anlegen</button><button value="cancel" class="ve-tool" formnovalidate>Abbrechen</button></div></form></dialog>
+</div>
+</body>
 </html>

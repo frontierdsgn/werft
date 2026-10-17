@@ -39,5 +39,12 @@ forking it: own logins and WordPress roles, scheduling, revision restore, and a 
 the site's own theme. Forms and redirects are werft content types. If Sveltia ships its planned
 v1.0 user management, the gateway's login part could be dropped.
 
+**Update (October 2026): werft's own editor replaced Sveltia.** Sveltia's form editor proved hard
+for the site owners' customers, many of them older and not technical, and looked and navigated
+differently from werft's visual editor beside it. werft's editor now has two views of the same
+content (fields beside a live preview, and editing on the page) built from the same schema, in one
+design with plain German labels and explanations. Sveltia's prebuilt bundle and the Gitea API
+parts only Sveltia used are gone; the gateway keeps a small file API.
+
 Alternatives for the owner to weigh: EmDash, if content in a Cloudflare D1 database instead of git
 is acceptable and IONOS is not needed; Grav, if PHP hosting is the priority and Cloudflare is not.

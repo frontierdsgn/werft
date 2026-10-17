@@ -66,24 +66,24 @@ export function formatBar(doc, onChange) {
   const bar = document.createElement('div');
   bar.className = 've-format';
   const commands = [
-    ['B', 'Fett', () => doc.execCommand('bold')],
-    ['I', 'Kursiv', () => doc.execCommand('italic')],
-    ['🔗', 'Link', () => {
+    ['Fett', 'Markierten Text fett', () => doc.execCommand('bold'), 've-fmt-bold'],
+    ['Kursiv', 'Markierten Text kursiv', () => doc.execCommand('italic'), 've-fmt-italic'],
+    ['Link', 'Markierten Text verlinken', () => {
       const url = prompt('Adresse des Links (z. B. kontakt.html oder https://…)');
       if (url) doc.execCommand('createLink', false, url);
     }],
-    ['H2', 'Zwischenüberschrift', () => doc.execCommand('formatBlock', false, 'h2')],
-    ['H3', 'Kleine Überschrift', () => doc.execCommand('formatBlock', false, 'h3')],
-    ['¶', 'Absatz', () => doc.execCommand('formatBlock', false, 'p')],
-    ['•', 'Aufzählung', () => doc.execCommand('insertUnorderedList')],
-    ['1.', 'Nummerierte Liste', () => doc.execCommand('insertOrderedList')],
+    ['Überschrift', 'Zwischenüberschrift', () => doc.execCommand('formatBlock', false, 'h2')],
+    ['Kleine Überschrift', 'Kleine Überschrift', () => doc.execCommand('formatBlock', false, 'h3')],
+    ['Normaler Text', 'Normaler Absatz', () => doc.execCommand('formatBlock', false, 'p')],
+    ['• Liste', 'Aufzählung', () => doc.execCommand('insertUnorderedList')],
+    ['1. Liste', 'Nummerierte Liste', () => doc.execCommand('insertOrderedList')],
   ];
-  for (const [text, label, run] of commands) {
+  for (const [text, label, run, className] of commands) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = text;
     button.title = label;
-    button.setAttribute('aria-label', label);
+    if (className) button.className = className;
     // The selection stays in the edited element while the button is pressed.
     button.addEventListener('mousedown', (event) => event.preventDefault());
     button.addEventListener('click', () => { run(); onChange(); });

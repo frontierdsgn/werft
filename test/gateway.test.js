@@ -1,4 +1,4 @@
-// Gateway contract: sign-in, the Gitea API subset Sveltia uses, conflicts and role checks, against
+// Gateway contract: sign-in, the file API the editor uses, conflicts and role checks, against
 // each storage: a throwaway git repository and an in-memory GitHub.
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -95,7 +95,8 @@ test('lists the site directory without the users file', async () => {
 
 test('commits a change, then refuses a stale one', async () => {
   const token = await signIn('admin@test', 'admin-password');
-  const { data: file } = await call('/contents/content/pages/index.json?ref=main', { token });
+  const { data: { tree } } = await call('/git/trees/main?recursive=1', { token });
+  const file = tree.find((e) => e.path === 'content/pages/index.json');
   const update = (text) => call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'Edit start', files: [{ operation: 'update', path: 'content/pages/index.json', content: b64(text), sha: file.sha }] } });
   const first = await update('{"title":"Neu","status":"published"}\n');
   assert.equal(first.status, 201);
@@ -104,17 +105,6 @@ test('commits a change, then refuses a stale one', async () => {
   assert.equal((await update('{"title":"Alt"}\n')).status, 409);
   const { data: log } = await call('/commits?sha=main&path=content/pages/index.json&limit=100', { token });
   assert.deepEqual(log.map((c) => c.commit.message), ['Edit start', 'init']);
-});
-
-test('names the files saved along with an entry in the commit message', async () => {
-  // Sveltia's message for an entry saved with an upload ends in " +1".
-  const token = await signIn('admin@test', 'admin-password');
-  const files = [
-    { operation: 'create', path: 'assets/img/neu.jpg', content: b64('jpg') },
-    { operation: 'create', path: 'content/pages/upload.json', content: b64('{"title":"U"}') },
-  ];
-  assert.equal((await call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'Neu: Seite „upload“ +1', files } })).status, 201);
-  assert.equal(commits.at(-1).message, 'Neu: Seite „upload“, Datei neu.jpg');
 });
 
 test('moves and deletes files', async () => {
@@ -136,10 +126,11 @@ test('applies WordPress-style roles', async () => {
   const create = (token, path, text) => call('/contents', { token, method: 'POST', body: { branch: 'main', message: 'x', files: [{ operation: 'create', path, content: b64(text) }] } });
   assert.equal((await create(author, 'content/pages/neu.json', '{}')).status, 403, 'authors cannot create pages');
   assert.equal((await create(author, 'content/events/b.json', '{"title":"B","status":"published"}')).status, 201, 'authors publish their own posts');
-  const { data: a } = await call('/contents/content/events/a.json?ref=main', { token: author });
+  const entryOf = async (path) => (await call('/git/trees/main?recursive=1', { token: author })).data.tree.find((e) => e.path === path);
+  const a = await entryOf('content/events/a.json');
   const edit = await call('/contents', { token: author, method: 'POST', body: { branch: 'main', message: 'x', files: [{ operation: 'update', path: 'content/events/a.json', content: b64('{}'), sha: a.sha }] } });
   assert.equal(edit.status, 403, "authors cannot edit someone else's post");
-  const { data: b } = await call('/contents/content/events/b.json?ref=main', { token: author });
+  const b = await entryOf('content/events/b.json');
   const rename = await call('/contents', { token: author, method: 'POST', body: { branch: 'main', message: 'x', files: [{ operation: 'update', from_path: 'content/events/b.json', path: 'content/events/a.json', content: b64('{"title":"B"}'), sha: b.sha }] } });
   assert.equal(rename.status, 422, "renaming onto someone else's post does not replace it");
   assert.equal(store.working('content/events/a.json'), '{"title":"A","status":"published"}\n');
@@ -195,19 +186,13 @@ test('asks for a rebuild when a scheduled entry falls due', async () => {
   assert.deepEqual([data.rebuilt, data.pending, ticks.length], [false, true, 1], 'no second rebuild while the first runs');
 });
 
-test('completes the OAuth code flow with PKCE', async () => {
-  const verifier = 'v'.repeat(43);
-  const challenge = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))).toString('base64url');
-  const query = new URLSearchParams({ client_id: 'werft', redirect_uri: `${ORIGIN}/admin/`, state: 's1', code_challenge: challenge, code_challenge_method: 'S256' });
-  const page = await gateway(new Request(`${ORIGIN}/api/werft/login/oauth/authorize?${query}`));
-  assert.match(await page.text(), /type="password"/);
-  const post = await gateway(new Request(`${ORIGIN}/api/werft/login/oauth/authorize`, { method: 'POST', body: new URLSearchParams({ ...Object.fromEntries(query), email: 'admin@test', password: 'admin-password' }) }));
-  assert.equal(post.status, 302);
-  const back = new URL(post.headers.get('location'));
-  assert.equal(back.searchParams.get('state'), 's1');
-  const token = await call(`${ORIGIN}/api/werft/login/oauth/access_token`, { method: 'POST', body: { grant_type: 'authorization_code', client_id: 'werft', code: back.searchParams.get('code'), redirect_uri: `${ORIGIN}/admin/`, code_verifier: verifier } });
-  assert.ok(token.data.access_token);
-  const wrong = await call(`${ORIGIN}/api/werft/login/oauth/access_token`, { method: 'POST', body: { grant_type: 'authorization_code', code: back.searchParams.get('code'), redirect_uri: `${ORIGIN}/admin/`, code_verifier: 'x'.repeat(43) } });
-  assert.equal(wrong.status, 400);
+test('renews a session with its refresh token only', async () => {
+  const { data: session } = await call(`${ORIGIN}/api/werft/session`, { method: 'POST', body: { email: 'admin@test', password: 'admin-password' } });
+  const renew = (body) => call(`${ORIGIN}/api/werft/login/oauth/access_token`, { method: 'POST', body: { client_id: 'werft', ...body } });
+  const renewed = await renew({ grant_type: 'refresh_token', refresh_token: session.refresh_token });
+  assert.equal(renewed.status, 200);
+  assert.equal((await call(`${ORIGIN}/api/werft/me`, { token: renewed.data.access_token })).data.email, 'admin@test');
+  assert.equal((await renew({ grant_type: 'refresh_token', refresh_token: session.access_token })).status, 400, 'an access token is no refresh token');
+  assert.equal((await renew({ grant_type: 'authorization_code', code: 'x' })).status, 400);
 });
 });
