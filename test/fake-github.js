@@ -1,5 +1,6 @@
 // An in-memory stand-in for the parts of GitHub's REST API that githubStorage uses: refs, the Git
-// data API (blobs, trees, commits) and the commit list with path filter and pagination. With `app`
+// data API (blobs, trees, commits), the commit list with path filter and pagination, and the GraphQL
+// queries it sends (files, a checked forced ref update). With `app`
 // ({ id, slug, publicKey }), it is a GitHub App installed on the repository: it checks the app's
 // JWTs, issues installation tokens and accepts only those on the repository. `now` is its clock.
 import { createHash, verify } from 'node:crypto';
@@ -85,8 +86,16 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
     if (app && u.pathname === `/users/${encodeURIComponent(`${app.slug}[bot]`)}`) return validToken(init) ? json({ login: `${app.slug}[bot]`, id: 9000, type: 'Bot' }) : json({ message: 'Bad credentials' }, 401);
     if (!authorized(init)) return json({ message: 'Bad credentials' }, 401);
     if (u.pathname === '/graphql' && method === 'POST') {
+      const { query, variables } = JSON.parse(init.body);
+      if (query.includes('updateRefs')) {
+        // Only the one update githubStorage sends: a forced move that checks the old value.
+        const branch = variables.ref.replace(/^refs\/heads\//, '');
+        if (refs.get(branch) !== variables.from) return json({ data: { updateRefs: null }, errors: [{ type: 'UNPROCESSABLE', message: 'twirp error' }] });
+        refs.set(branch, variables.to);
+        return json({ data: { updateRefs: { clientMutationId: null } } });
+      }
+      if (query.includes('repository(owner: $owner, name: $name) { id }')) return json({ data: { repository: { id: 'R_1' } } });
       // Answers the blob queries githubStorage.readMany sends: variable eN → alias fN.
-      const { variables } = JSON.parse(init.body);
       const result = {};
       for (const [key, expression] of Object.entries(variables)) {
         if (!/^e\d+$/.test(key)) continue;
@@ -114,11 +123,17 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
     if ((m = path.match(/^\/git\/blobs\/(\w+)$/))) return objects.get(m[1])?.type === 'blob' ? json({ sha: m[1], content: objects.get(m[1]).data, encoding: 'base64' }) : json({}, 404);
     if (path === '/git/blobs' && method === 'POST') return json({ sha: putBlob(Buffer.from(body.content, body.encoding === 'base64' ? 'base64' : 'utf8')) }, 201);
     if (path === '/git/trees' && method === 'POST') {
-      const flat = flatten(body.base_tree);
+      const flat = body.base_tree ? flatten(body.base_tree) : new Map();
       for (const e of body.tree) { if (e.sha === null) flat.delete(e.path); else flat.set(e.path, e.content != null ? putBlob(Buffer.from(e.content, 'utf8')) : e.sha); }
       return json({ sha: writeTree(flat) }, 201);
     }
     if (path === '/git/commits' && method === 'POST') { const sha = makeCommit(body); return json(commitJSON(sha), 201); }
+    if (path === '/git/refs' && method === 'POST') {
+      const branch = body.ref.replace(/^refs\/heads\//, '');
+      if (refs.has(branch)) return json({ message: 'Reference already exists' }, 422);
+      refs.set(branch, body.sha);
+      return json({ ref: body.ref, object: { sha: body.sha } }, 201);
+    }
     if ((m = path.match(/^\/git\/refs\/heads\/(.+)$/)) && method === 'PATCH') {
       const branch = decodeURIComponent(m[1]);
       if (!body.force && !objects.get(body.sha).parents.includes(refs.get(branch))) return json({ message: 'Update is not a fast forward' }, 422);
@@ -146,8 +161,18 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
     return json({ message: `fake: ${method} ${path} not implemented` }, 501);
   }
 
+  // Every file text in the commits a branch leads to.
+  const history = (branch) => {
+    const texts = new Set();
+    for (const queue = refs.has(branch) ? [refs.get(branch)] : []; queue.length;) {
+      const c = objects.get(queue.pop());
+      for (const sha of flatten(c.tree).values()) texts.add(Buffer.from(objects.get(sha).data, 'base64').toString());
+      queue.push(...c.parents);
+    }
+    return texts;
+  };
   const fileAt = (branch, path) => { const sha = flatten(objects.get(refs.get(branch)).tree).get(path); return sha && Buffer.from(objects.get(sha).data, 'base64').toString(); };
   // The app is uninstalled and installed again: a new installation id.
   const reinstall = () => { installation += 1; };
-  return { fetch, seed, fileAt, headCommit: (branch) => objects.get(refs.get(branch)), tokens, reinstall, requests, owner, repo, api };
+  return { fetch, seed, fileAt, history, headCommit: (branch) => objects.get(refs.get(branch)), tokens, reinstall, requests, owner, repo, api };
 }

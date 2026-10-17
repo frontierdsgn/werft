@@ -189,9 +189,11 @@ triggers a Cloudflare build.
    | `WERFT_DEPLOY_HOOK` | optional: a deploy hook URL (Settings → Builds → Deploy hooks), for scheduled publishing |
    | `WERFT_TICK_KEY` | optional, secret: lets a cron service publish scheduled entries (see [Scheduling](#scheduling)) |
    | `WERFT_GITHUB_API` | optional: GitHub Enterprise Server API URL |
+   | `TURNSTILE_SECRET_KEY` | optional, secret: forms then need [Cloudflare Turnstile](#spam) |
 
-4. If the site has forms: Settings → Build → Build watch paths, exclude `*.werft/submissions/*`,
-   so a [form submission](#form-submissions) does not start a build.
+4. If the site has forms: Settings → Builds → Branch control → Preview branches: "Custom branches",
+   include `*`, exclude `werft-submissions` (or "None"), so a [form submission](#form-submissions)
+   does not start a build.
 5. Deploy, open `https://<project>.pages.dev/admin/`, sign in with a user from `.werft/users.json`.
 
 With both set, the app is used. Fine-grained tokens expire; renew the token before its expiry date
@@ -223,8 +225,10 @@ files in one GraphQL request and sends text files with the commit; each image co
 one save takes at most 30 files (30 images measured at 39 requests against a stand-in GitHub, 42
 with the GitHub App's token requests). Signing in hashes the password with
 PBKDF2 (100,000 iterations, the most Workers allow); on this machine that takes about 22 ms in Node.
-Whether Cloudflare counts it against the 10 ms limit is unknown: after the first deploy, sign in and
-check the Functions log for CPU-limit errors. If it fails, lower the iterations for a user
+On the free plan, measured on 17 October 2026 with werft 0.4.0 (inselsalon.pages.dev, Cloudflare's
+analytics): a sign-in took 16–18 ms CPU time and went through, as did every other request (opening
+the editor, saving, form submissions, up to 16 ms), with no errors. Cloudflare tolerated the excess
+then; it does not promise to. If sign-ins fail with error 1102, lower the iterations for a user
 (`npx werft user set <email> --password-prompt --iterations 20000`) or use the Workers Paid plan.
 
 ### PHP web space (IONOS and similar)
@@ -286,10 +290,18 @@ Dates are entered in the editor's time zone and stored in UTC.
 
 A form posts to the gateway at `/api/werft/forms/<form>`, where `<form>` is a file in
 `content/forms/` ([submissions.js](gateway/submissions.js)). The gateway commits each submission as
-`.werft/submissions/<form>/<time>-<random>.json`; no other service is involved. Administrators and
-editors read them in the editor under "Einsendungen" (shown when the site has a form), download
-them as CSV and delete them (a deleted submission stays in the git history). Submissions hold personal data: keep the repository
-private.
+`.werft/submissions/<form>/<time>-<random>.json` to the branch `werft-submissions`, which it creates
+with the first one; the site's own branch and history stay untouched, and no other service is
+involved. Administrators and editors read them in the editor under "Einsendungen" (shown when the
+site has a form), download them as CSV and delete them. Submissions hold personal data: keep the
+repository private.
+
+Deleting is final: the gateway replaces `werft-submissions` with one new commit holding the
+remaining submissions and no history, so no branch leads to a deleted submission any more. Copies
+made before stay where they are: a clone that fetched the branch, and on GitHub the old commits,
+which are unreachable but can still be fetched by their id until GitHub cleans them up (GitHub
+Support removes them on request). werft 0.4.0 kept submissions on the site's branch; delete those
+there (`git rm -r .werft/submissions`), they remain in that branch's history.
 
 ```html
 <form method="post" action="/api/werft/forms/newsletter">
@@ -307,10 +319,34 @@ private.
   path on the site the form was on). A request with `Accept: application/json` gets `{ "ok": true }`
   or `{ "message": … }` with the status.
 - A submission is not a content change: `werft serve` does not rebuild for it, and on Cloudflare
-  Pages the build watch paths above keep it from starting a build (the free plan has 500 a month).
+  Pages the excluded preview branch (step 4 above) keeps it from starting a build (the free plan has
+  500 a month). `werft dev` and `werft serve` commit to the local `werft-submissions` branch and
+  leave the working tree alone.
 - On PHP web space the form's `action` is the build host's gateway, e.g.
   `https://<project>.pages.dev/api/werft/forms/newsletter`.
 - No notification is sent; look at "Einsendungen".
+
+### Spam
+
+- `_gotcha` above stops simple bots.
+- Each form takes at most 60 submissions an hour; more get status 429 ("Gerade kommen sehr viele
+  Nachrichten an …"). This bounds what a flood costs in commits and GitHub requests, and it also
+  turns away real visitors while a flood lasts.
+- [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) (free, also outside
+  Cloudflare hosting) stops most bots without a puzzle: create a widget for the site's domain in the
+  Cloudflare dashboard (Turnstile → Add widget), put its site key in the form and its secret key in
+  `TURNSTILE_SECRET_KEY` (Pages environment variable, or the environment of `werft serve`). The
+  gateway then takes only submissions Turnstile confirms, from every form of the site, and does not
+  store the token. The widget loads from Cloudflare: name it in the privacy policy.
+
+```html
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<form method="post" action="/api/werft/forms/newsletter">
+  …
+  <div class="cf-turnstile" data-sitekey="<site key>"></div>
+  <button>Abonnieren</button>
+</form>
+```
 
 ## Browser and host requirements
 

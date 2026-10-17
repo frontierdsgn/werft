@@ -1,6 +1,6 @@
 // Storage on a GitHub repository through its REST API (fetch only: Workers, Node, Deno). Each save
-// is one commit made with the Git data API; the branch only moves forward, so a concurrent save
-// fails instead of overwriting. Paths are relative to `dir`, the site's directory in the repository.
+// is one commit made with the Git data API; the branch only moves forward (or, for a squash, only
+// from the head it was read at), so a concurrent save fails instead of overwriting. Paths are relative to `dir`, the site's directory in the repository.
 //
 // The token needs "Contents: read and write" on that one repository: a fine-grained token, or
 // `auth`, a function resolving to { token, committer } such as githubApp (./github-app.js) returns.
@@ -103,8 +103,24 @@ export function githubStorage({ owner, repo, token, auth = async () => ({ token 
     return Promise.all(entries.map((e) => (e ? read(sha, e.path) : null)));
   }
 
-  async function commit({ branch, parent, message, author, changes }) {
-    const base = await commitObject(parent);
+  // Moves a branch to a commit that does not follow from its head, only if the head is still `from`.
+  // REST can only force such a move unconditionally; GraphQL's updateRefs checks the old value.
+  let repositoryId;
+  async function replaceRef(branch, from, to) {
+    const graphql = async (query, variables) => (await gh('/graphql', { method: 'POST', body: { query, variables }, root: '' })).data;
+    repositoryId ??= (await graphql('query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }', { owner, name: repo })).data.repository.id;
+    const result = await graphql('mutation($id: ID!, $ref: GitRefname!, $from: GitObjectID!, $to: GitObjectID!) { updateRefs(input: { repositoryId: $id, refUpdates: [{ name: $ref, beforeOid: $from, afterOid: $to, force: true }] }) { clientMutationId } }',
+      { id: repositoryId, ref: `refs/heads/${branch}`, from, to });
+    if (!result.errors) return;
+    // GitHub's errors for a changed head vary; the head tells.
+    if ((await head(branch)).sha !== from) throw Object.assign(new Error('The branch has moved on.'), { status: 409 });
+    throw new Error(`GitHub GraphQL: ${result.errors[0].message}`);
+  }
+
+  // parent null creates the branch; squash makes the new commit a root commit, so the branch no
+  // longer leads to its earlier commits.
+  async function commit({ branch, parent, message, author, changes, squash = false }) {
+    const base = parent && await commitObject(parent);
     const entries = await Promise.all(changes.map(async ({ path, data }) => {
       if (!data) return { path: full(path), mode: '100644', type: 'blob', sha: null };
       const text = asText(data);
@@ -112,14 +128,16 @@ export function githubStorage({ owner, repo, token, auth = async () => ({ token 
       const { data: blob } = await gh('/git/blobs', { method: 'POST', body: { content: encodeBase64(data), encoding: 'base64' } });
       return { path: full(path), mode: '100644', type: 'blob', sha: blob.sha };
     }));
-    const { data: newTree } = await gh('/git/trees', { method: 'POST', body: { base_tree: base.tree.sha, tree: entries.map(({ id, ...e }) => e) } });
+    const { data: newTree } = await gh('/git/trees', { method: 'POST', body: { ...(base && { base_tree: base.tree.sha }), tree: entries.map(({ id, ...e }) => e) } });
     const date = new Date().toISOString();
     const { committer } = await auth();
-    const { data: created } = await gh('/git/commits', { method: 'POST', body: { message, tree: newTree.sha, parents: [parent], author: { ...author, date }, ...(committer && { committer: { ...committer, date } }) } });
+    const { data: created } = await gh('/git/commits', { method: 'POST', body: { message, tree: newTree.sha, parents: parent && !squash ? [parent] : [], author: { ...author, date }, ...(committer && { committer: { ...committer, date } }) } });
     try {
-      await gh(`/git/refs/heads/${encodeURIComponent(branch)}`, { method: 'PATCH', body: { sha: created.sha, force: false } });
+      if (!parent) await gh('/git/refs', { method: 'POST', body: { ref: `refs/heads/${branch}`, sha: created.sha } });
+      else if (squash) await replaceRef(branch, parent, created.sha);
+      else await gh(`/git/refs/heads/${encodeURIComponent(branch)}`, { method: 'PATCH', body: { sha: created.sha, force: false } });
     } catch (e) {
-      // Not a fast-forward: someone saved in between.
+      // Not a fast-forward, or the branch exists already: someone saved in between.
       if (e.github === 422 || e.github === 409) throw Object.assign(new Error('The branch has moved on.'), { status: 409 });
       throw e;
     }
