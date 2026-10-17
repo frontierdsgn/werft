@@ -2,7 +2,7 @@
 // file on the repository's branch werft-submissions, away from the site's own history. The files lie
 // under .werft/submissions/, which the build never reads; administrators and editors read and delete
 // them on the admin's "Einsendungen" page. Deleting rewrites that branch as one new commit without
-// history, so a deleted submission is in no branch any more.
+// history (or deletes it when nothing is left), so a deleted submission is in no branch any more.
 //
 //   POST /api/werft/forms/<form>     public; form fields (urlencoded, multipart or JSON)
 //   GET  /api/werft/submissions      every form with its submissions, newest first
@@ -55,11 +55,14 @@ export function submissions({ storage, branch, site, now, turnstileSecret, fetch
   const head = () => storage.head(SUBMISSIONS_BRANCH).then(({ sha }) => sha, (e) => { if (e.status === 404) return null; throw e; });
   const sentAt = async (sha) => (sha ? (await storage.tree(sha)).map((e) => e.path).filter((p) => p.startsWith(`${SUBMISSIONS_DIR}/`) && p.endsWith('.json')) : []);
 
-  // Commits on the newest head, again when another submission or deletion came first.
+  // Commits on the newest head, again when another submission or deletion came first. Without
+  // any submission left, the branch is deleted.
   async function commit(message, changes, squash = false) {
     for (let attempt = 1; ; attempt++) {
       const parent = await head();
       try {
+        const removed = new Set(changes.filter((c) => !c.data).map((c) => c.path));
+        if (squash && (await sentAt(parent)).every((p) => removed.has(p))) return await storage.removeBranch(SUBMISSIONS_BRANCH, parent);
         return await storage.commit({ branch: SUBMISSIONS_BRANCH, parent, squash, message, author: { name: 'werft', email: 'forms@werft.invalid' }, changes });
       } catch (e) {
         if (e.status !== 409 || attempt === 3) throw e;

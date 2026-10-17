@@ -238,6 +238,11 @@ test('keeps form submissions where only administrators and editors read them', a
   assert.ok(!store.reachable('werft-submissions', 'c@d.test'), 'a deleted submission is in no commit of the branch');
   assert.ok(store.reachable('werft-submissions', 'a@b.test'));
   assert.equal((await call(`${ORIGIN}/api/werft/submissions`, { token: admin, method: 'POST', body: { delete: [gone] } })).status, 404);
+  const rest = after.data.forms[0].submissions.map((s) => s.id);
+  const none = await call(`${ORIGIN}/api/werft/submissions`, { token: admin, method: 'POST', body: { delete: rest } });
+  assert.deepEqual(none.data.forms, [{ slug: 'newsletter', title: 'Newsletter', submissions: [] }]);
+  assert.ok(!store.reachable('werft-submissions', 'a@b.test'), 'nothing left: the branch is gone');
+  assert.equal((await send('newsletter', [['email', 'g@h.test']], { accept: 'application/json' })).status, 201, 'and is made again by the next one');
 });
 
 test('takes at most 60 submissions of a form an hour', async () => {

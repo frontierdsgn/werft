@@ -113,7 +113,7 @@ export function githubStorage({ owner, repo, token, auth = async () => ({ token 
       { id: repositoryId, ref: `refs/heads/${branch}`, from, to });
     if (!result.errors) return;
     // GitHub's errors for a changed head vary; the head tells.
-    if ((await head(branch)).sha !== from) throw Object.assign(new Error('The branch has moved on.'), { status: 409 });
+    if ((await head(branch).then((h) => h.sha, () => null)) !== from) throw Object.assign(new Error('The branch has moved on.'), { status: 409 });
     throw new Error(`GitHub GraphQL: ${result.errors[0].message}`);
   }
 
@@ -146,6 +146,9 @@ export function githubStorage({ owner, repo, token, auth = async () => ({ token 
     return { sha: created.sha, date: created.committer?.date ?? date, blobs: blobsByPath };
   }
 
+  // Deletes a branch if its head is still `sha` (GitHub cannot make a commit without files).
+  const removeBranch = (branch, sha) => replaceRef(branch, sha, '0'.repeat(sha.length));
+
   const toEntry = (c) => ({ sha: c.sha, author: { name: c.commit.author.name, email: c.commit.author.email }, date: c.commit.author.date, message: c.commit.message });
 
   async function log({ branch, path, limit = 100 }) {
@@ -162,5 +165,5 @@ export function githubStorage({ owner, repo, token, auth = async () => ({ token 
     return page.data.at(-1)?.commit.author.email ?? null;
   }
 
-  return { kind: 'github', head, tree, read, readMany, commit, log, creator };
+  return { kind: 'github', head, tree, read, readMany, commit, removeBranch, log, creator };
 }

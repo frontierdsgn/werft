@@ -88,10 +88,10 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
     if (u.pathname === '/graphql' && method === 'POST') {
       const { query, variables } = JSON.parse(init.body);
       if (query.includes('updateRefs')) {
-        // Only the one update githubStorage sends: a forced move that checks the old value.
+        // Only the one update githubStorage sends: a forced move or a deletion that checks the old value.
         const branch = variables.ref.replace(/^refs\/heads\//, '');
         if (refs.get(branch) !== variables.from) return json({ data: { updateRefs: null }, errors: [{ type: 'UNPROCESSABLE', message: 'twirp error' }] });
-        refs.set(branch, variables.to);
+        if (/^0+$/.test(variables.to)) refs.delete(branch); else refs.set(branch, variables.to);
         return json({ data: { updateRefs: { clientMutationId: null } } });
       }
       if (query.includes('repository(owner: $owner, name: $name) { id }')) return json({ data: { repository: { id: 'R_1' } } });

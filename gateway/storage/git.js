@@ -103,6 +103,13 @@ export async function gitStorage(siteDir) {
     return run;
   }
 
+  // Deletes a branch if its head is still `sha`.
+  function removeBranch(branch, sha) {
+    const run = queue.then(() => git(top, ['update-ref', '-d', `refs/heads/${branch}`, sha]).catch(() => { throw conflict('The branch has moved on.'); }));
+    queue = run.catch(() => {});
+    return run;
+  }
+
   async function log({ branch, path: p, limit = 100 }) {
     const out = await git(top, ['log', `-n${limit}`, '--format=%H%x00%an%x00%ae%x00%aI%x00%s%x00', `refs/heads/${branch}`, '--', repoPath(p ?? '')]);
     const fields = out.split('\0');
@@ -119,5 +126,5 @@ export async function gitStorage(siteDir) {
     return out.trim().split('\n').filter(Boolean).pop() ?? null;
   }
 
-  return { kind: 'git', root: top, prefix, head, tree, read, commit, log, creator };
+  return { kind: 'git', root: top, prefix, head, tree, read, commit, removeBranch, log, creator };
 }
