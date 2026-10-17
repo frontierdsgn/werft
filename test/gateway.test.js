@@ -28,6 +28,7 @@ async function repoFiles() {
     'site/content/pages/index.json': '{"title":"Start","status":"published"}\n',
     'site/content/events/a.json': '{"title":"A","status":"published"}\n',
     'site/content/settings/site.json': '{"title":"Site"}\n',
+    'site/content/forms/newsletter.json': '{"title":"Newsletter"}\n',
     'outside.txt': 'not part of the site\n',
   };
 }
@@ -86,7 +87,7 @@ test('lists the site directory without the users file', async () => {
   const token = await signIn('admin@test', 'admin-password');
   const { data } = await call('/git/trees/main?recursive=1', { token });
   const paths = data.tree.map((e) => e.path).sort();
-  assert.deepEqual(paths, ['content/events/a.json', 'content/pages/index.json', 'content/settings/site.json']);
+  assert.deepEqual(paths, ['content/events/a.json', 'content/forms/newsletter.json', 'content/pages/index.json', 'content/settings/site.json']);
   const contents = await call('/file-contents?ref=main', { token, method: 'POST', body: { files: ['content/pages/index.json', '.werft/users.json'] } });
   assert.equal(Buffer.from(contents.data[0].content, 'base64').toString(), '{"title":"Start","status":"published"}\n');
   assert.equal(contents.data[1], null);
@@ -194,5 +195,41 @@ test('renews a session with its refresh token only', async () => {
   assert.equal((await call(`${ORIGIN}/api/werft/me`, { token: renewed.data.access_token })).data.email, 'admin@test');
   assert.equal((await renew({ grant_type: 'refresh_token', refresh_token: session.access_token })).status, 400, 'an access token is no refresh token');
   assert.equal((await renew({ grant_type: 'authorization_code', code: 'x' })).status, 400);
+});
+
+test('keeps form submissions where only administrators and editors read them', async () => {
+  const send = (form, fields, headers = {}) => gateway(new Request(`${ORIGIN}/api/werft/forms/${form}`, { method: 'POST', headers: { referer: 'https://elsewhere.test/kontakt.html', ...headers }, body: new URLSearchParams(fields) }));
+  const built = commits.length;
+  const sent = await send('newsletter', [['email', 'a@b.test'], ['themen', 'Konzerte'], ['themen', 'Ausstellungen'], ['_gotcha', '']]);
+  assert.equal(sent.status, 201);
+  assert.match(await sent.text(), /angekommen.*href="https:\/\/elsewhere\.test\/kontakt\.html"/s, 'a thank-you page that leads back to the form');
+  const onward = await send('newsletter', [['email', 'c@d.test'], ['_redirect', '/danke.html']]);
+  assert.equal(onward.headers.get('location'), 'https://elsewhere.test/danke.html', 'on to the page on the site the form was on');
+  assert.equal((await send('newsletter', [['email', 'x@y.test'], ['_redirect', '//evil.test/']])).status, 201, 'no redirect to another host');
+  assert.equal((await send('newsletter', [['email', 'bot@spam.test'], ['_gotcha', 'http://spam.test']])).status, 200, 'bots are told it worked');
+  assert.equal((await send('fehlt', [['email', 'a@b.test']])).status, 404, 'only forms the site defines');
+  assert.equal((await send('..%2F..%2F.werft%2Fusers', [['email', 'a@b.test']])).status, 404);
+  assert.equal((await send('newsletter', [['email', 'x'.repeat(20001)]])).status, 413);
+  const asScript = await send('newsletter', [['email', 'e@f.test']], { accept: 'application/json' });
+  assert.deepEqual([asScript.status, await asScript.json()], [201, { ok: true }]);
+  assert.equal(commits.length, built, 'a submission asks for no rebuild');
+
+  const admin = await signIn('admin@test', 'admin-password');
+  const author = await signIn('author@test', 'author-password');
+  assert.equal((await call(`${ORIGIN}/api/werft/submissions`, { token: author })).status, 403);
+  assert.equal((await call(`${ORIGIN}/api/werft/submissions`)).status, 401);
+  const { data } = await call(`${ORIGIN}/api/werft/submissions`, { token: admin });
+  const [form] = data.forms;
+  assert.deepEqual([form.slug, form.title], ['newsletter', 'Newsletter']);
+  assert.deepEqual(form.submissions.map((s) => s.fields.email).sort(), ['a@b.test', 'c@d.test', 'e@f.test', 'x@y.test']);
+  assert.deepEqual(form.submissions.find((s) => s.fields.email === 'a@b.test').fields, { email: 'a@b.test', themen: ['Konzerte', 'Ausstellungen'] }, 'repeated names as a list, "_" fields left out');
+  const { data: tree } = await call('/git/trees/main?recursive=1', { token: admin });
+  assert.ok(!tree.tree.some((e) => e.path.startsWith('.werft')), 'not in the file API');
+
+  const gone = form.submissions.find((s) => s.fields.email === 'c@d.test').id;
+  assert.equal((await call(`${ORIGIN}/api/werft/submissions`, { token: admin, method: 'POST', body: { delete: ['newsletter/../../.werft/users'] } })).status, 404);
+  const after = await call(`${ORIGIN}/api/werft/submissions`, { token: admin, method: 'POST', body: { delete: [gone] } });
+  assert.deepEqual(after.data.forms[0].submissions.map((s) => s.fields.email).sort(), ['a@b.test', 'e@f.test', 'x@y.test']);
+  assert.equal(store.working(`.werft/submissions/${gone}.json`) ?? null, null);
 });
 });

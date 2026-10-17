@@ -11,7 +11,7 @@ import { disarm, postPreview } from './preview.js';
 import { pageRenderer, mapDocument, getAt, setAt, textOf } from './visual-map.js';
 import { buildForm, emptyValue } from './visual-form.js';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
-import { formView, mediaView, usersView } from './form-view.js';
+import { formView, mediaView, submissionsView, usersView } from './form-view.js';
 
 const REPO = '/api/v1/repos/werft/site';
 const { site, theme, base } = await loadSite();
@@ -135,7 +135,7 @@ const sharedNote = (source) => ({
 // ---- Editor state ----
 let current = slugsIn('pages').includes('index') ? 'index' : slugsIn('pages')[0];
 // The view, and what the form view shows: a source (page:<slug>, post:<slug>, settings, …), or
-// `media` or `users`. Both come from the address, then from the last visit.
+// `media`, `submissions` or `users`. Both come from the address, then from the last visit.
 const [hashView, hashOpen] = decodeURIComponent(location.hash.slice(1)).split('/');
 let view = ['visual', 'form'].includes(hashView) ? hashView : localStorage.getItem('werft.view') === 'visual' ? 'visual' : 'form';
 let selection = `page:${current}`;
@@ -235,7 +235,7 @@ function previewPage(data) {
   }
   return current;
 }
-const hasPreview = () => view === 'visual' || !['media', 'users', 'redirects'].includes(selection);
+const hasPreview = () => view === 'visual' || !['media', 'submissions', 'users', 'redirects'].includes(selection);
 
 function draw() {
   const pageList = slugsIn('pages');
@@ -818,6 +818,7 @@ function describe(source) {
     menus: { kind: 'Website', title: 'Menüs' },
     redirects: { kind: 'Website', title: 'Weiterleitungen' },
     media: { kind: 'Website', title: 'Bilder' },
+    submissions: { kind: 'Website', title: 'Einsendungen' },
     users: { kind: 'Website', title: 'Benutzer' },
   }[kind];
 }
@@ -971,8 +972,9 @@ function openPage(slug) {
 }
 
 // Opens a source (page:<slug>, post:<slug>, pattern:<slug>, form:<slug>, settings, menus,
-// redirects) or `media` / `users`. The page view shows pages and opens the rest in its side panel;
-// what has no page of its own (patterns, images, users) opens in the form view.
+// redirects) or `media` / `submissions` / `users`. The page view shows pages and opens the rest in
+// its side panel; what has no page of its own (patterns, images, submissions, users) opens in the
+// form view.
 function open(source) {
   const [kind, slug] = source.split(':');
   if (view === 'visual') {
@@ -1034,7 +1036,7 @@ let formShows = null;
 function drawForm() {
   const main = $('#ve-form');
   const scroll = formShows === selection ? main.scrollTop : 0;
-  const show = selection === 'media' ? mediaView : selection === 'users' ? usersView : formView;
+  const show = { media: mediaView, submissions: submissionsView, users: usersView }[selection] ?? formView;
   formHandle = show(app, main);
   main.scrollTop = scroll;
   formShows = selection;
@@ -1089,6 +1091,7 @@ function drawPages() {
   if (can('settings')) siteList.append(item('settings', 'Website-Einstellungen', 'Name, Kontakt, Kopf- und Fußzeile'));
   if (can('structure') && settingsFile('menus')) siteList.append(item('menus', 'Menüs', 'Navigation'));
   if (can('media')) siteList.append(item('media', 'Bilder', 'Alle Bilder, neue hochladen'));
+  if (can('content') && slugsIn('forms').length) siteList.append(item('submissions', 'Einsendungen', 'Was Besucher über Formulare gesendet haben'));
   if (me.role === 'administrator') siteList.append(item('users', 'Benutzer', 'Wer die Website bearbeiten darf'));
   if (siteList.children.length) sections.push(group('Website', siteList));
   const more = [];
@@ -1210,7 +1213,7 @@ $('#ve-site').textContent = site.name;
 $('#ve-signout').addEventListener('click', () => { signOut(); location.href = './'; });
 for (const b of document.querySelectorAll('.ve-views button')) b.addEventListener('click', () => { if (b.dataset.view !== view) setView(b.dataset.view); });
 $('#ve-app').hidden = false;
-if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'users'].includes(hashOpen)) {
+if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'submissions', 'users'].includes(hashOpen)) {
   if (hashOpen.startsWith('page:')) current = hashOpen.slice(5);
   selection = hashOpen;
 }

@@ -207,6 +207,41 @@ export function mediaView(app, root) {
 }
 
 // Who may edit the site. Each change applies at once.
+// What visitors sent through the site's forms (gateway/submissions.js): read, download as CSV,
+// delete. Like users, a deletion is stored at once.
+export function submissionsView(app, root) {
+  const page = el('div', { className: 've-form-page' }, head(app, 'Website', 'Einsendungen', 'Was Besucher über die Formulare der Website gesendet haben, neueste zuerst. Löschen gilt sofort, ohne „Speichern“; gelöschte Einsendungen bleiben in den früheren Versionen erhalten.'));
+  root.replaceChildren(page);
+  if (!app.can('content')) { page.append(card(null, 'Nur Administratoren und Redakteure sehen Einsendungen.')); return { reveal() {} }; }
+  const list = el('div', {}, card(null, null, el('p', { className: 've-hint' }, 'Wird geladen …')));
+  page.append(list);
+  const text = (value) => [value].flat().join(', ');
+  const download = (form) => {
+    const names = [...new Set(form.submissions.flatMap((s) => Object.keys(s.fields)))];
+    const cell = (value) => `"${String(value).replace(/"/g, '""')}"`;
+    const rows = [['Eingegangen', ...names], ...form.submissions.map((s) => [s.received_at, ...names.map((n) => text(s.fields[n] ?? ''))])];
+    // The byte order mark makes Excel read the file as UTF-8.
+    const blob = new Blob([`﻿${rows.map((r) => r.map(cell).join(';')).join('\r\n')}\r\n`], { type: 'text/csv;charset=utf-8' });
+    const link = el('a', { href: URL.createObjectURL(blob), download: `${form.slug}.csv` });
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+  const draw = (forms) => {
+    list.replaceChildren(...(forms.length ? forms.map((form) => card(`${form.title} (${form.submissions.length})`, form.submissions.length ? null : 'Noch keine Einsendungen.',
+      form.submissions.length ? el('div', { className: 've-actions-row' }, app.button('Als Tabelle herunterladen (CSV)', `Einsendungen „${form.title}“ als CSV herunterladen`, () => download(form), 've-tool')) : null,
+      el('ul', { className: 've-people ve-submissions' }, ...form.submissions.map((s) => el('li', {},
+        el('div', {}, el('strong', {}, dateTime(s.received_at)), ...Object.entries(s.fields).map(([name, value]) => el('small', {}, `${name}: ${text(value)}`))),
+        app.button('Löschen', `Einsendung vom ${dateTime(s.received_at)} löschen`, async () => {
+          if (await app.confirmDialog('Einsendung löschen?', 'Sie verschwindet aus dieser Liste.', 'Löschen')) load({ method: 'POST', body: { delete: [s.id] } });
+        }, 've-tool ve-danger'))))))
+      : [card(null, 'Die Website hat keine Formulare.')]));
+  };
+  const load = (options) => app.api('/submissions', options).then(({ forms }) => { draw(forms); if (options) app.toast('Einsendung gelöscht.'); },
+    (e) => { list.replaceChildren(card(null, null, el('p', { className: 've-error', role: 'alert' }, e.message))); });
+  load();
+  return { reveal() {} };
+}
+
 export function usersView(app, root) {
   const page = el('div', { className: 've-form-page' }, head(app, 'Website', 'Benutzer', 'Wer die Website bearbeiten darf. Änderungen an Benutzern gelten sofort, ohne „Speichern“.'));
   root.replaceChildren(page);
