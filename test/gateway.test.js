@@ -41,17 +41,20 @@ const storages = {
     git('init', '--quiet', '-b', 'main');
     git('add', '.');
     git('commit', '--quiet', '-m', 'init');
-    return { storage: await gitStorage(path.join(root, 'site')), outside: () => fs.readFileSync(path.join(root, 'outside.txt'), 'utf8'), working: (rel) => (fs.existsSync(path.join(root, 'site', rel)) ? fs.readFileSync(path.join(root, 'site', rel), 'utf8') : null) };
+    // Whether a commit the branch leads to has a file with this text.
+    const reachable = (branch, text) => { try { return git('log', '-p', '--format=', branch, '--').toString().includes(text); } catch { return false; } };
+    return { storage: await gitStorage(path.join(root, 'site')), outside: () => fs.readFileSync(path.join(root, 'outside.txt'), 'utf8'), working: (rel) => (fs.existsSync(path.join(root, 'site', rel)) ? fs.readFileSync(path.join(root, 'site', rel), 'utf8') : null), reachable };
   },
   async github(files) {
     const hub = fakeGitHub();
     hub.seed(files);
-    return { storage: githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', dir: 'site', api: hub.api, fetch: hub.fetch }), outside: () => hub.fileAt('main', 'outside.txt'), working: (rel) => hub.fileAt('main', `site/${rel}`) };
+    return { storage: githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', dir: 'site', api: hub.api, fetch: hub.fetch }), outside: () => hub.fileAt('main', 'outside.txt'), working: (rel) => hub.fileAt('main', `site/${rel}`), reachable: (branch, text) => [...hub.history(branch)].some((t) => t.includes(text)) };
   },
 };
 
 for (const [kind, setup] of Object.entries(storages)) describe(`gateway on ${kind} storage`, () => {
 let gateway, store;
+let clock = Date.parse('2026-06-01T00:00:00Z');
 const commits = [];
 const ticks = [];
 
@@ -63,7 +66,7 @@ before(async () => {
     onCommit: (c) => commits.push(c),
     onTick: ({ due }) => { ticks.push(due); },
     lastBuild: () => '2026-01-01T00:00:00Z',
-    now: () => Date.parse('2026-06-01T00:00:00Z'),
+    now: () => clock,
   });
 });
 
@@ -213,6 +216,8 @@ test('keeps form submissions where only administrators and editors read them', a
   const asScript = await send('newsletter', [['email', 'e@f.test']], { accept: 'application/json' });
   assert.deepEqual([asScript.status, await asScript.json()], [201, { ok: true }]);
   assert.equal(commits.length, built, 'a submission asks for no rebuild');
+  assert.ok(!store.reachable('main', 'a@b.test'), 'kept beside the site, not in its history');
+  assert.ok(store.reachable('werft-submissions', 'a@b.test'));
 
   const admin = await signIn('admin@test', 'admin-password');
   const author = await signIn('author@test', 'author-password');
@@ -230,6 +235,43 @@ test('keeps form submissions where only administrators and editors read them', a
   assert.equal((await call(`${ORIGIN}/api/werft/submissions`, { token: admin, method: 'POST', body: { delete: ['newsletter/../../.werft/users'] } })).status, 404);
   const after = await call(`${ORIGIN}/api/werft/submissions`, { token: admin, method: 'POST', body: { delete: [gone] } });
   assert.deepEqual(after.data.forms[0].submissions.map((s) => s.fields.email).sort(), ['a@b.test', 'e@f.test', 'x@y.test']);
-  assert.equal(store.working(`.werft/submissions/${gone}.json`) ?? null, null);
+  assert.ok(!store.reachable('werft-submissions', 'c@d.test'), 'a deleted submission is in no commit of the branch');
+  assert.ok(store.reachable('werft-submissions', 'a@b.test'));
+  assert.equal((await call(`${ORIGIN}/api/werft/submissions`, { token: admin, method: 'POST', body: { delete: [gone] } })).status, 404);
+  const rest = after.data.forms[0].submissions.map((s) => s.id);
+  const none = await call(`${ORIGIN}/api/werft/submissions`, { token: admin, method: 'POST', body: { delete: rest } });
+  assert.deepEqual(none.data.forms, [{ slug: 'newsletter', title: 'Newsletter', submissions: [] }]);
+  assert.ok(!store.reachable('werft-submissions', 'a@b.test'), 'nothing left: the branch is gone');
+  assert.equal((await send('newsletter', [['email', 'g@h.test']], { accept: 'application/json' })).status, 201, 'and is made again by the next one');
+});
+
+test('takes at most 60 submissions of a form an hour', async () => {
+  const send = (email) => gateway(new Request(`${ORIGIN}/api/werft/forms/newsletter`, { method: 'POST', headers: { accept: 'application/json' }, body: new URLSearchParams({ email }) }));
+  clock += 2 * 3600 * 1000;
+  for (let i = 0; i < 60; i++) assert.equal((await send(`n${i}@test`)).status, 201);
+  const refused = await send('late@test');
+  assert.equal(refused.status, 429);
+  clock += 3600 * 1000 - 1000;
+  assert.equal((await send('later@test')).status, 429, 'the hour is not over yet');
+  clock += 1000;
+  assert.equal((await send('next@test')).status, 201, 'an hour after the first');
+});
+
+test('with a Turnstile secret, takes only submissions Turnstile confirms', async () => {
+  const checks = [];
+  const guarded = createGateway({
+    storage: store.storage, secret: 'x'.repeat(32), branch: 'main', now: () => clock, turnstileSecret: 'ts-secret',
+    site: { name: 'Test', contentDir: 'content', mediaDirs: [] },
+    fetch: async (url, init) => { checks.push([url, Object.fromEntries(init.body)]); return Response.json({ success: init.body.get('response') === 'good' }); },
+  });
+  const send = (fields) => guarded(new Request(`${ORIGIN}/api/werft/forms/newsletter`, { method: 'POST', headers: { accept: 'application/json', 'cf-connecting-ip': '192.0.2.7' }, body: new URLSearchParams(fields) }));
+  assert.equal((await send({ email: 'robot@test' })).status, 403, 'without the widget');
+  assert.equal((await send({ email: 'robot@test', 'cf-turnstile-response': 'bad' })).status, 403);
+  assert.equal((await send({ email: 'human@test', 'cf-turnstile-response': 'good' })).status, 201);
+  assert.deepEqual(checks.at(-1), ['https://challenges.cloudflare.com/turnstile/v0/siteverify', { secret: 'ts-secret', response: 'good', remoteip: '192.0.2.7' }]);
+  const admin = await signIn('admin@test', 'admin-password');
+  const { data } = await call(`${ORIGIN}/api/werft/submissions`, { token: admin });
+  assert.deepEqual(data.forms[0].submissions.find((s) => s.fields.email === 'human@test').fields, { email: 'human@test' }, 'the token is not stored');
+  assert.ok(!data.forms[0].submissions.some((s) => s.fields.email === 'robot@test'));
 });
 });

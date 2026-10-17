@@ -210,7 +210,7 @@ export function mediaView(app, root) {
 // What visitors sent through the site's forms (gateway/submissions.js): read, download as CSV,
 // delete. Like users, a deletion is stored at once.
 export function submissionsView(app, root) {
-  const page = el('div', { className: 've-form-page' }, head(app, 'Website', 'Einsendungen', 'Was Besucher über die Formulare der Website gesendet haben, neueste zuerst. Löschen gilt sofort, ohne „Speichern“; gelöschte Einsendungen bleiben in den früheren Versionen erhalten.'));
+  const page = el('div', { className: 've-form-page' }, head(app, 'Website', 'Einsendungen', 'Was Besucher über die Formulare der Website gesendet haben, neueste zuerst. Löschen gilt sofort und endgültig, ohne „Speichern“.'));
   root.replaceChildren(page);
   if (!app.can('content')) { page.append(card(null, 'Nur Administratoren und Redakteure sehen Einsendungen.')); return { reveal() {} }; }
   const list = el('div', {}, card(null, null, el('p', { className: 've-hint' }, 'Wird geladen …')));
@@ -232,7 +232,7 @@ export function submissionsView(app, root) {
       el('ul', { className: 've-people ve-submissions' }, ...form.submissions.map((s) => el('li', {},
         el('div', {}, el('strong', {}, dateTime(s.received_at)), ...Object.entries(s.fields).map(([name, value]) => el('small', {}, `${name}: ${text(value)}`))),
         app.button('Löschen', `Einsendung vom ${dateTime(s.received_at)} löschen`, async () => {
-          if (await app.confirmDialog('Einsendung löschen?', 'Sie verschwindet aus dieser Liste.', 'Löschen')) load({ method: 'POST', body: { delete: [s.id] } });
+          if (await app.confirmDialog('Einsendung löschen?', 'Sie wird endgültig gelöscht und lässt sich nicht wiederherstellen.', 'Löschen')) load({ method: 'POST', body: { delete: [s.id] } });
         }, 've-tool ve-danger'))))))
       : [card(null, 'Die Website hat keine Formulare.')]));
   };

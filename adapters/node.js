@@ -79,6 +79,7 @@ export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret
   const tickKey = crypto.randomUUID();
   const gateway = createGateway({
     storage, secret, branch, tickKey,
+    turnstileSecret: process.env.TURNSTILE_SECRET_KEY || undefined,
     site: gatewaySite(site, theme),
     onCommit: (commit) => { rebuild(commit.message); },
     onTick: ({ due }) => rebuild(`scheduled: ${due.join(', ')}`),

@@ -37,7 +37,8 @@ async function sha256(text) {
 export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [] });
 
 // options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs },
-//   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?() }
+//   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?(),
+//   turnstileSecret? (forms need Cloudflare Turnstile), fetch? (for Turnstile) }
 export function createGateway(options) {
   const { storage, secret, branch = 'main', site, onCommit, onTick } = options;
   const now = options.now ?? (() => Date.now());
@@ -277,7 +278,7 @@ export function createGateway(options) {
     return json({ rebuilt, pending, due: due.map((e) => e.slug), next_publish: next, last_build: lastBuild ?? null });
   }
 
-  const forms = submissions({ storage, branch, site, now });
+  const forms = submissions({ storage, branch, site, now, turnstileSecret: options.turnstileSecret, fetch: options.fetch });
 
   return async function handle(request) {
     const url = new URL(request.url);
