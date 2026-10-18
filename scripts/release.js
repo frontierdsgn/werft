@@ -1,11 +1,7 @@
 #!/usr/bin/env node
-// Maintainer tooling, not part of the package: releases werft and moves the sites to the release.
-// Both work in fresh clones in a temporary directory, so local checkouts stay untouched.
+// Maintainer tooling, not part of the package: moves the sites to a werft release. Releases
+// themselves are made by release-please (.github/workflows/release.yml).
 //
-//   npm run release -- <patch|minor|major|x.y.z> [--dry-run] [--accept-changes]
-//     Tests origin/main, sets the version in package.json, package-lock.json and README.md,
-//     commits "werft x.y.z" listing the commits since the last tag, tags vx.y.z, pushes both and
-//     then updates the sites.
 //   npm run update-sites -- [vx.y.z] [--dry-run] [--accept-changes]
 //     Moves every site in the frontierdsgn organization (a repository whose package.json depends on
 //     github:frontierdsgn/werft) to the given or the newest tag, on its default branch: npm install
@@ -13,9 +9,10 @@
 //     its old and its new werft first; if the public pages differ (anything outside admin/ and
 //     _werft/build.json), the site is held back unless --accept-changes is given.
 //
+// It works in fresh clones in a temporary directory, so local checkouts stay untouched.
 // --dry-run does everything except pushing. Needs git, npm and gh, signed in with push access.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -42,27 +39,6 @@ function inTemp(prefix, fn) {
 }
 
 const clone = (repo, dir) => run('git', ['clone', '--quiet', `https://github.com/${repo}.git`, dir]);
-
-function release(bump) {
-  return inTemp('werft-release-', (dir) => {
-    const git = (...a) => run('git', ['-C', dir, ...a]);
-    clone(WERFT, dir);
-    const previous = git('describe', '--tags', '--abbrev=0');
-    const changes = git('log', '--reverse', '--format=%s', `${previous}..HEAD`).split('\n').filter(Boolean);
-    if (!changes.length) throw new Error(`Nothing to release: main is at ${previous}.`);
-    run('npm', ['ci'], { cwd: dir });
-    run('npm', ['test'], { cwd: dir });
-    const version = run('npm', ['version', bump, '--no-git-tag-version'], { cwd: dir }).replace(/^v/, '');
-    const readme = path.join(dir, 'README.md');
-    writeFileSync(readme, readFileSync(readme, 'utf8').replace(/werft is version \d+\.\d+\.\d+/, `werft is version ${version}`).replace(/(github:frontierdsgn\/werft#v)\d+\.\d+\.\d+/g, `$1${version}`));
-    git('commit', '--quiet', '-m', `werft ${version}`, '-m', changes.map((c) => `- ${c}`).join('\n'), '--', 'package.json', 'package-lock.json', 'README.md');
-    git('tag', '-a', `v${version}`, '-m', `werft ${version}`);
-    if (dryRun) { console.log(`werft ${version}: committed and tagged in the clone, not pushed (--dry-run).`); return null; }
-    git('push', '--quiet', 'origin', 'HEAD:main', `v${version}`);
-    console.log(`werft ${version}: released (${changes.length} commits since ${previous}).`);
-    return `v${version}`;
-  });
-}
 
 const latestTag = () => run('git', ['ls-remote', '--tags', '--refs', '--sort=-v:refname', `https://github.com/${WERFT}.git`, 'v*']).split('\n')[0].split('refs/tags/')[1];
 
@@ -127,8 +103,7 @@ function updateSites(tag) {
 
 try {
   if (command === 'sites') updateSites(target ?? latestTag());
-  else if (command === 'release' && target) { const tag = release(target); if (tag) updateSites(tag); }
-  else { console.error('Usage: npm run release -- <patch|minor|major|x.y.z> [--dry-run] [--accept-changes]\n       npm run update-sites -- [vx.y.z] [--dry-run] [--accept-changes]'); process.exitCode = 2; }
+  else { console.error('Usage: npm run update-sites -- [vx.y.z] [--dry-run] [--accept-changes]'); process.exitCode = 2; }
 } catch (e) {
   console.error(e.message);
   process.exitCode = 1;
