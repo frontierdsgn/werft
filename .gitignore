@@ -1,1 +1,15 @@
 node_modules/
+# Local environment files; only the example is committed.
+.env*
+!.env.example
+# Local agent scratch and portals.
+.amp/in/
+.amp/portals/
+# Build output of a site built inside this checkout, and npm pack output.
+_site/
+*.tgz
+# Editor and OS files.
+.idea/
+.vscode/
+*.swp
+.DS_Store
