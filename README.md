@@ -5,9 +5,9 @@ theme turns it into static HTML, and editors work in a browser admin at `/admin`
 logins and WordPress-style roles. The same site runs on Cloudflare Pages, on any Node server, and
 (with a build host) on PHP web space such as IONOS.
 
-werft is version 0.5.0, licensed MIT. The admin is werft's own editor, built for people who are not
-technical: plain German labels, one clear action per place, one screen with two views of the same
-content. Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
+werft is version 0.5.0, licensed MIT. <!-- x-release-please-version -->
+The admin is werft's own editor, built for people who are not technical: plain German labels, one
+clear action per place, one screen with two views of the same content. Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 
 ## How it fits together
 
@@ -116,12 +116,14 @@ A site is a repository with a `werft.config.js`, a theme and a `content/` folder
 show every part.
 
 1. **package.json**: depend on a tagged werft version and add the scripts.
+   <!-- x-release-please-start-version -->
    ```json
    { "type": "module", "scripts": { "build": "werft build", "dev": "werft dev" },
      "dependencies": { "werft": "github:frontierdsgn/werft#v0.5.0" } }
    ```
-   A new werft version is a new tag; sites in the frontierdsgn organization move to it on their
-   own (see [Releasing](#releasing)). Any other site moves with
+   <!-- x-release-please-end -->
+   A new werft version is a new tag (see [Releasing](#releasing)); sites in the frontierdsgn
+   organization are moved to it with `npm run update-sites`. Any other site moves with
    `npm install github:frontierdsgn/werft#vX.Y.Z`, which updates `package.json` and
    `package-lock.json` (a plain `npm install` keeps the commit in the lockfile). To try an unreleased werft in a site, depend on a local checkout with
    `"werft": "file:../werft"` and add `install-links=true` to the site's `.npmrc`: npm then
@@ -356,25 +358,39 @@ there (`git rm -r .werft/submissions`), they remain in that branch's history.
 
 ## Releasing
 
+Releases are made by [release-please](https://github.com/googleapis/release-please)
+([release.yml](.github/workflows/release.yml)). It keeps a release pull request open, built from
+the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) on `main`: the next
+version (while werft is 0.y.z, a breaking change raises y), set in `package.json`,
+`package-lock.json` and this README, and the new entries in [CHANGELOG.md](CHANGELOG.md).
+Maintainers merge it; that tags `vx.y.z` and creates a GitHub release with the same notes. The
+[releases page](https://github.com/frontierdsgn/werft/releases) lists what changed in every
+version, so whoever runs a werft site can read it before moving to a new tag.
+
+The workflow signs in as a GitHub App (repository variable `RELEASE_APP_CLIENT_ID`, secret
+`RELEASE_APP_PRIVATE_KEY`; the app needs "Contents", "Pull requests" and "Issues": read and write),
+because a pull request opened with the workflow's own token gets no `gate` run. Without the
+variable the workflow does nothing.
+
+### Moving the sites to a release
+
 ```sh
-npm run release -- minor          # or patch, major, 1.2.3; --dry-run pushes nothing
-npm run update-sites              # again, e.g. for a new site or after a held-back one
+npm run update-sites              # the newest tag; or: npm run update-sites -- v1.2.3
+npm run update-sites -- --dry-run # commits in temporary clones, pushes nothing
 ```
 
-`release` tests `origin/main` in a fresh clone, sets the version in `package.json`,
-`package-lock.json` and this README, commits "werft x.y.z" with the commits since the last tag,
-tags `vx.y.z` and pushes. Then it updates the sites: every repository in the frontierdsgn
-organization whose root `package.json` depends on `github:frontierdsgn/werft` gets the new tag on
-its default branch, one commit with `package.json` and `package-lock.json`, and Cloudflare rebuilds
-it. Before committing, it builds each site with its old and its new werft. If the public pages
-differ (anything outside `admin/` and `_werft/build.json`), the site is held back and the changed
-files are listed; check them with `npm run dev` in the site, then run
-`npm run update-sites -- --accept-changes`. A site whose build fails is left as it is. Branches
-other than the default branch, and sites outside the organization, keep their version.
+Every repository in the frontierdsgn organization whose root `package.json` depends on
+`github:frontierdsgn/werft` gets the tag on its default branch, one commit with `package.json` and
+`package-lock.json`, and Cloudflare rebuilds it. Before committing, it builds each site with its
+old and its new werft. If the public pages differ (anything outside `admin/` and
+`_werft/build.json`), the site is held back and the changed files are listed; check them with
+`npm run dev` in the site, then run `npm run update-sites -- --accept-changes`. A site whose build
+fails is left as it is. Branches other than the default branch, and sites outside the organization,
+keep their version.
 
 The script ([scripts/release.js](scripts/release.js)) needs git, npm and `gh`, signed in with push
 access to the organization's repositories. It works in temporary clones and leaves local
-checkouts alone; pull afterwards.
+checkouts alone.
 
 ## Contributing
 

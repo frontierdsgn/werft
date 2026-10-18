@@ -17,7 +17,6 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "release": "node scripts/release.js release",
     "update-sites": "node scripts/release.js sites"
   },
   "dependencies": {
