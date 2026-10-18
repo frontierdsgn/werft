@@ -107,8 +107,8 @@ npx werft publish [dir]        # send the build to werft-publish.php
 ```
 
 Tests: `npm test` in this directory (Node's test runner; the publish test needs `php` and skips without it).
-GitHub Actions runs them on Node 22 and 24 for every push to `main` and every pull request
-([test.yml](.github/workflows/test.yml)).
+GitHub Actions runs them on Node 22 and 24 for every push to `main` and every pull request, in the
+job `gate` ([gate.yml](.github/workflows/gate.yml)).
 
 ## Setting up a new site
 
