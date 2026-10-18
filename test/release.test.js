@@ -41,9 +41,13 @@ function fixtureSite(t, scripts) {
   return { root, remote, head };
 }
 
-// Clones from the bare repository instead of GitHub and runs `npm run` for real.
-function exec(root, { runs = [] } = {}) {
+// Clones from the bare repository instead of GitHub and runs `npm run` for real. gh answers with
+// `checks`, one list of `gate` check runs per poll (the last one repeats), and merges a pull request
+// by moving the bare repository's main to the pull request's head.
+function exec(root, { runs = [], checks = [[]], open = [] } = {}) {
   const calls = [];
+  const remote = path.join(root, `${REPO}.git`);
+  let poll = 0;
   const fn = (cmd, args, opts = {}) => {
     calls.push([cmd, ...args].join(' '));
     if (cmd === 'git') return run(cmd, args.map((a) => a.replace('https://github.com/', `${root}/`)), opts);
@@ -63,12 +67,28 @@ function exec(root, { runs = [] } = {}) {
       fs.writeFileSync(path.join(out, 'index.html'), '<title>Start</title>\n');
       return '';
     }
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list') return JSON.stringify(open);
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') return PR;
+    // Only the gate check of the pull request's head commit counts.
+    if (cmd === 'gh' && args[0] === 'api' && args[1] === `repos/${REPO}/commits/${run('git', ['-C', remote, 'rev-parse', BRANCH])}/check-runs?check_name=gate&filter=latest`) {
+      return JSON.stringify(checks[Math.min(poll++, checks.length - 1)]);
+    }
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'merge') {
+      run('git', ['-C', remote, 'update-ref', 'refs/heads/main', args[args.indexOf('--match-head-commit') + 1]]);
+      return '';
+    }
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return run('git', ['-C', remote, 'rev-parse', 'main']);
     if (cmd === 'gh' && args[0] === 'run') return JSON.stringify(runs);
     throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`);
   };
   fn.calls = calls;
   return fn;
 }
+
+const PR = 'https://github.com/frontierdsgn/site/pull/7';
+const BRANCH = 'build/werft-v0.2.0';
+const branchHead = (site) => run('git', ['-C', site.remote, 'rev-parse', BRANCH]);
+const noWait = () => {};
 
 const output = (mock) => mock.mock.calls.map((c) => c.arguments.join(' ')).join('\n');
 
@@ -80,32 +100,77 @@ test('update-sites reports a site whose gate fails as failed, with the gate outp
   assert.equal(updateSite(REPO, 'v0.2.0', { exec: exec(site.root) }), 'failed');
   assert.match(output(error), /^frontierdsgn\/site: failed: npm run gate failed:[\s\S]*lint: 3 problems/);
   assert.equal(site.head(), before);
+  assert.equal(run('git', ['-C', site.remote, 'for-each-ref', '--format=%(refname)']), 'refs/heads/main');
 });
 
-test('update-sites pushes a site whose gate passes and prints its gate run', (t) => {
+test('update-sites opens a pull request and merges it once the site\'s gate check passed on its head', (t) => {
   // The gate passes only on the new werft, so it must run after npm install of the tag.
   const site = fixtureSite(t, { build: 'werft build', gate: 'node -e "process.exit(require(\'./package.json\').dependencies.werft.endsWith(\'#v0.2.0\') ? 0 : 1)"' });
+  const before = site.head();
   const log = t.mock.method(console, 'log', () => {});
   const url = 'https://github.com/frontierdsgn/site/actions/runs/1';
-  const fn = exec(site.root, { runs: [{ url }] });
-  assert.equal(updateSite(REPO, 'v0.2.0', { exec: fn }), 'updated');
+  const check = 'https://github.com/frontierdsgn/site/runs/9';
+  // No check yet, then running, then passed: main must not move before the check completed.
+  const checks = [[], [{ id: 9, status: 'in_progress', conclusion: null }], [{ id: 9, status: 'completed', conclusion: 'success', html_url: check }]];
+  let waits = 0;
+  const fn = exec(site.root, { runs: [{ url }], checks });
+  const wait = () => { waits++; assert.equal(site.head(), before); };
+  assert.equal(updateSite(REPO, 'v0.2.0', { exec: fn, wait }), 'updated');
+  assert.equal(waits, 2);
   assert.ok(fn.calls.includes('npm run gate'));
-  assert.equal(run('git', ['-C', site.remote, 'log', '-1', '--format=%s', 'main']), 'Site: werft 0.2.0');
-  assert.match(output(log), /v0\.1\.0 → v0\.2\.0, gate passed, pushed/);
-  assert.ok(output(log).includes(`gate run: ${url}`));
+  const head = branchHead(site);
+  assert.equal(run('git', ['-C', site.remote, 'rev-parse', `${head}^`]), before);
+  assert.ok(fn.calls.some((c) => c.startsWith(`gh pr create -R ${REPO} --head ${BRANCH} --title build(deps): bump werft from v0.1.0 to v0.2.0`)));
+  assert.ok(fn.calls.includes(`gh pr merge ${PR} -R ${REPO} --squash --delete-branch --match-head-commit ${head}`));
+  assert.equal(JSON.parse(run('git', ['-C', site.remote, 'show', 'main:package.json'])).dependencies.werft, 'github:frontierdsgn/werft#v0.2.0');
+  assert.match(output(log), /v0\.1\.0 → v0\.2\.0, local gate passed; public pages unchanged; pull request https:\/\/github\.com\/frontierdsgn\/site\/pull\/7/);
+  assert.ok(output(log).includes(`gate passed (${check}), merged as ${head}`));
+  assert.ok(output(log).includes(`gate run on the default branch: ${url}`));
 });
 
-test('update-sites pushes a site without a gate script as before', (t) => {
+test('update-sites leaves the pull request open and reports the site as failed when its gate check fails', (t) => {
+  const site = fixtureSite(t, { build: 'werft build' });
+  const before = site.head();
+  t.mock.method(console, 'log', () => {});
+  const error = t.mock.method(console, 'error', () => {});
+  const check = 'https://github.com/frontierdsgn/site/runs/9';
+  // An older passing run on the commit does not count; the latest one failed.
+  const fn = exec(site.root, { checks: [[{ id: 8, status: 'completed', conclusion: 'success' }, { id: 9, status: 'completed', conclusion: 'failure', html_url: check }]] });
+  assert.equal(updateSite(REPO, 'v0.2.0', { exec: fn, wait: noWait }), 'failed');
+  assert.ok(!fn.calls.some((c) => c.startsWith('npm run')));
+  assert.ok(!fn.calls.some((c) => c.startsWith('gh pr merge')));
+  assert.equal(site.head(), before);
+  assert.equal(JSON.parse(run('git', ['-C', site.remote, 'show', `${BRANCH}:package.json`])).dependencies.werft, 'github:frontierdsgn/werft#v0.2.0');
+  assert.ok(output(error).includes(`gate failure on ${branchHead(site)} (${check}); the pull request stays open: ${PR}`));
+});
+
+test('update-sites reuses an open pull request, replaces its branch and gives up when no gate check appears', (t) => {
+  const site = fixtureSite(t, { build: 'werft build' });
+  // An earlier run left a different commit on the branch.
+  const work = path.join(site.root, 'work');
+  run('git', ['-C', work, 'commit', '--quiet', '--allow-empty', '-m', 'earlier attempt']);
+  run('git', ['-C', work, 'push', '--quiet', 'origin', `HEAD:refs/heads/${BRANCH}`]);
+  const before = site.head();
+  t.mock.method(console, 'log', () => {});
+  const error = t.mock.method(console, 'error', () => {});
+  let waits = 0;
+  const fn = exec(site.root, { open: [{ url: PR }] });
+  assert.equal(updateSite(REPO, 'v0.2.0', { exec: fn, wait: () => { waits++; } }), 'failed');
+  assert.equal(waits, 119);
+  assert.ok(!fn.calls.some((c) => c.startsWith('gh pr create') || c.startsWith('gh pr merge')));
+  assert.equal(site.head(), before);
+  assert.equal(run('git', ['-C', site.remote, 'log', '-1', '--format=%s', BRANCH]), 'build(deps): bump werft from v0.1.0 to v0.2.0');
+  assert.ok(output(error).includes(`no gate check on ${branchHead(site)}; the pull request stays open: ${PR}`));
+});
+
+test('update-sites --dry-run pushes nothing and opens no pull request', (t) => {
   const site = fixtureSite(t, { build: 'werft build' });
   const log = t.mock.method(console, 'log', () => {});
   const fn = exec(site.root);
-  assert.equal(updateSite(REPO, 'v0.2.0', { exec: fn }), 'updated');
-  assert.ok(!fn.calls.some((c) => c.startsWith('npm run')));
-  const pushed = JSON.parse(run('git', ['-C', site.remote, 'show', 'main:package.json']));
-  assert.equal(pushed.dependencies.werft, 'github:frontierdsgn/werft#v0.2.0');
-  assert.match(output(log), /no gate script, pushed/);
-  // No run yet: it prints the command that finds it.
-  assert.ok(output(log).includes(`gh run list -R ${REPO} --commit ${site.head()} --workflow gate.yml --json url`));
+  assert.equal(updateSite(REPO, 'v0.2.0', { exec: fn, dryRun: true }), 'updated');
+  assert.ok(!fn.calls.some((c) => c.startsWith('gh ') || c.includes(' push ')));
+  assert.equal(run('git', ['-C', site.remote, 'for-each-ref', '--format=%(refname)']), 'refs/heads/main');
+  assert.match(output(log), /committed, not pushed \(--dry-run\)/);
 });
 
 test('update-sites runs as a script and not when imported', () => {
