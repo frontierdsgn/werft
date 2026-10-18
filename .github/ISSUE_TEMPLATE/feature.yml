@@ -1,0 +1,18 @@
+name: Feature request
+description: Something werft should do for every site.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you or your editors cannot do today, and why it matters. Describe the problem before any solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How werft could solve it in a way that is useful to any werft site (see "Every change is general" in AGENTS.md).
+    validations:
+      required: false
