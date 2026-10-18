@@ -31,6 +31,8 @@ werft is the shared core of many websites. Read [README.md](README.md) before ch
   request, title in Conventional Commits (`feat`, `fix`, `docs`, `ci`, …; `!` and a
   `BREAKING CHANGE:` footer for a breaking change). The body says what changed, why, how it was
   verified and `Fixes #n` where it applies; it becomes the squash commit.
+- Enable the hooks once per checkout: `git config core.hooksPath .githooks` (`.agents/setup` does it
+  in orbs). `.githooks/pre-push` runs `npm test` and refuses a direct push to `main`.
 - Merge by squash once the latest `gate` run on the head commit concluded `success`:
   `gh pr merge <number> --squash --delete-branch --match-head-commit <sha>`.
 - Changes to the public interface (package exports, CLI, gateway API, theme API), to security

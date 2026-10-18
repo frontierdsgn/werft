@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Prepares a checkout in an Amp orb: PHP for the publish tests, locked dependencies, the git hooks,
+# and which credentials are present (never their values). Safe to run again.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+if [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
+  echo "setup: werft needs Node 22 or newer, found $(node --version)." >&2
+  exit 1
+fi
+if ! command -v php >/dev/null; then
+  echo "setup: installing php-cli"
+  sudo apt-get update -qq && sudo apt-get install -y -qq php-cli >/dev/null
+fi
+echo "setup: npm ci"
+npm ci --no-audit --no-fund --loglevel=error
+git config core.hooksPath .githooks
+for name in GH_TOKEN GITHUB_TOKEN; do
+  if [ -n "${!name:-}" ]; then echo "setup: $name is set"; else echo "setup: $name is not set"; fi
+done
