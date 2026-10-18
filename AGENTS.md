@@ -2,11 +2,18 @@
 
 ## Profile
 - Purpose: the shared core (build, theme API, editor, auth gateway) that werft sites install from a git tag
-- Stage: released (repository standard 2026-10-17)
+- Stage: released (repository standard 2026-10-18)
 - Gate: `npm test` (CI job `gate`)
 - Landing: PR, squash-merged on a green gate; agents land: yes
 - Release: release-please PR; agents release: no
 - Outside issues and PRs: agents triage; outside PRs merge: owner approves
+- Sensitive paths: `gateway/` (sign-in, sessions, roles, GitHub credentials, gateway API),
+  `admin/session.js`, `lib/publish.js` and `adapters/` (signed publishing, host entry points),
+  `bin/werft.js`, `lib/index.js` and `lib/node.js` (CLI, theme API, `werft/node`),
+  `package.json` and `package-lock.json` (exports, engines, dependencies), `scripts/release.js`
+  (pushes to the sites), `.github/`, `release-please-config.json`,
+  `.release-please-manifest.json`, `.githooks/`, `.agents/`, `AGENTS.md`, and `README.md` or
+  `CONTRIBUTING.md` changes to setup, hosting or contribution rules
 
 Deliberate rules beyond the standard, kept on purpose: every change is general and hosting stays
 where it runs today (Cloudflare Pages free plan, Node 22 or newer, PHP web space), see "Every change
@@ -29,14 +36,17 @@ werft is the shared core of many websites. Read [README.md](README.md) before ch
 ## Landing a change
 - Branch `<type>/<slug>` from `main` (`<type>/<issue>-<slug>` for an issue), one concern per pull
   request, title in Conventional Commits (`feat`, `fix`, `docs`, `ci`, …; `!` and a
-  `BREAKING CHANGE:` footer for a breaking change). The body says what changed, why, how it was
-  verified and `Fixes #n` where it applies; it becomes the squash commit.
+  `BREAKING CHANGE:` footer for a breaking change). The body states the intent, the changed
+  behaviour, the rules here it touches, the evidence it works, whether a sensitive path changed,
+  and `Fixes #n` where it applies; it becomes the squash commit.
 - Enable the hooks once per checkout: `git config core.hooksPath .githooks` (`.agents/setup` does it
   in orbs). `.githooks/pre-push` runs `npm test` and refuses a direct push to `main`.
 - Merge by squash once the latest `gate` run on the head commit concluded `success`:
   `gh pr merge <number> --squash --delete-branch --match-head-commit <sha>`.
-- Changes to the public interface (package exports, CLI, gateway API, theme API), to security
-  code, CI or release configuration get an independent review before merge.
+- Changes to a sensitive path (see the profile), the public interface (package exports, CLI,
+  gateway API, theme API), security code, CI or release configuration get an independent review
+  (another agent or the owner) before merge. The review reads the diff against the rules here and
+  is recorded on the pull request against the reviewed head commit; a later push needs a new one.
 - Never run `npm run update-sites` (it pushes to the sites' repositories) or merge a release pull
   request; both are the maintainers'.
 - Focused test: `node --test test/gateway.test.js`, or
