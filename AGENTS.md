@@ -9,10 +9,11 @@
 - Outside issues and PRs: agents triage; outside PRs merge: owner approves
 - Sensitive paths: `gateway/` (sign-in, sessions, roles, GitHub credentials, gateway API),
   `admin/session.js`, `lib/publish.js` and `adapters/` (signed publishing, host entry points),
-  `bin/werft.js` and `lib/index.js` (CLI and theme API), `package.json` (exports, engines,
-  dependencies), `scripts/release.js` (pushes to the sites), `.github/`,
-  `release-please-config.json`, `.release-please-manifest.json`, `.githooks/`, `.agents/`,
-  `AGENTS.md`, and README or CONTRIBUTING changes to setup, hosting or contribution rules
+  `bin/werft.js`, `lib/index.js` and `lib/node.js` (CLI, theme API, `werft/node`),
+  `package.json` and `package-lock.json` (exports, engines, dependencies), `scripts/release.js`
+  (pushes to the sites), `.github/`, `release-please-config.json`,
+  `.release-please-manifest.json`, `.githooks/`, `.agents/`, `AGENTS.md`, and `README.md` or
+  `CONTRIBUTING.md` changes to setup, hosting or contribution rules
 
 Deliberate rules beyond the standard, kept on purpose: every change is general and hosting stays
 where it runs today (Cloudflare Pages free plan, Node 22 or newer, PHP web space), see "Every change
