@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 # Prepares a checkout in an Amp orb: PHP for the publish tests, locked dependencies, the git hooks,
-# and which credentials are present (never their values). Safe to run again.
+# and which credentials are present (never their values). Safe to run again. Node 22 or newer and
+# npm come with the orb image; setup stops if they are missing or too old.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
+if ! command -v node >/dev/null || ! command -v npm >/dev/null; then
+  echo "setup: Node 22 or newer with npm is required and was not found." >&2
+  exit 1
+fi
+node_major=$(node -p 'process.versions.node.split(".")[0]')
+if [ "$node_major" -lt 22 ]; then
   echo "setup: werft needs Node 22 or newer, found $(node --version)." >&2
   exit 1
 fi
 if ! command -v php >/dev/null; then
   echo "setup: installing php-cli"
-  sudo apt-get update -qq && sudo apt-get install -y -qq php-cli >/dev/null
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq php-cli >/dev/null
 fi
 echo "setup: npm ci"
 npm ci --no-audit --no-fund --loglevel=error
