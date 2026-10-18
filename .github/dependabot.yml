@@ -1,0 +1,30 @@
+# Weekly updates: minor and patch grouped into one pull request per ecosystem, majors separately,
+# each release adopted only after a few days.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 5
+    labels: [dependencies]
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 5
+    labels: [dependencies]
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
