@@ -36,12 +36,15 @@ test('the installed package loads, builds a site with its admin, and holds every
     assert.ok(fs.existsSync(path.join(site, '_site', file)), `the build has no ${file}`);
   }
 
-  // Imports Node does not follow above: dynamic ones and the admin's browser modules.
+  // Imports Node does not follow above: dynamic ones and the admin's browser modules. Line
+  // comments may sit between the tokens.
+  const gap = String.raw`(?:\s|//[^\n]*)*`;
+  const importPattern = new RegExp(String.raw`\b(?:from|import)${gap}\(?${gap}(['"])(\.{1,2}/[^'"]+)\1`, 'g');
   const missing = [];
   for (const file of packed) {
     if (!file.endsWith('.js')) continue;
     const source = fs.readFileSync(path.join(root, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-    for (const [, , spec] of source.matchAll(/\b(?:from|import)\s*\(?\s*(['"])(\.{1,2}\/[^'"]+)\1/g)) {
+    for (const [, , spec] of source.matchAll(importPattern)) {
       if (!packed.has(path.posix.join(path.posix.dirname(file), spec))) missing.push(`${file} imports ${spec}`);
     }
   }
