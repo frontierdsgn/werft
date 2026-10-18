@@ -248,6 +248,7 @@ each save is a commit to `main` that goes live once its `gate` passed.
        runs-on: ubuntu-24.04
        timeout-minutes: 10
        environment: production
+       # One deploy at a time; a waiting one is replaced by a newer one.
        concurrency:
          group: deploy-production
          cancel-in-progress: false
@@ -261,15 +262,24 @@ each save is a commit to `main` that goes live once its `gate` passed.
              cache: npm
          - run: npm ci --no-audit --no-fund
          - run: npm run build
+         # Only the newest commit on main deploys: an older one whose gate finished late would
+         # otherwise roll production back.
+         - id: main
+           run: echo "sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" >> "$GITHUB_OUTPUT"
+           env:
+             GH_TOKEN: ${{ github.token }}
          # From the site's root, so Wrangler compiles functions/ (the gateway) with the build.
-         - run: npx wrangler pages deploy _site --project-name <project> --branch main --commit-hash "$GITHUB_SHA"
+         - if: steps.main.outputs.sha == github.sha
+           run: npx wrangler pages deploy _site --project-name <project> --branch main --commit-hash "$GITHUB_SHA"
            env:
              CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
              CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
    ```
 
    For a site in a subdirectory, add `defaults: { run: { working-directory: <dir> } }` to both
-   jobs and `cache-dependency-path: <dir>/package-lock.json` to `setup-node`.
+   jobs and `cache-dependency-path: <dir>/package-lock.json` to `setup-node`. A commit that is no
+   longer the newest on `main` when its turn comes is not deployed; if the newer one fails its
+   gate, production stays as it was until a commit passes.
 6. In the site's repository on GitHub: Settings → Environments → New environment `production`,
    deployment branches limited to `main`. Add the environment secret `CLOUDFLARE_API_TOKEN`, a
    Cloudflare API token with the permission "Account → Cloudflare Pages → Edit", and the variable
@@ -331,9 +341,18 @@ remove or rename it there first (identical files are taken over). The admin is n
 use the admin on the build host.
 
 With Cloudflare Pages as the build host, the domain points at IONOS, the admin stays at
-`https://<project>.pages.dev/admin/`, and every save publishes to IONOS through the build: add
-`npx werft publish` after the build in the `deploy` job, with `WERFT_PUBLISH_URL` and
-`WERFT_PUBLISH_SECRET` in the `production` environment.
+`https://<project>.pages.dev/admin/`, and every save publishes to IONOS through the `deploy` job:
+add `WERFT_PUBLISH_URL` as a variable and `WERFT_PUBLISH_SECRET` as a secret of the `production`
+environment, and this step after the Wrangler step, with the same `if`:
+
+```yaml
+- if: steps.main.outputs.sha == github.sha
+  run: npx werft publish
+  env:
+    WERFT_PUBLISH_URL: ${{ vars.WERFT_PUBLISH_URL }}
+    WERFT_PUBLISH_SECRET: ${{ secrets.WERFT_PUBLISH_SECRET }}
+```
+
 Without any build host, the owner can build and publish from their own computer with the same two
 commands.
 
@@ -408,7 +427,7 @@ there (`git rm -r .werft/submissions`), they remain in that branch's history.
   path on the site the form was on). A request with `Accept: application/json` gets `{ "ok": true }`
   or `{ "message": … }` with the status.
 - A submission is not a content change: `werft serve` does not rebuild for it, and on Cloudflare
-  Pages the excluded preview branch (step 4 above) keeps it from starting a build (the free plan has
+  Pages the excluded preview branch (step 3 above) keeps it from starting a build (the free plan has
   500 a month). `werft dev` and `werft serve` commit to the local `werft-submissions` branch and
   leave the working tree alone.
 - On PHP web space the form's `action` is the build host's gateway, e.g.
