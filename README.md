@@ -1,15 +1,26 @@
 # werft
 
+Git-based, host-independent CMS: static build, theme API, editor and auth gateway.
+
+Status: released. Sites install tagged versions; while werft is 0.y.z, a breaking change raises y and
+is listed in the [release notes](https://github.com/frontierdsgn/werft/releases).
+
+[![gate](https://github.com/frontierdsgn/werft/actions/workflows/gate.yml/badge.svg?branch=main)](https://github.com/frontierdsgn/werft/actions/workflows/gate.yml)
+[![latest release](https://img.shields.io/github/v/tag/frontierdsgn/werft?sort=semver&label=release)](https://github.com/frontierdsgn/werft/releases)
+[![licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
+
+## What it does
+
 A git-based CMS core for small websites. Content lives as JSON files in the site's git repository, a
 theme turns it into static HTML, and editors work in a browser admin at `/admin` with their own
 logins and WordPress-style roles. The same site runs on Cloudflare Pages, on any Node server, and
 (with a build host) on PHP web space such as IONOS.
 
-werft is version 0.5.0, licensed MIT. <!-- x-release-please-version -->
 The admin is werft's own editor, built for people who are not technical: plain German labels, one
-clear action per place, one screen with two views of the same content. Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
+clear action per place, one screen with two views of the same content.
+Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 
-## How it fits together
+### How it fits together
 
 ```diagram
  Browser                         Host (Cloudflare Pages, Node, …)
@@ -49,7 +60,7 @@ clear action per place, one screen with two views of the same content. Which exi
   [cloudflare.js](adapters/cloudflare.js) (Pages Functions), [php/werft-publish.php](adapters/php/werft-publish.php)
   (receiver for PHP web space).
 
-## Editor features
+### Editor features
 
 | WordPress | werft |
 |---|---|
@@ -63,7 +74,7 @@ clear action per place, one screen with two views of the same content. Which exi
 | Reusable blocks | Patterns: sections shared by several pages. |
 | Forms, redirects | Form definitions edited in the admin (the theme renders them); visitors' submissions kept in the repository and shown under "Einsendungen" (see [Form submissions](#form-submissions)); redirects written as `_redirects` and `.htaccess` (`/alt/*` to `/neu/:splat` works in both). |
 
-## Editor
+### Editor
 
 `/admin` is one app. The sidebar lists everything that can be edited (pages, the theme's post type,
 site settings, menus, images, form submissions, users; patterns, forms and redirects folded under "Weitere Inhalte")
@@ -93,29 +104,10 @@ only where the page without markers is unchanged, so a value the theme compares 
 never marked. Themes need nothing extra. Theme scripts do not run in the editor (e.g. a mobile menu
 shows open).
 
-## Commands
+## Install
 
-```sh
-npx werft build [dir]          # build into the site's output directory
-npx werft dev [dir] [--port 8787]
-                               # site, /admin and gateway on this checkout; commits locally
-npx werft serve [dir]          # the same for production; needs WERFT_SECRET
-npx werft user add <email> --role editor --name "Name"
-npx werft user list|set|remove
-npx werft secret               # a random secret for WERFT_SECRET / WERFT_PUBLISH_SECRET
-npx werft publish [dir]        # send the build to werft-publish.php
-```
-
-Tests: `npm test` in this directory (Node's test runner; the publish test needs `php` and skips without it).
-It also unpacks the package a site installs and checks that it loads, builds a site with its admin
-and holds every file it imports, and it scans the tracked files for credentials.
-GitHub Actions runs them on Node 22 and 24 for every push to `main` and every pull request, in the
-job `gate` ([gate.yml](.github/workflows/gate.yml)).
-
-## Setting up a new site
-
-A site is a repository with a `werft.config.js`, a theme and a `content/` folder. The steps below
-show every part.
+werft is installed per site, from a git tag; there is no npm package. A site is a repository with
+a `werft.config.js`, a theme and a `content/` folder. The steps below show every part.
 
 1. **package.json**: depend on a tagged werft version and add the scripts.
    <!-- x-release-please-start-version -->
@@ -167,9 +159,27 @@ show every part.
 6. **Cloudflare**: add `functions/api/werft/[[path]].js` as in [adapters/cloudflare.js](adapters/cloudflare.js).
 7. Run `npm install && npm run dev`, open `http://127.0.0.1:8787/admin/`.
 
-## Hosting
+## Usage
 
-### Cloudflare Pages (default)
+```sh
+npx werft build [dir]          # build into the site's output directory
+npx werft dev [dir] [--port 8787]
+                               # site, /admin and gateway on this checkout; commits locally
+npx werft serve [dir]          # the same for production; needs WERFT_SECRET
+npx werft user add <email> --role editor --name "Name"
+npx werft user list|set|remove
+npx werft secret               # a random secret for WERFT_SECRET / WERFT_PUBLISH_SECRET
+npx werft publish [dir]        # send the build to werft-publish.php
+```
+
+## Configuration
+
+A site is configured in `werft.config.js` and its theme (see [Install](#install)) and, per host,
+through environment variables.
+
+### Hosting
+
+#### Cloudflare Pages (default)
 
 Cloudflare builds the site from the GitHub repository; the admin's gateway runs as a Pages Function
 and commits to the repository through the GitHub API. Each save is a commit, and each commit
@@ -203,7 +213,7 @@ triggers a Cloudflare build.
 With both set, the app is used. Fine-grained tokens expire; renew the token before its expiry date
 or saving stops working.
 
-#### GitHub App
+##### GitHub App
 
 frontierdsgn owns one GitHub App for all sites,
 [werft-cms](https://github.com/apps/werft-cms) (the name "werft" is taken on GitHub). Commits made
@@ -235,7 +245,7 @@ the editor, saving, form submissions, up to 16 ms), with no errors. Cloudflare t
 then; it does not promise to. If sign-ins fail with error 1102, lower the iterations for a user
 (`npx werft user set <email> --password-prompt --iterations 20000`) or use the Workers Paid plan.
 
-### PHP web space (IONOS and similar)
+#### PHP web space (IONOS and similar)
 
 PHP web space cannot run the gateway or the build, which are JavaScript. The site is built elsewhere
 and pushed there:
@@ -257,7 +267,7 @@ With Cloudflare Pages as the build host, the domain points at IONOS, the admin s
 Without any build host, the owner can build and publish from their own computer with the same two
 commands.
 
-### Own server (Node 22 or newer)
+#### Own server (Node 22 or newer)
 
 ```sh
 git clone <repository> site && cd site/<site dir> && npm ci
@@ -269,12 +279,12 @@ rebuilds after each save and checks scheduled entries every 5 minutes. Put a rev
 HTTPS in front. It does not push: to keep GitHub current, push from the server (for example a cron
 job running `git push` with a deploy key).
 
-### Local
+#### Local
 
 `npm run dev` in the site directory: `http://127.0.0.1:8787/` and `/admin/`. Saves are commits in
 the local checkout. Without `WERFT_SECRET`, sessions end when the server stops.
 
-## Scheduling
+### Scheduling
 
 An entry with status "Veröffentlicht" and a future "Veröffentlichen am" date is left out of the
 build until it is due. Publishing it changes no file, so something must rebuild the site after the
@@ -290,7 +300,7 @@ nothing otherwise. It needs a signed-in user or the tick key.
 
 Dates are entered in the editor's time zone and stored in UTC.
 
-## Form submissions
+### Form submissions
 
 A form posts to the gateway at `/api/werft/forms/<form>`, where `<form>` is a file in
 `content/forms/` ([submissions.js](gateway/submissions.js)). The gateway commits each submission as
@@ -330,7 +340,7 @@ there (`git rm -r .werft/submissions`), they remain in that branch's history.
   `https://<project>.pages.dev/api/werft/forms/newsletter`.
 - No notification is sent; look at "Einsendungen".
 
-### Spam
+#### Spam
 
 - `_gotcha` above stops simple bots.
 - Each form takes at most 60 submissions an hour; more get status 429 ("Gerade kommen sehr viele
@@ -352,13 +362,34 @@ there (`git rm -r .werft/submissions`), they remain in that branch's history.
 </form>
 ```
 
-## Browser and host requirements
+## Compatibility
+
+Last verified on 18 October 2026 with werft 0.5.0 and `main`: the gate on Node 22 and 24 with PHP
+8.3 (GitHub's `ubuntu-24.04` runner).
 
 - Admin: a current Chrome, Edge, Brave, Firefox or Safari (import maps and ES modules). It loads
   nothing from other hosts and uses the system font.
 - Build and `werft serve`: Node 22 or newer. Receiver: PHP 7.4 or newer.
 
-## Releasing
+### Known limits
+
+- On Cloudflare each call of `/api/werft/tick` reads the content from GitHub with a handful of API
+  requests, which count against the token's or the app installation's rate limit; a cron every
+  few minutes is fine.
+
+## Development
+
+The gate is `npm test` (Node's test runner; the publish test needs `php` and skips without it). It
+also unpacks the package a site installs and checks that it loads, builds a site with its admin
+and holds every file it imports, and it scans the tracked files for credentials.
+GitHub Actions runs it on Node 22 and 24 for every push to `main` and every pull request, in the
+job `gate` ([gate.yml](.github/workflows/gate.yml)).
+
+A single file: `node --test test/gateway.test.js`; a single test:
+`node --test --test-name-pattern "<test name>" test/*.test.js`. How to contribute:
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Releasing
 
 Releases are made by [release-please](https://github.com/googleapis/release-please)
 ([release.yml](.github/workflows/release.yml)). It keeps a release pull request open, built from
@@ -374,7 +405,7 @@ The workflow signs in as a GitHub App (repository variable `RELEASE_APP_CLIENT_I
 because a pull request opened with the workflow's own token gets no `gate` run. Without the
 variable the workflow does nothing.
 
-### Moving the sites to a release
+#### Moving the sites to a release
 
 ```sh
 npm run update-sites              # the newest tag; or: npm run update-sites -- v1.2.3
@@ -394,13 +425,13 @@ The script ([scripts/release.js](scripts/release.js)) needs git, npm and `gh`, s
 access to the organization's repositories. It works in temporary clones and leaves local
 checkouts alone.
 
-## Contributing
+## Contributing, support and security
 
-Pull requests are welcome, also from forks. Every change must be useful to any werft site, not
-only to one: the rules are in [AGENTS.md](AGENTS.md).
+- Pull requests are welcome, also from forks: [CONTRIBUTING.md](CONTRIBUTING.md). Every change must
+  be useful to any werft site, not only to one; the rules are in [AGENTS.md](AGENTS.md).
+- Bugs and feature requests: [issues](https://github.com/frontierdsgn/werft/issues/new/choose).
+- Vulnerabilities: privately, as described in [SECURITY.md](SECURITY.md).
 
-## Known limits
+## Licence
 
-- On Cloudflare each call of `/api/werft/tick` reads the content from GitHub with a handful of API
-  requests, which count against the token's or the app installation's rate limit; a cron every
-  few minutes is fine.
+[MIT](LICENSE).
