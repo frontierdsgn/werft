@@ -135,7 +135,7 @@ export function updateSite(repo, tag, { dryRun = false, acceptChanges = false, e
         const state = !check ? 'no gate check' : check.status !== 'completed' ? `gate still ${check.status}` : `gate ${check.conclusion}`;
         throw new Error(`${state} on ${sha}${check?.html_url ? ` (${check.html_url})` : ''}; the pull request stays open: ${url}`);
       }
-      exec('gh', ['pr', 'merge', url, '--squash', '--delete-branch', '--match-head-commit', sha]);
+      exec('gh', ['pr', 'merge', url, '-R', repo, '--squash', '--delete-branch', '--match-head-commit', sha]);
       const merged = exec('gh', ['pr', 'view', url, '--json', 'mergeCommit', '--jq', '.mergeCommit.oid']);
       console.log(`  gate passed (${check.html_url}), merged as ${merged}.\n  gate run on the default branch: ${gateRun(repo, merged, exec)}`);
       return 'updated';

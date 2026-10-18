@@ -44,7 +44,7 @@ function fixtureSite(t, scripts) {
 // Clones from the bare repository instead of GitHub and runs `npm run` for real. gh answers with
 // `checks`, one list of `gate` check runs per poll (the last one repeats), and merges a pull request
 // by moving the bare repository's main to the pull request's head.
-function exec(root, { runs = [], checks = [[]] } = {}) {
+function exec(root, { runs = [], checks = [[]], open = [] } = {}) {
   const calls = [];
   const remote = path.join(root, `${REPO}.git`);
   let poll = 0;
@@ -67,9 +67,12 @@ function exec(root, { runs = [], checks = [[]] } = {}) {
       fs.writeFileSync(path.join(out, 'index.html'), '<title>Start</title>\n');
       return '';
     }
-    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list') return '[]';
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list') return JSON.stringify(open);
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') return PR;
-    if (cmd === 'gh' && args[0] === 'api') return JSON.stringify(checks[Math.min(poll++, checks.length - 1)]);
+    // Only the gate check of the pull request's head commit counts.
+    if (cmd === 'gh' && args[0] === 'api' && args[1] === `repos/${REPO}/commits/${run('git', ['-C', remote, 'rev-parse', BRANCH])}/check-runs?check_name=gate&filter=latest`) {
+      return JSON.stringify(checks[Math.min(poll++, checks.length - 1)]);
+    }
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'merge') {
       run('git', ['-C', remote, 'update-ref', 'refs/heads/main', args[args.indexOf('--match-head-commit') + 1]]);
       return '';
@@ -118,7 +121,7 @@ test('update-sites opens a pull request and merges it once the site\'s gate chec
   const head = branchHead(site);
   assert.equal(run('git', ['-C', site.remote, 'rev-parse', `${head}^`]), before);
   assert.ok(fn.calls.some((c) => c.startsWith(`gh pr create -R ${REPO} --head ${BRANCH} --title build(deps): bump werft from v0.1.0 to v0.2.0`)));
-  assert.ok(fn.calls.includes(`gh pr merge ${PR} --squash --delete-branch --match-head-commit ${head}`));
+  assert.ok(fn.calls.includes(`gh pr merge ${PR} -R ${REPO} --squash --delete-branch --match-head-commit ${head}`));
   assert.equal(JSON.parse(run('git', ['-C', site.remote, 'show', 'main:package.json'])).dependencies.werft, 'github:frontierdsgn/werft#v0.2.0');
   assert.match(output(log), /v0\.1\.0 → v0\.2\.0, local gate passed; public pages unchanged; pull request https:\/\/github\.com\/frontierdsgn\/site\/pull\/7/);
   assert.ok(output(log).includes(`gate passed (${check}), merged as ${head}`));
@@ -139,6 +142,25 @@ test('update-sites leaves the pull request open and reports the site as failed w
   assert.equal(site.head(), before);
   assert.equal(JSON.parse(run('git', ['-C', site.remote, 'show', `${BRANCH}:package.json`])).dependencies.werft, 'github:frontierdsgn/werft#v0.2.0');
   assert.ok(output(error).includes(`gate failure on ${branchHead(site)} (${check}); the pull request stays open: ${PR}`));
+});
+
+test('update-sites reuses an open pull request, replaces its branch and gives up when no gate check appears', (t) => {
+  const site = fixtureSite(t, { build: 'werft build' });
+  // An earlier run left a different commit on the branch.
+  const work = path.join(site.root, 'work');
+  run('git', ['-C', work, 'commit', '--quiet', '--allow-empty', '-m', 'earlier attempt']);
+  run('git', ['-C', work, 'push', '--quiet', 'origin', `HEAD:refs/heads/${BRANCH}`]);
+  const before = site.head();
+  t.mock.method(console, 'log', () => {});
+  const error = t.mock.method(console, 'error', () => {});
+  let waits = 0;
+  const fn = exec(site.root, { open: [{ url: PR }] });
+  assert.equal(updateSite(REPO, 'v0.2.0', { exec: fn, wait: () => { waits++; } }), 'failed');
+  assert.equal(waits, 119);
+  assert.ok(!fn.calls.some((c) => c.startsWith('gh pr create') || c.startsWith('gh pr merge')));
+  assert.equal(site.head(), before);
+  assert.equal(run('git', ['-C', site.remote, 'log', '-1', '--format=%s', BRANCH]), 'build(deps): bump werft from v0.1.0 to v0.2.0');
+  assert.ok(output(error).includes(`no gate check on ${branchHead(site)}; the pull request stays open: ${PR}`));
 });
 
 test('update-sites --dry-run pushes nothing and opens no pull request', (t) => {
