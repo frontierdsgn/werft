@@ -414,12 +414,15 @@ npm run update-sites -- --dry-run # commits in temporary clones, pushes nothing
 
 Every repository in the frontierdsgn organization whose root `package.json` depends on
 `github:frontierdsgn/werft` gets the tag on its default branch, one commit with `package.json` and
-`package-lock.json`, and Cloudflare rebuilds it. Before committing, it builds each site with its
-old and its new werft. If the public pages differ (anything outside `admin/` and
+`package-lock.json`. Before committing, it runs the site's own gate (`npm run gate`, if the site's
+`package.json` has that script) on the new werft, and builds each site with its old and its new
+werft. A site whose gate or build fails is reported as failed with the last lines of the output,
+and nothing is pushed. If the public pages differ (anything outside `admin/` and
 `_werft/build.json`), the site is held back and the changed files are listed; check them with
-`npm run dev` in the site, then run `npm run update-sites -- --accept-changes`. A site whose build
-fails is left as it is. Branches other than the default branch, and sites outside the organization,
-keep their version.
+`npm run dev` in the site, then run `npm run update-sites -- --accept-changes`. After a push it
+prints the site's `gate` run for the pushed commit (or the `gh run list` command that finds it
+once GitHub has started it). It exits non-zero when a site failed or was held back.
+Branches other than the default branch, and sites outside the organization, keep their version.
 
 The script ([scripts/release.js](scripts/release.js)) needs git, npm and `gh`, signed in with push
 access to the organization's repositories. It works in temporary clones and leaves local
