@@ -47,8 +47,8 @@ werft is the shared core of many websites. Read [README.md](README.md) before ch
   gateway API, theme API), security code, CI or release configuration get an independent review
   (another agent or the owner) before merge. The review reads the diff against the rules here and
   is recorded on the pull request against the reviewed head commit; a later push needs a new one.
-- Never run `npm run update-sites` (it pushes to the sites' repositories) or merge a release pull
-  request; both are the maintainers'.
+- Never run `npm run update-sites` (it opens and merges pull requests in the sites' repositories,
+  which deploys them) or merge a release pull request; both are the maintainers'.
 - Focused test: `node --test test/gateway.test.js`, or
   `node --test --test-name-pattern "<test name>" test/*.test.js`.
 

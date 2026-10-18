@@ -508,21 +508,28 @@ npm run update-sites -- --dry-run # commits in temporary clones, pushes nothing
 ```
 
 Every repository in the frontierdsgn organization whose root `package.json` depends on
-`github:frontierdsgn/werft` gets the tag on its default branch, one commit with `package.json` and
-`package-lock.json`. Before committing, it runs the site's own gate (`npm run gate`, if the site's
-`package.json` has that script) on the new werft, and builds each site with its old and its new
-werft. A site whose gate or build fails is reported as failed with the last lines of the output,
-and nothing is pushed. If the public pages differ (anything outside `admin/` and
-`_werft/build.json`), the site is held back and the changed files are listed; check them with
-`npm run dev` in the site, then run `npm run update-sites -- --accept-changes`. After a push it
-prints the site's `gate` run for the pushed commit (or the `gh run list` command that finds it
-once GitHub has started it); a site set up as in [Cloudflare Pages](#cloudflare-pages-default)
-deploys the commit once that run passed. It exits non-zero when a site failed or was held back.
-Branches other than the default branch, and sites outside the organization, keep their version.
+`github:frontierdsgn/werft` gets a pull request to its default branch: one commit with
+`package.json` and `package-lock.json` on the branch `build/werft-vX.Y.Z`, titled
+`build(deps): bump werft from … to …`. Before committing, it runs the site's own gate
+(`npm run gate`, if the site's `package.json` has that script) on the new werft, and builds each
+site with its old and its new werft. A site whose gate or build fails is reported as failed with
+the last lines of the output, and nothing is pushed. If the public pages differ (anything outside
+`admin/` and `_werft/build.json`), the site is held back and the changed files are listed; check
+them with `npm run dev` in the site, then run `npm run update-sites -- --accept-changes`.
 
-The script ([scripts/release.js](scripts/release.js)) needs git, npm and `gh`, signed in with push
-access to the organization's repositories. It works in temporary clones and leaves local
-checkouts alone.
+It then waits up to 30 minutes for the site's `gate` check on the pull request's head commit. Once
+that check concluded `success`, it squash-merges the pull request
+(`gh pr merge --squash --delete-branch --match-head-commit <sha>`) and prints the merge commit and
+the `gate` run on the default branch (or the `gh run list` command that finds it once GitHub has
+started it); a site set up as in [Cloudflare Pages](#cloudflare-pages-default) deploys the commit
+once that run passed. If the check failed, never appeared or did not finish in time, the pull
+request stays open and the site is reported as failed; a later run reuses it. The script exits
+non-zero when a site failed or was held back. Branches other than the default branch, and sites
+outside the organization, keep their version.
+
+The script ([scripts/release.js](scripts/release.js)) needs git, npm and `gh`, signed in with
+permission to push branches and to open and merge pull requests in the organization's
+repositories. It works in temporary clones and leaves local checkouts alone.
 
 ## Contributing, support and security
 

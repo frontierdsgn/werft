@@ -4,16 +4,18 @@
 //
 //   npm run update-sites -- [vx.y.z] [--dry-run] [--accept-changes]
 //     Moves every site in the frontierdsgn organization (a repository whose package.json depends on
-//     github:frontierdsgn/werft) to the given or the newest tag, on its default branch: npm install
-//     of the tag, then one commit with package.json and package-lock.json. If the site's
-//     package.json has a gate script, `npm run gate` must pass on the new werft, or the site is
-//     reported as failed and nothing is pushed. Each site is built with its old and its new werft
-//     first; if the public pages differ (anything outside admin/ and _werft/build.json), the site
-//     is held back unless --accept-changes is given. After a push it prints the site's gate run
-//     for the pushed commit.
+//     github:frontierdsgn/werft) to the given or the newest tag: npm install of the tag, one commit
+//     with package.json and package-lock.json on the branch build/werft-<tag>, and a pull request
+//     to the site's default branch. If the site's package.json has a gate script, `npm run gate`
+//     must pass on the new werft first, or the site is reported as failed and nothing is pushed.
+//     Each site is built with its old and its new werft first; if the public pages differ
+//     (anything outside admin/ and _werft/build.json), the site is held back unless
+//     --accept-changes is given. The pull request is squash-merged once the site's `gate` check
+//     passed on its head commit; otherwise it stays open and the site is reported as failed.
 //
 // It works in fresh clones in a temporary directory, so local checkouts stay untouched.
-// --dry-run does everything except pushing. Needs git, npm and gh, signed in with push access.
+// --dry-run does everything except pushing. Needs git, npm and gh, signed in with permission to
+// push branches and to open and merge pull requests in the sites.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -76,8 +78,22 @@ function gateRun(repo, sha, exec) {
   return `none yet, find it with: gh ${args.join(' ')}`;
 }
 
-// Returns 'updated', 'current', 'held' or 'failed'. The tests pass their own exec for run.
-export function updateSite(repo, tag, { dryRun = false, acceptChanges = false, exec = run } = {}) {
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// The latest check run named `gate` on a commit, once it completed or after 30 minutes. Missing or
+// unfinished counts as not passed.
+function waitForGate(repo, sha, exec, wait, polls = 120) {
+  for (let i = 0; ; i++) {
+    const runs = JSON.parse(exec('gh', ['api', `repos/${repo}/commits/${sha}/check-runs?check_name=gate&filter=latest`, '--jq', '.check_runs']));
+    const latest = runs.sort((a, b) => b.id - a.id)[0];
+    if (latest?.status === 'completed' || i + 1 >= polls) return latest;
+    wait(15_000);
+  }
+}
+
+// Returns 'updated', 'current', 'held' or 'failed'. The tests pass their own exec for run and a
+// wait that does not sleep.
+export function updateSite(repo, tag, { dryRun = false, acceptChanges = false, exec = run, wait = sleep } = {}) {
   try {
     return inTemp('werft-site-', (tmp) => {
       const dir = path.join(tmp, 'site');
@@ -99,13 +115,29 @@ export function updateSite(repo, tag, { dryRun = false, acceptChanges = false, e
         console.log(`${repo}: held back, ${tag} changes ${changed.length} public files (rerun with --accept-changes to update anyway):\n  ${changed.slice(0, 20).join('\n  ')}`);
         return 'held';
       }
-      // The repository's own commit prefix, e.g. "InselSalon: werft 0.2.0".
-      const prefix = git('log', '--format=%s').split('\n').map((s) => s.match(/^([^:]+): werft /)?.[1]).find(Boolean);
-      const version = tag.replace(/^v/, '');
-      git('commit', '--quiet', '-m', prefix ? `${prefix}: werft ${version}` : `werft ${version}`, '--', 'package.json', 'package-lock.json');
-      if (!dryRun) git('push', '--quiet', 'origin', 'HEAD');
-      console.log(`${repo}: ${from} → ${tag}, ${gate ? 'gate passed' : 'no gate script'}${dryRun ? ', committed, not pushed (--dry-run)' : ', pushed'}${changed.length ? `; ${changed.length} public files changed` : '; public pages unchanged'}.`);
-      if (!dryRun) console.log(`  gate run: ${gateRun(repo, git('rev-parse', 'HEAD'), exec)}`);
+      // The title becomes the squash commit on the site's default branch.
+      const title = `build(deps): bump werft from ${from} to ${tag}`;
+      git('commit', '--quiet', '-m', title, '--', 'package.json', 'package-lock.json');
+      const summary = `${repo}: ${from} → ${tag}, ${gate ? 'local gate passed' : 'no gate script'}${changed.length ? `; ${changed.length} public files changed` : '; public pages unchanged'}`;
+      if (dryRun) { console.log(`${summary}; committed, not pushed (--dry-run).`); return 'updated'; }
+
+      // A pull request per site, merged once the site's `gate` check passed on its head commit.
+      const branch = `build/werft-${tag}`;
+      const sha = git('rev-parse', 'HEAD');
+      // A rerun replaces the branch an earlier run left behind (the clone tracks it).
+      git('push', '--quiet', '--force-with-lease', 'origin', `HEAD:refs/heads/${branch}`);
+      const body = `Moves werft from ${from} to ${tag} ([release notes](https://github.com/${WERFT}/releases/tag/${tag})).\n\n${gate ? 'The site\'s gate passed locally on the new werft.' : 'The site has no gate script.'} ${changed.length ? `The public pages differ in ${changed.length} files (accepted with --accept-changes):\n\n${changed.slice(0, 50).map((f) => `- \`${f}\``).join('\n')}` : 'The public pages are unchanged.'}\n\nOpened by \`npm run update-sites\`, which merges it once \`gate\` passed on this commit.`;
+      const open = JSON.parse(exec('gh', ['pr', 'list', '-R', repo, '--head', branch, '--state', 'open', '--json', 'url']));
+      const url = open[0]?.url ?? exec('gh', ['pr', 'create', '-R', repo, '--head', branch, '--title', title, '--body', body]);
+      console.log(`${summary}; pull request ${url}`);
+      const check = waitForGate(repo, sha, exec, wait);
+      if (check?.conclusion !== 'success') {
+        const state = !check ? 'no gate check' : check.status !== 'completed' ? `gate still ${check.status}` : `gate ${check.conclusion}`;
+        throw new Error(`${state} on ${sha}${check?.html_url ? ` (${check.html_url})` : ''}; the pull request stays open: ${url}`);
+      }
+      exec('gh', ['pr', 'merge', url, '--squash', '--delete-branch', '--match-head-commit', sha]);
+      const merged = exec('gh', ['pr', 'view', url, '--json', 'mergeCommit', '--jq', '.mergeCommit.oid']);
+      console.log(`  gate passed (${check.html_url}), merged as ${merged}.\n  gate run on the default branch: ${gateRun(repo, merged, exec)}`);
       return 'updated';
     });
   } catch (e) {
