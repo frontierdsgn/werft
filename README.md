@@ -516,7 +516,8 @@ and nothing is pushed. If the public pages differ (anything outside `admin/` and
 `_werft/build.json`), the site is held back and the changed files are listed; check them with
 `npm run dev` in the site, then run `npm run update-sites -- --accept-changes`. After a push it
 prints the site's `gate` run for the pushed commit (or the `gh run list` command that finds it
-once GitHub has started it). It exits non-zero when a site failed or was held back.
+once GitHub has started it); a site set up as in [Cloudflare Pages](#cloudflare-pages-default)
+deploys the commit once that run passed. It exits non-zero when a site failed or was held back.
 Branches other than the default branch, and sites outside the organization, keep their version.
 
 The script ([scripts/release.js](scripts/release.js)) needs git, npm and `gh`, signed in with push
