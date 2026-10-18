@@ -248,10 +248,11 @@ each save is a commit to `main` that goes live once its `gate` passed.
        runs-on: ubuntu-24.04
        timeout-minutes: 10
        environment: production
-       # One deploy at a time; a waiting one is replaced by a newer one.
+       # One deploy at a time, the others queue in order.
        concurrency:
          group: deploy-production
          cancel-in-progress: false
+         queue: max
        steps:
          - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
            with:
