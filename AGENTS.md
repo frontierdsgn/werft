@@ -1,6 +1,44 @@
 # Working on werft
 
+## Profile
+- Purpose: the shared core (build, theme API, editor, auth gateway) that werft sites install from a git tag
+- Stage: released (repository standard 2026-10-17)
+- Gate: `npm test` (CI job `gate`)
+- Landing: PR, squash-merged on a green gate; agents land: yes
+- Release: release-please PR; agents release: no
+- Outside issues and PRs: agents triage; outside PRs merge: owner approves
+
+Deliberate rules beyond the standard, kept on purpose: every change is general and hosting stays
+where it runs today (Cloudflare Pages free plan, Node 22 or newer, PHP web space), see "Every change
+is general"; contributions come as fork-and-PR with a test for every contract or fix, see
+"Contributing from outside".
+
 werft is the shared core of many websites. Read [README.md](README.md) before changing it.
+
+## Where things live
+- `lib/`: build, content, fields and schema, shared by the CLI and the editor's preview
+  (`lib/node.js` and `lib/publish.js` are Node only).
+- `gateway/`: the file API, sign-in, roles and form submissions; `gateway/storage/` holds the git
+  and GitHub drivers. Fetch API and Web Crypto only (except the local `git.js` driver).
+- `admin/`: the browser editor. `adapters/`: Node server, Cloudflare Pages Functions, PHP receiver.
+- `bin/werft.js`: the CLI. `scripts/release.js`: `npm run update-sites`, maintainers only.
+- `test/`: Node's test runner; `test/fake-github.js` stands in for GitHub, so tests need no
+  network or credentials. `.github/workflows/`: `gate.yml` (the gate), `release.yml`
+  (release-please).
+
+## Landing a change
+- Branch `<type>/<slug>` from `main` (`<type>/<issue>-<slug>` for an issue), one concern per pull
+  request, title in Conventional Commits (`feat`, `fix`, `docs`, `ci`, …; `!` and a
+  `BREAKING CHANGE:` footer for a breaking change). The body says what changed, why, how it was
+  verified and `Fixes #n` where it applies; it becomes the squash commit.
+- Merge by squash once the latest `gate` run on the head commit concluded `success`:
+  `gh pr merge <number> --squash --delete-branch --match-head-commit <sha>`.
+- Changes to the public interface (package exports, CLI, gateway API, theme API), to security
+  code, CI or release configuration get an independent review before merge.
+- Never run `npm run update-sites` (it pushes to the sites' repositories) or merge a release pull
+  request; both are the maintainers'.
+- Focused test: `node --test test/gateway.test.js`, or
+  `node --test --test-name-pattern "<test name>" test/*.test.js`.
 
 ## Every change is general
 - A change to werft must be useful to any werft site, not only to the site that needed it. It
@@ -17,8 +55,8 @@ werft is the shared core of many websites. Read [README.md](README.md) before ch
 ## Contributing from outside
 - Fork the repository, branch from `main`, open a pull request against `main`. One gap or feature
   per pull request, with what it solves and how you verified it.
-- `npm test` passes (GitHub Actions runs it on every pull request; a first-time contributor's run
+- `npm test` passes (GitHub Actions runs it in the job `gate` on every pull request; a first-time contributor's run
   starts once a maintainer approves it). A new contract gets a test through the public interface; a fix gets a test
   that fails without it. Update the README where behaviour or setup changes.
-- Do not change the version or tag a release: the maintainers merge and release
-  (`npm run release`, see the README).
+- Do not change the version or tag a release: release-please's release PR does that, and
+  maintainers merge it.
