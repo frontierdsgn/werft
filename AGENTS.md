@@ -10,7 +10,7 @@ werft is the shared core of many websites. Read [README.md](README.md) before ch
   or site needs. A site's look and its own blocks stay in that site's theme.
 - Example: a site needed a newsletter sign-up. werft did not get a newsletter feature; it got form
   submissions for every form in `content/forms/`, read in the editor under "Einsendungen".
-- Keep werft running where it runs today: Cloudflare Pages on the free plan, Node 20 or newer, and
+- Keep werft running where it runs today: Cloudflare Pages on the free plan, Node 22 or newer, and
   PHP web space through `werft publish`. The gateway uses only the Fetch API and Web Crypto.
 - Texts in the editor are plain German for people who are not technical.
 

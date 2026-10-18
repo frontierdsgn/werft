@@ -107,7 +107,7 @@ npx werft publish [dir]        # send the build to werft-publish.php
 ```
 
 Tests: `npm test` in this directory (Node's test runner; the publish test needs `php` and skips without it).
-GitHub Actions runs them on Node 20, 22 and 24 for every push to `main` and every pull request
+GitHub Actions runs them on Node 22 and 24 for every push to `main` and every pull request
 ([test.yml](.github/workflows/test.yml)).
 
 ## Setting up a new site
@@ -253,7 +253,7 @@ With Cloudflare Pages as the build host, the domain points at IONOS, the admin s
 Without any build host, the owner can build and publish from their own computer with the same two
 commands.
 
-### Own server (Node 20 or newer)
+### Own server (Node 22 or newer)
 
 ```sh
 git clone <repository> site && cd site/<site dir> && npm ci
@@ -352,7 +352,7 @@ there (`git rm -r .werft/submissions`), they remain in that branch's history.
 
 - Admin: a current Chrome, Edge, Brave, Firefox or Safari (import maps and ES modules). It loads
   nothing from other hosts and uses the system font.
-- Build and `werft serve`: Node 20 or newer. Receiver: PHP 7.4 or newer.
+- Build and `werft serve`: Node 22 or newer. Receiver: PHP 7.4 or newer.
 
 ## Releasing
 
