@@ -1,0 +1,16 @@
+#!/bin/sh
+# Refuses a direct push to main (changes land through a pull request, see AGENTS.md) and runs the
+# gate before every other push. Enable once per checkout: git config core.hooksPath .githooks
+# Only the owner may skip it (git push --no-verify).
+set -eu
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [ "$remote_ref" = refs/heads/main ]; then
+    echo "pre-push: main takes changes only through a pull request; push a branch instead." >&2
+    exit 1
+  fi
+done
+if ! out=$(npm test 2>&1); then
+  printf '%s\n' "$out" >&2
+  echo "pre-push: npm test failed; fix it before pushing." >&2
+  exit 1
+fi
