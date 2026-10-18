@@ -181,14 +181,20 @@ through environment variables.
 
 #### Cloudflare Pages (default)
 
-Cloudflare builds the site from the GitHub repository; the admin's gateway runs as a Pages Function
-and commits to the repository through the GitHub API. Each save is a commit, and each commit
-triggers a Cloudflare build.
+The site's GitHub Actions workflow deploys production: every push to `main` runs the site's `gate`,
+and once it passed, the `deploy` job uploads that commit's build to Cloudflare Pages and records
+the commit it shipped. Cloudflare's own Git integration only builds previews of other branches. The
+admin's gateway runs as a Pages Function and commits to the repository through the GitHub API, so
+each save is a commit to `main` that goes live once its `gate` passed.
 
-1. Pages → Create → Connect to Git → choose the repository.
+1. Pages → Create → Connect to Git → choose the repository (Cloudflare builds the previews from it).
 2. Build settings: root directory = the site's directory (e.g. `classic`), build command
    `npm run build`, output directory `_site`. Environment variable `NODE_VERSION` = `22`.
-3. Environment variables (Production; mark `WERFT_SECRET`, `GITHUB_APP_PRIVATE_KEY` and
+3. Settings → Builds → Branch control: turn off "Enable automatic production branch deployments",
+   so only the `deploy` job puts a build live. If the site has forms, set Preview branches to
+   "Custom branches", include `*`, exclude `werft-submissions` (or "None"), so a
+   [form submission](#form-submissions) does not start a build.
+4. Environment variables (Production; mark `WERFT_SECRET`, `GITHUB_APP_PRIVATE_KEY` and
    `GITHUB_TOKEN` as secrets):
 
    | Variable | Value |
@@ -200,15 +206,77 @@ triggers a Cloudflare build.
    | `WERFT_REPO` | `owner/repository` |
    | `WERFT_DIR` | the site's directory in the repository (e.g. `classic`), empty for the root |
    | `WERFT_BRANCH` | production branch, default `main` |
-   | `WERFT_DEPLOY_HOOK` | optional: a deploy hook URL (Settings → Builds → Deploy hooks), for scheduled publishing |
+   | `WERFT_DEPLOY_HOOK` | optional: a deploy hook URL (Settings → Builds → Deploy hooks), for scheduled publishing; it bypasses `gate`, see [Scheduling](#scheduling) |
    | `WERFT_TICK_KEY` | optional, secret: lets a cron service publish scheduled entries (see [Scheduling](#scheduling)) |
    | `WERFT_GITHUB_API` | optional: GitHub Enterprise Server API URL |
    | `TURNSTILE_SECRET_KEY` | optional, secret: forms then need [Cloudflare Turnstile](#spam) |
 
-4. If the site has forms: Settings → Builds → Branch control → Preview branches: "Custom branches",
-   include `*`, exclude `werft-submissions` (or "None"), so a [form submission](#form-submissions)
-   does not start a build.
-5. Deploy, open `https://<project>.pages.dev/admin/`, sign in with a user from `.werft/users.json`.
+5. In the site: give its `package.json` a `gate` script (its own checks; at least `werft build`),
+   add Wrangler with `npm install --save-dev wrangler`, and add `.github/workflows/gate.yml`
+   (replace `<project>` with the Pages project's name):
+
+   ```yaml
+   # The gate on every push to main and every pull request; a push to main deploys once it passed.
+   name: gate
+   on:
+     push:
+       branches: [main]
+     pull_request:
+   permissions:
+     contents: read
+   concurrency:
+     group: gate-${{ github.event.pull_request.number || github.sha }}
+     cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+   jobs:
+     gate:
+       name: gate
+       runs-on: ubuntu-24.04
+       timeout-minutes: 10
+       steps:
+         - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+           with:
+             persist-credentials: false
+         - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+           with:
+             node-version: 22
+             cache: npm
+         - run: npm ci --no-audit --no-fund
+         - run: npm run gate
+     deploy:
+       needs: gate
+       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+       runs-on: ubuntu-24.04
+       timeout-minutes: 10
+       environment: production
+       concurrency:
+         group: deploy-production
+         cancel-in-progress: false
+       steps:
+         - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+           with:
+             persist-credentials: false
+         - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+           with:
+             node-version: 22
+             cache: npm
+         - run: npm ci --no-audit --no-fund
+         - run: npm run build
+         # From the site's root, so Wrangler compiles functions/ (the gateway) with the build.
+         - run: npx wrangler pages deploy _site --project-name <project> --branch main --commit-hash "$GITHUB_SHA"
+           env:
+             CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+             CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+   ```
+
+   For a site in a subdirectory, add `defaults: { run: { working-directory: <dir> } }` to both
+   jobs and `cache-dependency-path: <dir>/package-lock.json` to `setup-node`.
+6. In the site's repository on GitHub: Settings → Environments → New environment `production`,
+   deployment branches limited to `main`. Add the environment secret `CLOUDFLARE_API_TOKEN`, a
+   Cloudflare API token with the permission "Account → Cloudflare Pages → Edit", and the variable
+   `CLOUDFLARE_ACCOUNT_ID`, the Cloudflare account ID. If `main` has a ruleset that requires pull
+   requests, add the werft-cms app as a bypass actor, or saves from the admin are refused.
+7. Push to `main`; once `gate` and `deploy` passed, open `https://<project>.pages.dev/admin/` and
+   sign in with a user from `.werft/users.json`.
 
 With both set, the app is used. Fine-grained tokens expire; renew the token before its expiry date
 or saving stops working.
@@ -263,7 +331,9 @@ remove or rename it there first (identical files are taken over). The admin is n
 use the admin on the build host.
 
 With Cloudflare Pages as the build host, the domain points at IONOS, the admin stays at
-`https://<project>.pages.dev/admin/`, and every save publishes to IONOS through the Cloudflare build.
+`https://<project>.pages.dev/admin/`, and every save publishes to IONOS through the build: add
+`npx werft publish` after the build in the `deploy` job, with `WERFT_PUBLISH_URL` and
+`WERFT_PUBLISH_SECRET` in the `production` environment.
 Without any build host, the owner can build and publish from their own computer with the same two
 commands.
 
@@ -297,6 +367,11 @@ nothing otherwise. It needs a signed-in user or the tick key.
   load does. For an exact time, set `WERFT_TICK_KEY` (e.g. the output of `npx werft secret`) and
   let an external cron service or a Cloudflare Worker with a cron trigger request
   `https://<site>/api/werft/tick?key=<WERFT_TICK_KEY>`.
+- A deploy hook makes Cloudflare build and deploy production directly, so it bypasses `gate`. On
+  a site deployed by its `deploy` job (see [Cloudflare Pages](#cloudflare-pages-default)), scheduled
+  publishing should dispatch that workflow instead; that is not built yet
+  ([#21](https://github.com/frontierdsgn/werft/issues/21)). Without the hook, a due entry goes
+  live with the next deploy.
 
 Dates are entered in the editor's time zone and stored in UTC.
 
