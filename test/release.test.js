@@ -1,16 +1,24 @@
 // `npm run update-sites` (scripts/release.js) against a site in a local bare repository. git and the
 // site's own gate run for real; npm install, the builds and gh are stand-ins, so no network is used.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { run, updateSite } from '../scripts/release.js';
 
-// Commits in the temporary clones use this identity and no system or user git configuration.
+// git and npm in this process use this identity and no system or user configuration, cache or logs.
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'werft-sites-home-'));
+after(() => fs.rmSync(home, { recursive: true, force: true }));
+for (const name of Object.keys(process.env)) if (/^npm_config_/i.test(name)) delete process.env[name];
 Object.assign(process.env, {
+  HOME: home,
   GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@test', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@test',
   GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull,
+  npm_config_userconfig: path.join(home, '.npmrc'), npm_config_globalconfig: path.join(home, 'npmrc'),
+  npm_config_cache: path.join(home, '.npm'), npm_config_update_notifier: 'false',
 });
 
 const REPO = 'frontierdsgn/site';
@@ -75,7 +83,8 @@ test('update-sites reports a site whose gate fails as failed, with the gate outp
 });
 
 test('update-sites pushes a site whose gate passes and prints its gate run', (t) => {
-  const site = fixtureSite(t, { build: 'werft build', gate: 'node -e "process.exit(0)"' });
+  // The gate passes only on the new werft, so it must run after npm install of the tag.
+  const site = fixtureSite(t, { build: 'werft build', gate: 'node -e "process.exit(require(\'./package.json\').dependencies.werft.endsWith(\'#v0.2.0\') ? 0 : 1)"' });
   const log = t.mock.method(console, 'log', () => {});
   const url = 'https://github.com/frontierdsgn/site/actions/runs/1';
   const fn = exec(site.root, { runs: [{ url }] });
@@ -97,4 +106,11 @@ test('update-sites pushes a site without a gate script as before', (t) => {
   assert.match(output(log), /no gate script, pushed/);
   // No run yet: it prints the command that finds it.
   assert.ok(output(log).includes(`gh run list -R ${REPO} --commit ${site.head()} --workflow gate.yml --json url`));
+});
+
+test('update-sites runs as a script and not when imported', () => {
+  const script = fileURLToPath(new URL('../scripts/release.js', import.meta.url));
+  const result = spawnSync(process.execPath, [script], { encoding: 'utf8' });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /^Usage: npm run update-sites/);
 });
