@@ -74,12 +74,15 @@ export function pagesFunction({ site, theme, fetch: request = (...args) => fetch
       },
     });
   };
-  return async ({ request: incoming, env }) => {
+  return async (context) => {
+    const { request: incoming, env } = context;
     try {
       gateway ??= create(env);
     } catch (error) {
       return new Response(JSON.stringify({ message: error.message }), { status: 500, headers: { 'content-type': 'application/json; charset=utf-8' } });
     }
-    return (await gateway(incoming, { address: incoming.headers.get('cf-connecting-ip') })) ?? new Response('Not found', { status: 404 });
+    // Cloudflare routes by the host name, so the request's origin is the site's.
+    const origin = new URL(incoming.url).origin;
+    return (await gateway(incoming, { address: incoming.headers.get('cf-connecting-ip'), origin, waitUntil: context.waitUntil && ((p) => context.waitUntil(p)) })) ?? new Response('Not found', { status: 404 });
   };
 }
