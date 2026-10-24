@@ -222,6 +222,7 @@ each save is a commit to `main` that goes live once its `gate` passed.
    | `WERFT_TICK_KEY` | optional, secret: lets a cron service publish scheduled entries (see [Scheduling](#scheduling)) |
    | `WERFT_GITHUB_API` | optional: GitHub Enterprise Server API URL |
    | `TURNSTILE_SECRET_KEY` | optional, secret: forms then need [Cloudflare Turnstile](#spam) |
+   | `WERFT_MAIL`, `WERFT_MAIL_FROM` | optional: the [e-mail](#e-mail) driver and the sender address |
 
 5. In the site: give its `package.json` a `gate` script (its own checks; at least `werft build`),
    add Wrangler with `npm install --save-dev wrangler`, and add `.github/workflows/gate.yml`
@@ -453,6 +454,23 @@ nothing otherwise. It needs a signed-in user or the tick key.
   live with the next deploy.
 
 Dates are entered in the editor's time zone and stored in UTC.
+
+### E-mail
+
+The gateway sends e-mail through a driver ([mail.js](gateway/mail.js)) that the environment
+names: `WERFT_MAIL` is the driver, `WERFT_MAIL_FROM` the sender address (Pages environment
+variables, or the environment of `werft serve` and `werft dev`). Without `WERFT_MAIL`, `werft dev`
+uses `log`; `werft serve` and Pages send nothing, and `/api/werft/status` reports `"mail": false`.
+
+| `WERFT_MAIL` | Sends |
+|---|---|
+| `log` | nothing: prints each e-mail to the log, links for a new password too, so it is for development and trying out |
+
+A driver delivering through a mail provider is not built yet: which providers werft supports is
+an open question ([#36](https://github.com/frontierdsgn/werft/issues/36)). Every driver gets the
+same checked message (one to 20 recipients, plain addresses, subject and sender name on one line),
+so a value from a visitor cannot add a header. Tests use `memoryMail()`, which keeps the e-mails
+it gets in `sent` and fails while `failure` is set.
 
 ### Form submissions
 

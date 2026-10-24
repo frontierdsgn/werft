@@ -26,7 +26,7 @@ async function serveCommand(dev) {
   }
   const port = Number(option('port') ?? process.env.PORT ?? 8787);
   const host = option('host') ?? (dev ? '127.0.0.1' : '0.0.0.0');
-  const { url } = await serve({ dir: positional[0] ?? '.', port, host, secret, branch: option('branch'), tickMinutes: dev ? 0 : 5 });
+  const { url } = await serve({ dir: positional[0] ?? '.', port, host, secret, branch: option('branch'), tickMinutes: dev ? 0 : 5, mail: dev ? 'log' : undefined });
   console.log(`Site:  ${url}/\nAdmin: ${url}/admin/`);
   if (dev && !process.env.WERFT_SECRET) console.log('Sessions end when this server stops (no WERFT_SECRET set).');
 }

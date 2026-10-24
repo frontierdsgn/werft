@@ -7,6 +7,7 @@ import path from 'node:path';
 import { buildToDisk, loadSite } from '../lib/node.js';
 import { createGateway, gatewaySite } from '../gateway/core.js';
 import { gitStorage } from '../gateway/storage/git.js';
+import { mailFromEnv } from '../gateway/mail.js';
 
 const TYPES = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', ico: 'image/x-icon', txt: 'text/plain; charset=utf-8', xml: 'application/xml', woff2: 'font/woff2', pdf: 'application/pdf', map: 'application/json' };
 
@@ -45,8 +46,9 @@ async function serveFile(res, outDir, pathname) {
   }
 }
 
-// options: { dir, port, host, secret, branch, tickMinutes }
-export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret, branch, tickMinutes = 0, log = console.log } = {}) {
+// options: { dir, port, host, secret, branch, tickMinutes, mail (the e-mail driver when WERFT_MAIL
+// is unset: 'log' in werft dev, none in werft serve) }
+export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret, branch, tickMinutes = 0, mail, log = console.log } = {}) {
   const { root, site, theme } = await loadSite(dir);
   const outDir = path.resolve(root, site.output ?? '_site');
   const storage = await gitStorage(root);
@@ -80,6 +82,7 @@ export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret
   const gateway = createGateway({
     storage, secret, branch, tickKey,
     turnstileSecret: process.env.TURNSTILE_SECRET_KEY || undefined,
+    mail: mailFromEnv(process.env, { fallback: mail, log }),
     site: gatewaySite(site, theme),
     onCommit: (commit) => { rebuild(commit.message); },
     onTick: ({ due }) => rebuild(`scheduled: ${due.join(', ')}`),

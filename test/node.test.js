@@ -23,6 +23,13 @@ before(async () => {
 });
 after(() => server?.close());
 
+test('sends e-mail only through a driver: werft dev passes log, werft serve none', async () => {
+  const status = async (url) => (await (await fetch(`${url}/api/werft/status`)).json()).mail;
+  assert.equal(await status(base), !!process.env.WERFT_MAIL, 'werft serve: only what WERFT_MAIL names');
+  const dev = await serve({ dir: root, port: 0, secret: 'x'.repeat(32), mail: 'log', log: () => {} });
+  try { assert.equal(await status(`http://127.0.0.1:${dev.server.address().port}`), true); } finally { dev.close(); }
+});
+
 test('serves the site and nothing beside its output directory', async () => {
   assert.equal(await (await fetch(`${base}/`)).text(), '<title>Start</title>');
   const sibling = await fetch(`${base}/%2e%2e%2f_site-secret/secret.txt`);

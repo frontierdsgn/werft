@@ -22,9 +22,11 @@
 //   WERFT_TICK_KEY     optional, lets a cron service call /api/werft/tick?key=… (secret)
 //   WERFT_GITHUB_API   optional, for GitHub Enterprise Server (default https://api.github.com)
 //   TURNSTILE_SECRET_KEY  optional, forms then need Cloudflare Turnstile (secret)
+//   WERFT_MAIL, WERFT_MAIL_FROM  optional, the e-mail driver and sender (see gateway/mail.js)
 import { createGateway, gatewaySite } from '../gateway/core.js';
 import { githubStorage } from '../gateway/storage/github.js';
 import { githubApp } from '../gateway/storage/github-app.js';
+import { mailFromEnv } from '../gateway/mail.js';
 
 export function pagesFunction({ site, theme, fetch: request = (...args) => fetch(...args) }) {
   let gateway;
@@ -43,6 +45,7 @@ export function pagesFunction({ site, theme, fetch: request = (...args) => fetch
       branch: env.WERFT_BRANCH || 'main',
       tickKey: env.WERFT_TICK_KEY || undefined,
       turnstileSecret: env.TURNSTILE_SECRET_KEY || undefined,
+      mail: mailFromEnv(env, { fetch: request }),
       fetch: request,
       // Each binary file is one GitHub request; with the gateway's own requests and the GitHub App's
       // three for a new token, 30 stay below the free plan's 50 per invocation.
