@@ -39,3 +39,41 @@ test('without a date field posts are ordered by their publish date', async () =>
   };
   assert.deepEqual(createContext({ site: {}, theme: { postType: { name: 'news' } }, content, now: new Date('2026-01-01') }).posts().map((p) => p.slug), ['b', 'a']);
 });
+
+test('ctx.asset() gives theme stylesheets and scripts a content hash, so a changed file gets a new address', async () => {
+  const theme = {
+    staticDir: 'theme/static',
+    renderPage: (page, ctx) => ({ value: [ctx.asset('assets/css/site.css'), ctx.asset('assets/js/site.js?defer#top'), ctx.asset('assets/fonts/a.woff2'), ctx.asset('assets/img/a.jpg'), ctx.url('assets/css/site.css')].join(' ') }),
+  };
+  const page = async (css, path = 'index.html') => {
+    const files = { 'content/pages/index.json': '{"title":"Start"}', 'content/en/pages/index.json': '{"title":"Home"}', 'theme/static/assets/css/site.css': css, 'theme/static/assets/js/site.js': 'x', 'theme/static/assets/fonts/a.woff2': 'f', 'theme/static/vendor.js': null };
+    const store = { ...memoryStore(files), readBytes: async (p) => (p === 'theme/static/vendor.js' ? Promise.reject(Object.assign(new Error('folder'), { code: 'EISDIR' })) : new TextEncoder().encode(files[p])) };
+    return (await build({ site: { languages: ['de', 'en'] }, theme, store, media: {} })).files.find((f) => f.path === path).text;
+  };
+  const [css, js, font, media, plain] = (await page('body{}')).split(' ');
+  assert.match(css, /^assets\/css\/site\.css\?v=[0-9a-f]{10}$/);
+  assert.match(js, /^assets\/js\/site\.js\?defer&v=[0-9a-f]{10}#top$/);
+  assert.deepEqual([font, media, plain], ['assets/fonts/a.woff2', 'assets/img/a.jpg', 'assets/css/site.css'], 'other files and ctx.url() stay as they are');
+  assert.equal((await page('body{}')).split(' ')[0], css, 'the same file keeps its address');
+  assert.notEqual((await page('body{color:red}')).split(' ')[0], css);
+  assert.equal((await page('body{}', 'en/index.html')).split(' ')[0], `../${css}`);
+});
+
+test('ctx.asset() on a real static folder skips linked folders and broken links', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { fsStore } = await import('../lib/node.js');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'werft-assets-'));
+  try {
+    const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text); };
+    write('content/pages/index.json', '{"title":"Start"}');
+    write('theme/static/site.css', 'body{}');
+    write('shared/lib.js', 'x');
+    fs.symlinkSync(path.join(root, 'shared'), path.join(root, 'theme/static/vendor.js'));
+    fs.symlinkSync(path.join(root, 'missing.css'), path.join(root, 'theme/static/broken.css'));
+    const theme = { staticDir: 'theme/static', renderPage: (page, ctx) => ({ value: `${ctx.asset('site.css')} ${ctx.asset('vendor.js/lib.js')}` }) };
+    const { files } = await build({ site: {}, theme, store: fsStore(root), media: {} });
+    assert.match(files.find((f) => f.path === 'index.html').text, /^site\.css\?v=[0-9a-f]{10} vendor\.js\/lib\.js$/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
