@@ -43,34 +43,76 @@ export async function api(path, { method = 'GET', body, raw = false } = {}, retr
   return data;
 }
 
-// Resolves with the signed-in user, showing the sign-in form first when there is no valid session.
+// Resolves with the signed-in user. Without a valid session it shows the sign-in form, with
+// "Passwort vergessen?" where the site sends e-mail; the link in that e-mail (#passwort=…) opens the
+// form for a new password, which signs in too.
 export async function requireUser(siteName) {
-  try { return await api('/me'); } catch (error) { if (error.status !== 401) throw error; }
+  const resetToken = /^#passwort=([\w.-]+)$/.exec(location.hash)?.[1];
+  if (!resetToken) { try { return await api('/me'); } catch (error) { if (error.status !== 401) throw error; } }
+  const mailing = fetch('/api/werft/status').then((r) => r.json()).then((s) => !!s.mail, () => false);
+  const post = async (path, body) => {
+    const response = await fetch(`/api/werft${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    return { ok: response.ok, status: response.status, data: await response.json().catch(() => ({})) };
+  };
   const form = document.createElement('form');
   form.className = 'werft-login';
-  form.innerHTML = `<h1>Anmelden</h1><p></p><label for="werft-email">E-Mail</label><input id="werft-email" type="email" autocomplete="username" required>
-    <label for="werft-password">Passwort</label><input id="werft-password" type="password" autocomplete="current-password" required>
-    <p class="werft-error" role="alert"></p><button type="submit">Anmelden</button>`;
-  form.querySelector('p').textContent = `${siteName} · Redaktion`;
   document.body.append(form);
-  form.querySelector('input').focus();
+  const field = (id, label, type, autocomplete) => `<label for="${id}">${label}</label><input id="${id}" type="${type}" autocomplete="${autocomplete}" required${type === 'password' && autocomplete === 'new-password' ? ' minlength="10"' : ''}>`;
+  const $ = (selector) => form.querySelector(selector);
   return new Promise((resolve) => {
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const error = form.querySelector('.werft-error');
-      error.textContent = '';
-      const email = form.querySelector('#werft-email').value.trim().toLowerCase();
-      const response = await fetch('/api/werft/session', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email, password: form.querySelector('#werft-password').value, device: devices()[email] }),
-      });
-      const data = await response.json();
-      if (!response.ok) { error.textContent = data.message; return; }
-      token = data.access_token;
-      if (data.device) localStorage.setItem(DEVICES, JSON.stringify({ ...devices(), [email]: data.device }));
-      form.remove();
-      resolve(await api('/me'));
-    });
+    const signedIn = async (data) => { token = data.access_token; form.remove(); resolve(await api('/me')); };
+    const show = (mode) => {
+      const title = { signin: 'Anmelden', forgot: 'Passwort vergessen?', reset: 'Neues Passwort' }[mode];
+      form.innerHTML = `<h1>${title}</h1><p class="werft-lead"></p>${{
+        signin: field('werft-email', 'E-Mail', 'email', 'username') + field('werft-password', 'Passwort', 'password', 'current-password'),
+        forgot: field('werft-email', 'E-Mail', 'email', 'username'),
+        reset: field('werft-email', 'E-Mail', 'email', 'username') + field('werft-password', 'Neues Passwort (mindestens 10 Zeichen)', 'password', 'new-password') + field('werft-repeat', 'Neues Passwort wiederholen', 'password', 'new-password'),
+      }[mode]}<p class="werft-error" role="alert"></p><button type="submit">${{ signin: 'Anmelden', forgot: 'Link schicken', reset: 'Passwort festlegen' }[mode]}</button>`;
+      $('.werft-lead').textContent = mode === 'forgot' ? 'Sie bekommen eine E-Mail mit einem Link, mit dem Sie ein neues Passwort festlegen.' : `${siteName} · Redaktion`;
+      const switchTo = (to, text) => {
+        if ([...form.querySelectorAll('.werft-link')].some((b) => b.textContent === text)) return;
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'werft-link'; b.textContent = text; b.addEventListener('click', () => show(to)); form.append(b);
+      };
+      if (mode === 'signin') mailing.then((yes) => { if (yes && form.isConnected && $('#werft-password')) switchTo('forgot', 'Passwort vergessen?'); });
+      if (mode !== 'signin') switchTo('signin', 'Zur Anmeldung');
+      if (mode === 'reset') {
+        // The account the link is for (from the token), so a password manager saves the new password for it.
+        const email = $('#werft-email');
+        try { email.value = JSON.parse(atob(resetToken.split('.')[0].replace(/-/g, '+').replace(/_/g, '/'))).sub ?? ''; } catch { /* shown empty */ }
+        email.readOnly = true;
+        email.required = false;
+        $('#werft-password').focus();
+      } else $('input').focus();
+      const error = $('.werft-error');
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        error.textContent = '';
+        error.classList.remove('werft-done');
+        if (mode === 'signin') {
+          const email = $('#werft-email').value.trim().toLowerCase();
+          const { ok, data } = await post('/session', { email, password: $('#werft-password').value, device: devices()[email] });
+          if (!ok) { error.textContent = data.message; return; }
+          if (data.device) localStorage.setItem(DEVICES, JSON.stringify({ ...devices(), [email]: data.device }));
+          return signedIn(data);
+        }
+        if (mode === 'forgot') {
+          const { ok, data } = await post('/password/forgot', { email: $('#werft-email').value.trim() });
+          error.textContent = data.message ?? '';
+          error.classList.toggle('werft-done', ok);
+          return;
+        }
+        if ($('#werft-password').value !== $('#werft-repeat').value) { error.textContent = 'Die beiden Passwörter sind nicht gleich.'; return; }
+        const { ok, status, data } = await post('/password/reset', { token: resetToken, password: $('#werft-password').value });
+        if (!ok) {
+          error.textContent = data.message;
+          if (status === 410) switchTo('forgot', 'Neuen Link anfordern');
+          return;
+        }
+        history.replaceState(null, '', location.pathname + location.search);
+        return signedIn(data);
+      };
+    };
+    show(resetToken ? 'reset' : 'signin');
   });
 }
 

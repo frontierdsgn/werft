@@ -306,6 +306,9 @@ body:has(.werft-login){display:flex;align-items:flex-start;justify-content:cente
 .werft-login button{margin-top:20px;width:100%;font-size:15px;font-weight:700;min-height:42px;border:0;border-radius:8px;background:var(--ve-accent);color:#fff;cursor:pointer}
 .werft-login button:hover{background:var(--ve-accent-dark)}
 .werft-login .werft-error{color:var(--ve-danger);margin:12px 0 0;min-height:1.5em;font-weight:600}
+.werft-login .werft-error.werft-done{color:inherit;font-weight:400}
+.werft-login button.werft-link{display:block;width:auto;min-height:0;margin:14px auto 0;padding:4px;background:none;color:var(--ve-accent);font-weight:400;text-decoration:underline}
+.werft-login button.werft-link:hover{background:none;color:var(--ve-accent-dark)}
 .ve-focus-field{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
 .ve-focus-field [hidden]{display:none!important}
 .ve-focus{position:relative;display:inline-block;cursor:crosshair;line-height:0;border-radius:6px}

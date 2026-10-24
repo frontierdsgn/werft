@@ -62,6 +62,29 @@ test('counts failed sign-ins in the WERFT_KV namespace, by the client address Cl
   assert.equal((await signIn(instance(), 'wrong', '203.0.113.9')).status, 401);
 });
 
+test('a reset link uses the address the request came to and is sent through waitUntil', async () => {
+  const { hub } = await setup();
+  hub.seed({ 'web/.werft/users.json': serializeUsers([{ email: 'ada@example.org', name: 'Ada', role: 'administrator', password: await hashPassword('admin-password', 1000) }]) });
+  const onRequest = pagesFunction({ site, theme, fetch: (url, init) => hub.fetch(url, init) });
+  const env = { WERFT_SECRET: 's'.repeat(32), GITHUB_TOKEN: 't', WERFT_REPO: `${hub.owner}/${hub.repo}`, WERFT_DIR: 'web', WERFT_MAIL: 'log', WERFT_MAIL_FROM: 'werft@example.org' };
+  const request = new Request('https://x.pages.dev/api/werft/password/forgot', { method: 'POST', headers: { 'content-type': 'application/json', host: 'evil.test' }, body: JSON.stringify({ email: 'ada@example.org' }) });
+  const tasks = [];
+  // Called as a method of the context, as Cloudflare's waitUntil needs.
+  const context = { request, env, waitUntil(promise) { assert.equal(this, context); tasks.push(promise); } };
+  const logged = [];
+  const log = console.log;
+  console.log = (line) => logged.push(String(line));
+  try {
+    assert.equal((await onRequest(context)).status, 200);
+    assert.equal(tasks.length, 1, 'the e-mail goes out after the reply');
+    await Promise.all(tasks);
+  } finally {
+    console.log = log;
+  }
+  assert.match(logged.join('\n'), /https:\/\/x\.pages\.dev\/admin\/#passwort=/);
+  assert.ok(!logged.join('\n').includes('evil.test'));
+});
+
 test('explains missing configuration', async () => {
   const { call } = await setup({ WERFT_REPO: '' });
   const response = await call('/api/werft/status');

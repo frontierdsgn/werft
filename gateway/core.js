@@ -8,6 +8,7 @@
 //                                         see throttle.js); DELETE: sign-out, { everywhere } for all
 //                                         of one's sessions
 //   /api/werft/login/oauth/access_token   renews tokens (refresh-token grant)
+//   /api/werft/password/forgot, …/reset   "Passwort vergessen?": a link by e-mail, then a new password
 //
 // A session is an access token (12 hours, sent as "Authorization: token …") and a refresh token
 // (30 days) in an HttpOnly cookie, so scripts on the site cannot read it. Both carry the session's
@@ -50,14 +51,17 @@ async function sha256(text) {
 }
 
 // The gateway's view of a site (werft.config.js and its theme).
-export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [], languages: siteLanguages(site) });
+export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [], languages: siteLanguages(site), base: site.base, admin: site.admin });
 
 // options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs, languages? },
 //   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?(),
 //   turnstileSecret? (forms need Cloudflare Turnstile), fetch? (for Turnstile),
 //   mail? (an e-mail driver from mail.js; without it the gateway sends no e-mail),
 //   throttleStore? (failed sign-ins shared between processes, see throttle.js) }
-// The returned handler takes the request and { address? }, the client's address as the host knows it.
+// The returned handler takes the request and { address?, origin?, waitUntil? }: the client's address
+// and the admin's origin as the host knows them (never from the request's Host header), and the
+// host's way to finish work after the response (Cloudflare's waitUntil).
+
 export function createGateway(options) {
   const { storage, secret, branch = 'main', site, onCommit, onTick, mail = null } = options;
   const now = options.now ?? (() => Date.now());
@@ -375,6 +379,70 @@ export function createGateway(options) {
     return json({ ...publicUser(updated), ...tokens }, 200, headers);
   }
 
+  // "Passwort vergessen?": a link to the admin with a token that is signed, lasts RESET_TTL and is
+  // tied to the password hash (its stamp), so it no longer works once a password was set with it
+  // or otherwise. The reply is the same whether the address has an account or not, and the e-mail
+  // goes out after it (waitUntil), so its timing does not tell either. Requests count against the
+  // address entered and the client's address, like sign-ins.
+  const RESET_TTL = 3600;
+  const SENT = 'Wenn es zu dieser Adresse ein Konto gibt, ist eine E-Mail mit einem Link unterwegs. Der Link gilt eine Stunde.';
+
+  // The admin's address, at the root of the host whatever the site's base (the build puts it at
+  // <output>/<admin>/): on the origin the host vouches for, else on that of the site's own address
+  // (the site setting `url`), else none.
+  async function adminLink(origin) {
+    if (site.admin === false) return null;
+    const dir = `/${site.admin ?? 'admin'}/`;
+    const bytes = await storage.read((await storage.head(branch)).sha, `${site.contentDir}/settings/site.json`);
+    if (origin) return `${origin}${dir}`;
+    const url = (() => { try { return JSON.parse(decoder.decode(bytes)).url; } catch { return null; } })();
+    return /^https?:\/\//.test(url ?? '') ? new URL(dir, url).href : null;
+  }
+
+  async function forgotPassword(body, { address, origin, waitUntil }) {
+    if (!mail) return error(503, 'Diese Website verschickt keine E-Mails. Ein Administrator kann Ihnen ein neues Passwort geben.');
+    const email = String(body.email ?? '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+$/.test(email)) return error(422, 'Bitte eine gültige E-Mail-Adresse angeben.');
+    const attempt = await attempts.attempt([['reset', email], ...(addressKey(address) ? [['address', addressKey(address)]] : [])]);
+    if (attempt.wait) return tooMany(attempt.wait, 'Anfragen');
+    await attempt.failed();
+    // The same reads with and without an account.
+    const [{ users }, link] = await Promise.all([loadUsers(), adminLink(origin)]);
+    const user = findUser(users, email);
+    if (user && link) {
+      // Even the token is made after the reply.
+      const sending = (async () => {
+        const token = await signToken(secret, { typ: 'reset', sub: user.email, stamp: await stampOf(user), exp: Math.floor(now() / 1000) + RESET_TTL });
+        await mail.send({
+          to: user.email, fromName: site.name,
+          subject: `Neues Passwort für ${site.name ?? 'die Website'}`,
+          text: `Hallo ${user.name ?? ''},\n\njemand, hoffentlich Sie, möchte ein neues Passwort für ${site.name ?? 'die Website'} festlegen. Mit diesem Link geht das, eine Stunde lang und nur einmal:\n\n${link}#passwort=${token}\n\nWenn Sie das nicht waren, können Sie diese E-Mail löschen. Ihr Passwort bleibt dann, wie es ist.\n`,
+        });
+      })().catch((e) => console.error('werft gateway: reset e-mail:', e.message));
+      if (waitUntil) waitUntil(sending);
+    } else if (user) {
+      console.error('werft gateway: no address for a reset link; set the site setting url.');
+    }
+    return json({ message: SENT });
+  }
+
+  async function resetPassword(request, body) {
+    const payload = await readToken(secret, body.token, now()).catch(() => null);
+    const { users, sha: parent } = await loadUsers();
+    const user = payload?.typ === 'reset' && findUser(users, payload.sub);
+    if (!user || (await stampOf(user)) !== payload.stamp) return error(410, 'Dieser Link gilt nicht mehr. Bitte fordern Sie einen neuen an.');
+    if (typeof body.password !== 'string' || body.password.length < 10) return error(422, 'Passwörter brauchen mindestens 10 Zeichen.');
+    const updated = { ...user, password: await hashPassword(body.password, options.iterations) };
+    try {
+      await saveUsers(user, users.map((u) => (u === user ? updated : u)), `Neues Passwort: ${user.email}`, parent);
+    } catch (e) {
+      if (e.status === 409) return error(409, 'Der Stand hat sich inzwischen geändert. Bitte noch einmal versuchen.');
+      throw e;
+    }
+    const { body: tokens, headers } = await issueTokens(request, updated);
+    return json({ ...tokens, user: publicUser(updated) }, 200, headers);
+  }
+
   async function usersApi(request, user) {
     if (user.role !== 'administrator') return error(403, 'Nur Administratoren verwalten Benutzer.');
     const { users, sha: parent } = await loadUsers();
@@ -448,7 +516,7 @@ export function createGateway(options) {
 
   const forms = submissions({ storage, branch, site, now, secret, mail, turnstileSecret: options.turnstileSecret, fetch: options.fetch });
 
-  return async function handle(request, { address } = {}) {
+  return async function handle(request, { address, origin, waitUntil } = {}) {
     const url = new URL(request.url);
     if (url.pathname !== PREFIX && !url.pathname.startsWith(`${PREFIX}/`)) return null;
     const path = url.pathname.slice(PREFIX.length);
@@ -456,6 +524,8 @@ export function createGateway(options) {
       if (path === '/login/oauth/access_token' && request.method === 'POST') return await accessToken(request);
       if (path === '/session' && request.method === 'POST') return await session(request, (await request.json()) ?? {}, address);
       if (path === '/session' && request.method === 'DELETE') return await signOut(request);
+      if (path === '/password/forgot' && request.method === 'POST') return await forgotPassword((await request.json()) ?? {}, { address, origin, waitUntil });
+      if (path === '/password/reset' && request.method === 'POST') return await resetPassword(request, (await request.json()) ?? {});
       if (path === '/tick' && options.tickKey && url.searchParams.get('key')
         && (await sha256(url.searchParams.get('key'))) === (await sha256(options.tickKey))) return await tick(url);
       if (path.startsWith('/forms/')) return await forms.receive(request, url, decodeURIComponent(path.slice(7)));
