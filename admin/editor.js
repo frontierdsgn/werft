@@ -6,7 +6,7 @@
 // until "Speichern", which stores every changed file in one commit through the gateway.
 import { schema as adminSchema } from 'werft/schema';
 import { createContext, mediaPaths, markdown, raw, escape, imageSize, isPublic } from 'werft';
-import { downscale, downscaleTarget, maxSize } from 'werft/images';
+import { downscale, downscaleTarget, maxSize, replaceMedia, picturesOf } from 'werft/images';
 import { siteLanguages, languageDir, localize, deepMerge, differences, pageFile, pageLinks } from 'werft/content';
 import { requireUser, loadSite, api, signOut } from './session.js';
 import { disarm, postPreview } from './preview.js';
@@ -1659,9 +1659,26 @@ function entryTitle(path, data) {
   const title = KIND[folder] ? data.title ?? slug : setting && describe(setting).title;
   return title ? (language ? `${title} (${languageName(language)})` : title) : undefined;
 }
-// The entries that name an image.
-function usesOf(path) {
-  return [...files].filter(([p, f]) => f.data && !unchangedCopy(p, f) && JSON.stringify(f.data).includes(path)).map(([p, f]) => entryTitle(p, f.data)).filter(Boolean);
+// The entries that name an image, by their title.
+const entriesWith = (path) => [...files].filter(([p, f]) => f.data && !unchangedCopy(p, f) && JSON.stringify(f.data).includes(path));
+const usesOf = (path) => entriesWith(path).map(([p, f]) => entryTitle(p, f.data)).filter(Boolean);
+// The image's alternative texts where it is shown as a picture, and the entries that show it
+// without one.
+function altsOf(path) {
+  const pictures = entriesWith(path).map(([p, f]) => [entryTitle(p, f.data), picturesOf(f.data, path)]);
+  return {
+    alts: [...new Set(pictures.flatMap(([, list]) => list.map((pic) => String(pic.alt ?? '').trim()).filter(Boolean)))],
+    missing: [...new Set(pictures.filter(([title, list]) => title && list.some((pic) => !String(pic.alt ?? '').trim())).map(([title]) => title))],
+  };
+}
+// Every use of an image shows another one instead; a saved image is deleted with the next save (an
+// unsaved one stays in the library, unused).
+function replaceImage(from, to) {
+  change(() => {
+    views.clear();
+    for (const [p, f] of files) if (f.data && !unchangedCopy(p, f)) f.data = replaceMedia(f.data, from, to);
+    if (!uploads.get(from) || uploads.get(from).saved) removed.add(from);
+  });
 }
 function removeImage(path) {
   const u = uploads.get(path);
@@ -1690,7 +1707,7 @@ const app = {
     files.get(path).data = data;
     views.clear();
   },
-  images, mediaURL, upload, usesOf, removeImage, mayDeleteImages: ['administrator', 'editor'].includes(me.role),
+  images, mediaURL, upload, usesOf, altsOf, removeImage, replaceImage, mayDeleteImages: ['administrator', 'editor'].includes(me.role),
   isUnsaved: (path) => uploads.has(path) && !uploads.get(path).saved,
   // Ends this session ({ everywhere: true }: all of the user's) and leaves for the sign-in page; on
   // a failure it says so and stays.
