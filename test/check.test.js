@@ -22,14 +22,16 @@ test('a clean build has no findings', () => {
       + '<a href="https://example.org/missing.html">Ext</a><a href="mailto:a@b.de">M</a><a href="tel:+49">T</a><a href="//cdn.example/x.js">C</a>'
       + '<img src="assets/img/a.jpg" alt="Fähre" srcset="assets/img/a.jpg 1x, assets/img/a%20b.jpg 2x"><img src="data:image/png;base64,AAAA" alt="">'.replace('alt=""', 'alt="" role="presentation"')
       + '<link rel="stylesheet" href="assets/site.css"><link rel="canonical" href="https://example.org/"><script src="assets/site.js"></script>'
-      + '<form method="post" action="/api/werft/forms/anfrage"></form><a href="/api/werft/tick">Tick</a><div style="background:url(\'assets/img/a.jpg\')"></div>',
+      + '<form method="post" action="/api/werft/forms/anfrage"></form><a href="/api/werft/tick">Tick</a><div style="background:url(\'assets/img/a.jpg\')"></div>'
+      + '<img src="assets/img/a.jpg" alt="x" srcset="data:image/gif;base64,R0lGODlh,AAAA 1x, https://cdn.example/w_400,h_300/a.jpg 400w">'
+      + '<a href="kontakt.html#:~:text=Telefon">Text</a><link rel="alternate" hreflang="de" href="./"><iframe src="team/"></iframe><map><area href="kontakt.html" alt="K"></map><a href="blog/eintrag.html">Blog</a>',
     'kontakt.html': '<section id="form"></section>',
     'team/index.html': '<p>Team</p>',
     'assets/site.css': '/* url(gone.png) */ body { background: url(img/a.jpg) } .x { mask: url("#m") }',
     'assets/site.js': 'x',
     'assets/img/a.jpg': 10,
     'assets/img/a b.jpg': 10,
-  });
+  }, { redirects: [{ from: '/blog/:slug', to: '/kontakt.html' }, { from: '/news/:slug', to: '/blog/:slug' }] });
   assert.deepEqual(result.findings, []);
   assert.equal(result.pages, 3);
 });
@@ -43,6 +45,8 @@ test('broken-link: a link to a page or file that is not in the build, with file,
   assert.match(result.findings[0].message, /"preise\.html": there is no preise\.html in the build/);
   assert.match(result.findings[1].message, /leads above the root of the site/);
   assert.match(result.findings[2].message, /kontakt\.html exists, but only some hosts serve it without "\.html"/);
+  const others = run({ 'index.html': '<link rel="alternate" hreflang="en" href="en/"><iframe src="karte.html"></iframe><map><area href="raum.html" alt="Raum"></map>' });
+  assert.deepEqual(others.findings.map((f) => `${f.rule} ${f.message.split('"')[1]}`), ['broken-link en/', 'broken-link karte.html', 'broken-link raum.html']);
 });
 
 test('broken-link: redirects are followed and checked', () => {
@@ -67,7 +71,9 @@ test('untranslated-link: a language page links to its version of a page it does 
     'index.html': '', 'impressum.html': '', 'en/index.html': '<a href="/en/impressum.html">Imprint</a><a href="../impressum.html">ok</a><a href="/en/fehlt.html">x</a>',
   }, { site });
   assert.deepEqual(rules(result), ['en/index.html:1:4 error untranslated-link', 'en/index.html:1:78 error broken-link']);
-  assert.match(result.findings[0].message, /leads to en\/impressum\.html, a page "en" does not have; the "de" page is impressum\.html\. Write the link relative to the page \(e\.g\. "impressum\.html"\)/);
+  assert.match(result.findings[0].message, /leads to en\/impressum\.html, a page "en" does not have; the "de" page is impressum\.html\. Write the link relative to the page \("impressum\.html"\)/);
+  const nested = run({ 'impressum.html': '', 'en/termine/a.html': '<a href="/en/impressum.html">Imprint</a>' }, { site });
+  assert.match(nested.findings[0].message, /\("\.\.\/impressum\.html"\)/);
   // Below a base path, too.
   const below = run({ 'salon/impressum.html': '', 'salon/en/index.html': '<a href="/salon/en/impressum.html">Imprint</a>' }, { site: { ...site, base: 'salon' } });
   assert.deepEqual(rules(below), ['salon/en/index.html:1:4 error untranslated-link']);
@@ -139,6 +145,8 @@ test('check in werft.config.js: rules change a level, ignore leaves paths out, m
   assert.throws(() => run(map, { site: { check: { rules: { 'dead-link': 'error' } } } }), /unknown rule "dead-link"/);
   assert.throws(() => run(map, { site: { check: { rules: { 'empty-alt': 'fatal' } } } }), /must be 'error', 'warning', 'off'/);
   assert.throws(() => run(map, { site: { check: { maxFileSize: '1 MB' } } }), /maxFileSize must be a number of bytes/);
+  assert.throws(() => run(map, { site: { check: { rules: 'strict' } } }), /check\.rules must be an object/);
+  assert.equal(run(map, { site: { check: { rules: null, ignore: null, maxFileSize: null } } }).findings.length, 3, 'null leaves the default');
 });
 
 test('a finding names where its address is written in the content or theme', () => {
@@ -214,4 +222,21 @@ test('werft check stops on a mistake in check of werft.config.js', (t) => {
   const result = werft('check', root);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /check\.rules\["empty-alt"\] must be/);
+});
+
+test('werft check names the first places of a problem on many pages and counts the rest', (t) => {
+  const pages = Object.fromEntries(['a', 'b', 'c', 'd'].map((slug) => [`content/pages/${slug}.json`, JSON.stringify({ title: slug, status: 'published' })]));
+  const root = site(t, { content: { ...pages, 'content/settings/menus.json': JSON.stringify({ main: { items: [{ label: 'Preise', url: 'preise.html' }] } }) } });
+  const lines = werft('check', root).stdout.split('\n');
+  assert.deepEqual(lines.slice(0, 2), ['error broken-link: "preise.html": there is no preise.html in the build', '  at a.html:1:25, b.html:1:25, c.html:1:25 and 2 more']);
+});
+
+test('the directory after a flag without a value is not taken for its value', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'werft-flag-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const [elsewhere, dir] = [path.join(root, 'elsewhere'), path.join(root, 'site')];
+  fs.mkdirSync(elsewhere);
+  const result = spawnSync(process.execPath, [cli, 'user', 'add', 'a@example.org', '--password-prompt', dir, '--iterations', '1000'], { cwd: elsewhere, encoding: 'utf8', env: { ...process.env, WERFT_PASSWORD: 'x'.repeat(12) } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(fs.readFileSync(path.join(dir, '.werft/users.json'), 'utf8'), /a@example\.org/);
 });

@@ -221,7 +221,7 @@ or the theme, that file and line (`written in content/settings/menus.json:12`).
 | `untranslated-link` | error | on a page of a language other than the default, a link to that language's version of a page it does not have, which the build does not rewrite (e.g. `/en/impressum.html`; see [Languages](#languages)) |
 | `missing-file` | error | an image, `srcset` candidate, stylesheet, script, video, poster or CSS `url()`/`@import` that is not in the build |
 | `missing-alt` | error | `<img>` without an `alt` attribute |
-| `empty-alt` | warning | `<img alt="">` not marked as decoration (`role="presentation"`, `aria-hidden="true"`) |
+| `empty-alt` | warning | `<img alt="">` not marked as decoration (`role="presentation"` or `"none"`, `aria-hidden="true"`); an image without a source (filled in by a script) passes |
 | `large-file` | warning | a file above 1 MB (`check.maxFileSize`) |
 
 Addresses on other hosts, `mailto:`/`tel:` and the gateway (`/api/werft/…`) are not checked, nor
@@ -237,7 +237,8 @@ check: {
 },
 ```
 
-In a site's gate, `werft check` replaces `werft build` (it builds too): `"gate": "werft check"`, or
+In a site's gate, `werft check` replaces `werft build` (it builds too, but does not write the output
+directory; a gate step that needs `_site` still runs `werft build`): `"gate": "werft check"`, or
 `npx --no-install werft check` as a step of a gate script. A finding then stops the deploy, also
 when an editor's save caused it; warnings do not.
 
