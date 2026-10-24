@@ -160,6 +160,7 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      theme's assets and for media files outside Markdown. `translations` is one item per language,
      `{ lang, url, current, exists }`: `url` leads to the entry in that language if it is
      published (`exists`), else to that language's home page, and is ready for an `href`.
+   - `search: true` adds [site search](#site-search); `ctx.search()` then renders the search box.
 4. **Content**: `content/pages/<slug>.json` (`index` becomes `index.html`), `content/patterns/`,
    `content/forms/` (see [Form submissions](#form-submissions)), `content/<post type>/`, `content/settings/{site,menus,redirects}.json`;
    other languages in `content/<lang>/` (see [Languages](#languages)).
@@ -533,6 +534,37 @@ there (`git rm -r .werft/submissions`), they remain in that branch's history.
   <button>Abonnieren</button>
 </form>
 ```
+
+### Site search
+
+With `search: true` in the theme, the build writes a search index per language and a small script,
+and `ctx.search(options)` renders a search box in the page frame or a block. The visitor's browser
+loads the index the first time the box is used and searches it itself: no other service, the same
+on Cloudflare Pages, a Node server and PHP web space. Without the option `ctx.search()` throws.
+
+```js
+html`<header>${ctx.search({ label: 'Suche', placeholder: 'Suchbegriff', empty: 'Nichts gefunden.' })}</header>
+  <main>${ctx.blocks(page.sections)}</main>`
+```
+
+- The index is `_werft/search/<ctx.lang>.json`: `{ lang, entries: [{ url, title, text }] }`, one
+  entry per published page and post page of the language (a language that shows the default
+  language's posts lists those), except those set to `noindex` in SEO.
+  `url` is relative to the site's root (`''` for the home page, `en/` for the English one), `title`
+  is the entry's title (else its first `<h1>`), `text` the text of the page's `<main>` (else its
+  `<body>`) without `<nav>`, `<search>`, scripts and styles. Put the content in `<main>`, so the
+  menu, header and footer do not make every page match.
+- The script `_werft/search.js` (3.0 KB, 1.2 KB gzipped, no dependencies) shows the box, which is
+  hidden until then (without JavaScript there is no box that does nothing), and lists up to 10
+  matches while the visitor types: every word must occur in the title or the text, case and accents
+  are ignored (`fahre` finds "Fähre"), matches in the title come first, each with an excerpt.
+- Markup to style: `<search class="werft-search"><form data-werft-search="…"><label><span>Suche</span>
+  <input type="search" name="q"></label><ul aria-live="polite">` with one `<li><a>title</a><p>excerpt</p></li>`
+  per result, or one `<li>` with the `empty` text. The texts default to German; a site in several
+  languages passes them per `ctx.lang`.
+- The index holds the text of every public page and is loaded whole, so it suits small sites; its
+  size is that of the site's text.
+- The editor's preview runs no theme scripts, so the box does not show there.
 
 ## Compatibility
 
