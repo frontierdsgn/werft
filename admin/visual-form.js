@@ -14,7 +14,12 @@ const uid = () => `ve-${Math.random().toString(36).slice(2)}`;
 // Controls that show another field of the same object (the focal point shows the image) follow
 // when that field changes, as long as they are on the page.
 const watchers = new WeakMap();
-const watch = (holder, node, follow) => { if (!watchers.has(holder)) watchers.set(holder, new Map()); watchers.get(holder).set(node, follow); };
+const watch = (holder, node, follow) => {
+  if (!watchers.has(holder)) watchers.set(holder, new Map());
+  const all = watchers.get(holder);
+  for (const old of all.keys()) if (!old.isConnected) all.delete(old);
+  all.set(node, follow);
+};
 const changedIn = (holder) => watchers.get(holder)?.forEach((follow, node, all) => (node.isConnected ? follow() : all.delete(node)));
 
 const optionsOf = (field) => (field.options ?? []).map((o) => (typeof o === 'object' ? o : { label: String(o), value: o }));
@@ -173,7 +178,12 @@ function control(field, holder, ctx, path) {
       });
       reset.addEventListener('click', () => { set(undefined); draw(); });
       // Another image has other important parts.
-      watch(holder, area, () => { if (holder[name] !== undefined) set(undefined); draw(); });
+      let shown = holder[field.image ?? 'src'];
+      watch(holder, area, () => {
+        if (holder[field.image ?? 'src'] !== shown && holder[name] !== undefined) set(undefined);
+        shown = holder[field.image ?? 'src'];
+        draw();
+      });
       draw();
       return labelled(field, el('div', { className: 've-focus-field' }, area, none, reset));
     }

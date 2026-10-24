@@ -1679,7 +1679,7 @@ function kindOf(path) {
   if (rest === 'settings/site.json') return 'settings';
   if (rest.startsWith('settings/')) return 'structure';
   if (postType && rest.startsWith(`${postType.name}/`)) return 'post';
-  return 'content';
+  return ['pages/', 'patterns/', 'forms/'].some((d) => rest.startsWith(d)) ? 'content' : 'code';
 }
 // Every use of an image in the entries the editor may change shows another one instead. The old file
 // is deleted with the next save once nothing names it any more (an unsaved upload stays in the

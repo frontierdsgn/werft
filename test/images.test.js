@@ -161,7 +161,9 @@ test('"Ersetzen" changes only what the editor may change and says whether the ol
   const some = replaceEverywhere(entries, 'assets/img/foto.jpg', 'assets/img/neu.png', { may: (path) => !path.includes('/settings/') });
   assert.deepEqual(some.changed, [['content/pages/index.json', { sections: [{ image: { src: 'assets/img/neu.png' } }] }]]);
   assert.equal(some.left, true);
-  // A mention the rewrite does not recognise keeps the file too.
+  // The new file's name may contain the old one; a mention the rewrite does not recognise keeps the file.
+  assert.equal(replaceEverywhere(entries, 'assets/img/foto.jpg', 'assets/img/foto.jpg.png').left, false);
+  assert.equal(replaceMedia('assets/img/foto.jpgä.png', 'assets/img/foto.jpg', 'x'), 'assets/img/foto.jpgä.png');
   assert.equal(replaceEverywhere([['content/pages/a.json', { url: 'https://x.example/assets/img/foto.jpg' }]], 'assets/img/foto.jpg', 'assets/img/neu.png').left, true);
 });
 
