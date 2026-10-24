@@ -14,6 +14,7 @@ import { buildForm, emptyValue } from './visual-form.js';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
 import { formView, mediaView, submissionsView, usersView } from './form-view.js';
 import { retargetLink, retargetLinks, mentions, movedRedirects } from './rename.js';
+import { draftKey, collectDraft, changedSince, applyDraft } from './drafts.js';
 
 const REPO = '/api/v1/repos/werft/site';
 const { site, theme, base } = await loadSite();
@@ -882,7 +883,7 @@ function pickSection({ patterns: withPatterns = true } = {}) {
 }
 
 // ---- Dialogs ----
-function confirmDialog(title, text, yes, { other } = {}) {
+function confirmDialog(title, text, yes, { other, cancel = 'Abbrechen' } = {}) {
   const dialog = $('#ve-confirm');
   dialog.querySelector('h2').textContent = title;
   dialog.querySelector('p').textContent = text;
@@ -890,7 +891,7 @@ function confirmDialog(title, text, yes, { other } = {}) {
   actions.replaceChildren(
     ...(other ? [el('button', { value: 'other', className: 've-tool' }, other)] : []),
     el('button', { value: 'yes', className: yes === 'Entfernen' || yes === 'Verwerfen' || yes === 'Löschen' ? 've-primary ve-danger' : 've-primary' }, yes),
-    el('button', { value: 'cancel', className: 've-tool', autofocus: true }, 'Abbrechen'));
+    el('button', { value: 'cancel', className: 've-tool', autofocus: true }, cancel));
   dialog.showModal();
   return new Promise((resolve) => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'yes' ? true : dialog.returnValue === 'other' ? 'other' : false), { once: true }));
 }
@@ -950,6 +951,7 @@ function languageOf(source) {
 }
 
 function drawBar() {
+  keepDraft();
   const bar = $('#ve-top');
   const shown = view === 'form' ? selection : current ? `page:${current}` : null;
   const { kind, title } = (shown && describe(shown)) ?? {};
@@ -1061,6 +1063,63 @@ async function finish() {
   locked = true;
   closePanel();
   draw();
+}
+
+// ---- Unsaved changes kept in the browser (per user, site and branch) ----
+const DRAFT = draftKey({ site: `${location.origin}${base}`, branch, email: me.email });
+// A draft from an earlier visit the user has not restored or discarded yet; it is kept until then
+// or until the next change, which replaces it.
+let draftOffered = (() => { try { return JSON.parse(localStorage.getItem(DRAFT)); } catch { return null; } })();
+let keepTimer;
+let signingOut = false; // signing out leaves nothing behind in the browser
+function keepDraft() {
+  clearTimeout(keepTimer);
+  keepTimer = setTimeout(keepNow, 400);
+}
+function keepNow() {
+  clearTimeout(keepTimer);
+  if (signingOut) return;
+  if (!isDirty()) { if (!draftOffered) localStorage.removeItem(DRAFT); return; }
+  draftOffered = null;
+  const pending = [...uploads].filter(([, u]) => !u.saved).map(([path, u]) => ({ path, base64: u.base64, size: media[path] ?? {} }));
+  const draft = collectDraft({ files, changed: changedPaths(), uploads: pending, removed });
+  try { localStorage.setItem(DRAFT, JSON.stringify(draft)); } catch {
+    // Too large for the browser's storage: the texts at least.
+    try { localStorage.setItem(DRAFT, JSON.stringify({ ...draft, uploads: [], uploads_dropped: pending.length })); } catch { /* nothing more to keep */ }
+  }
+}
+window.addEventListener('pagehide', keepNow);
+document.addEventListener('visibilitychange', () => { if (document.hidden) keepNow(); });
+
+// Offers the changes left unsaved last time, saying what was saved since by someone else.
+async function offerDraft(draft) {
+  const label = (path, data) => entryTitle(path, data ?? JSON.parse(files.get(path)?.saved ?? '{}')) ?? path.split('/').pop();
+  const names = [...new Set([...(draft.files ?? []).map((f) => label(f.path, f.data)), ...(draft.uploads ?? []).map((u) => u.path.split('/').pop())])];
+  const since = changedSince(draft, files).map((path) => label(path, files.get(path)?.data));
+  const when = new Date(draft.saved_at).toLocaleString('de-DE', { dateStyle: 'long', timeStyle: 'short' });
+  const choice = await confirmDialog('Nicht gespeicherte Änderungen', [
+    `Am ${when} blieben Änderungen ungespeichert: ${names.join(', ') || 'gelöschte Bilder'}.`,
+    since.length ? `Inzwischen wurde gespeichert: ${since.join(', ')}. Wiederherstellen ersetzt diese Fassung durch Ihre Änderungen.` : 'Seitdem hat niemand diese Inhalte gespeichert.',
+    draft.uploads_dropped ? 'Neue Bilder waren zu groß zum Aufbewahren und fehlen.' : '',
+    '„Später“ bewahrt sie auf, bis Sie hier etwas ändern.',
+  ].filter(Boolean).join(' '), 'Wiederherstellen', { other: 'Verwerfen', cancel: 'Später' });
+  if (choice === 'other') { draftOffered = null; localStorage.removeItem(DRAFT); return; }
+  if (!choice) return;
+  startEditing();
+  change(() => {
+    views.clear();
+    applyDraft(draft, files);
+    for (const u of draft.uploads ?? []) {
+      if (u.path in media) continue; // a file of that name was saved since
+      const bytes = Uint8Array.from(atob(u.base64), (c) => c.charCodeAt(0));
+      uploads.set(u.path, { base64: u.base64, url: URL.createObjectURL(new Blob([bytes])), saved: false });
+      media[u.path] = u.size ?? {};
+    }
+    for (const path of draft.removed ?? []) if (path in media) removed.add(path);
+  });
+  draftOffered = null;
+  keepNow();
+  toast('Änderungen wiederhergestellt. Prüfen Sie sie und klicken Sie dann auf „Speichern“.');
 }
 
 let toastTimer;
@@ -1498,7 +1557,7 @@ const app = {
 // ---- Start ----
 $('#ve-user').textContent = me.name ?? me.email;
 $('#ve-site').textContent = site.name;
-$('#ve-signout').addEventListener('click', () => { signOut(); location.href = './'; });
+$('#ve-signout').addEventListener('click', () => { signingOut = true; localStorage.removeItem(DRAFT); signOut(); location.href = './'; });
 for (const b of document.querySelectorAll('.ve-views button[data-view]')) b.addEventListener('click', () => { if (b.dataset.view !== view) setView(b.dataset.view); });
 $('#ve-app').hidden = false;
 if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'submissions', 'users'].includes(hashOpen)) {
@@ -1506,4 +1565,5 @@ if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) :
   selection = hashOpen;
 }
 setView(view, selection);
+if (draftOffered) offerDraft(draftOffered);
 api('/tick').catch(() => {});
