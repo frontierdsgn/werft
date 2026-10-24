@@ -13,6 +13,7 @@ import { pageRenderer, mapDocument, getAt, setAt, textOf, unmark } from './visua
 import { buildForm, emptyValue } from './visual-form.js';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
 import { formView, mediaView, submissionsView, usersView } from './form-view.js';
+import { retargetLink, retargetLinks, mentions, movedRedirects } from './rename.js';
 
 const REPO = '/api/v1/repos/werft/site';
 const { site, theme, base } = await loadSite();
@@ -893,10 +894,12 @@ function confirmDialog(title, text, yes, { other } = {}) {
   dialog.showModal();
   return new Promise((resolve) => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'yes' ? true : dialog.returnValue === 'other' ? 'other' : false), { once: true }));
 }
-function promptDialog(title, label, value = '') {
+function promptDialog(title, label, value = '', { yes = 'Anlegen', hint = '' } = {}) {
   const dialog = $('#ve-prompt');
   dialog.querySelector('h2').textContent = title;
+  Object.assign(dialog.querySelector('.ve-hint'), { textContent: hint, hidden: !hint });
   dialog.querySelector('label span').textContent = label;
+  dialog.querySelector('button[value=ok]').textContent = yes;
   const input = dialog.querySelector('input');
   input.value = value;
   dialog.showModal();
@@ -1304,8 +1307,73 @@ function translate(slug) {
 
 function pageSettings() {
   const fields = (collection('pages')?.fields ?? []).filter((f) => f.name !== 'sections');
-  const extra = current === 'index' ? null : button('Seite löschen', null, () => removeEntry(`page:${current}`), 've-tool ve-danger');
+  const extra = el('div', { className: 've-page-extra' }, addressCard(current),
+    current === 'index' ? null : button('Seite löschen', null, () => removeEntry(`page:${current}`), 've-tool ve-danger'));
   openPanel('Seiteneinstellungen', `page:${current}`, [], { fields, extra });
+}
+
+// ---- A page's address ----
+// The address of a page on the site, from the host's root.
+const pageAddress = (slug, l = lang) => `${base}${langPrefix(l)}${slug === 'index' ? '' : pageFile(slug)}`;
+// Changing an address adds a redirect, and redirects are for administrators (gateway/roles.js).
+const mayRename = (slug) => slug !== 'index' && can('content') && can('structure');
+function addressCard(slug) {
+  const why = slug === 'index' ? 'Die Startseite ist immer unter der Adresse der Website zu finden.'
+    : mayRename(slug) ? 'Ändern Sie die Adresse, leitet die alte zur neuen weiter, und Links auf der Website führen zur neuen.'
+      : 'Nur Administratoren ändern die Adresse einer Seite, weil dabei eine Weiterleitung entsteht.';
+  return el('div', { className: 've-address' }, el('span', { className: 've-label' }, 'Adresse'), el('code', {}, pageAddress(slug)), el('small', { className: 've-hint' }, why),
+    mayRename(slug) ? button('Adresse ändern …', null, () => renamePage(slug), 've-tool') : null);
+}
+
+// Moves a page (with its translations, which share its slug) to a new address as one unsaved
+// change: the files are renamed, links in the content lead to the new address, and a page that was
+// published gets a redirect from its old address.
+async function renamePage(slug) {
+  const answer = await promptDialog('Adresse ändern', 'Neue Adresse', slug, {
+    yes: 'Ändern',
+    hint: `Kleinbuchstaben, Ziffern und Bindestriche; „.html“ kommt dazu.${languages.length ? ' Die Adresse gilt für die Seite in allen Sprachen.' : ''}`,
+  });
+  if (!answer) return;
+  const next = slugify(answer.replace(/^\/+|\.html$/gi, ''));
+  if (next === slug) return;
+  const all = languages.length ? languages : [lang];
+  if (all.some((l) => files.has(fileOf(`page:${next}`, l)))) { toast(`Unter „${pageFile(next)}“ gibt es schon eine Seite. Bitte eine andere Adresse wählen.`, true); return; }
+  startEditing();
+  let unresolved = [];
+  let redirected = false;
+  change(() => {
+    const moves = [];
+    for (const l of all) {
+      const path = fileOf(`page:${slug}`, l);
+      const f = files.get(path);
+      if (!f?.data) continue;
+      files.set(fileOf(`page:${next}`, l), { sha: null, saved: null, data: f.data });
+      const saved = f.saved && JSON.parse(f.saved);
+      if (f.saved === null) files.delete(path); else f.data = null;
+      if (saved && (saved.status ?? 'published') === 'published') moves.push({ from: pageAddress(slug, l), to: pageAddress(next, l) });
+    }
+    // Settings and menus of other languages are rewritten in their files; untouched copies of
+    // patterns and forms are made again from the rewritten originals.
+    syncViews();
+    views.clear();
+    for (const [path, f] of [...files]) if (unchangedCopy(path, f)) files.delete(path);
+    const retarget = retargetLink(slug, next, { base, languages });
+    for (const [path, f] of files) {
+      if (!f.data || path === fileOf('redirects')) continue;
+      const result = retargetLinks(f.data, retarget);
+      if (result.changed) f.data = result.data;
+      if (mentions(f.data, slug)) unresolved.push(entryTitle(path, f.data) ?? path);
+    }
+    if (moves.length) {
+      const redirects = dataOf('redirects');
+      redirects.redirects = movedRedirects(redirects.redirects, moves);
+      redirected = true;
+    }
+    if (current === slug) current = next;
+    if (selection === `page:${slug}`) selection = `page:${next}`;
+  });
+  unresolved = [...new Set(unresolved)];
+  toast(`Neue Adresse: ${pageAddress(next)}.${redirected ? ' Die alte leitet dorthin weiter.' : ''} Mit „Speichern“ wird sie übernommen.${unresolved.length ? ` Die alte Adresse steht noch in: ${unresolved.join(', ')}. Bitte dort prüfen.` : ''}`, unresolved.length > 0);
 }
 
 // Deletes a page, post, pattern or form with the next save, after asking.
@@ -1382,17 +1450,19 @@ async function upload(file) {
   return path;
 }
 const images = () => [...new Set([...uploads.keys(), ...Object.keys(media).filter((p) => p.startsWith(`${mediaDir}/`))])].filter((p) => !removed.has(p));
+// The name of a content file's entry for a list, with its language; undefined for other files.
+function entryTitle(path, data) {
+  let rest = path.slice(contentDir.length + 1).replace(/\.json$/, '');
+  const language = languages.slice(1).find((l) => rest.startsWith(`${l}/`));
+  if (language) rest = rest.slice(language.length + 1);
+  const [folder, slug] = rest.split('/');
+  const setting = folder === 'settings' && Object.keys(SETTINGS).find((k) => SETTINGS[k] === slug);
+  const title = KIND[folder] ? data.title ?? slug : setting && describe(setting).title;
+  return title ? (language ? `${title} (${languageName(language)})` : title) : undefined;
+}
 // The entries that name an image.
 function usesOf(path) {
-  return [...files].filter(([p, f]) => f.data && !unchangedCopy(p, f) && JSON.stringify(f.data).includes(path)).map(([p, f]) => {
-    let rest = p.slice(contentDir.length + 1).replace(/\.json$/, '');
-    const language = languages.slice(1).find((l) => rest.startsWith(`${l}/`));
-    if (language) rest = rest.slice(language.length + 1);
-    const [folder, slug] = rest.split('/');
-    const setting = folder === 'settings' && Object.keys(SETTINGS).find((k) => SETTINGS[k] === slug);
-    const title = KIND[folder] ? f.data.title ?? slug : setting && describe(setting).title;
-    return title && (language ? `${title} (${languageName(language)})` : title);
-  }).filter(Boolean);
+  return [...files].filter(([p, f]) => f.data && !unchangedCopy(p, f) && JSON.stringify(f.data).includes(path)).map(([p, f]) => entryTitle(p, f.data)).filter(Boolean);
 }
 function removeImage(path) {
   const u = uploads.get(path);
@@ -1409,7 +1479,7 @@ const app = {
   fileData: (source) => { syncViews(); return files.get(fileOf(source))?.data ?? null; },
   // For a page the editor's language lacks: the language it exists in, to translate it from.
   translatableFrom: (source) => source.startsWith('page:') && !dataOf(source) && languages.find((l) => l !== lang && slugsIn('pages', l).includes(source.slice(5))),
-  translate, languageName,
+  translate, languageName, addressCard,
   snapshot, pushUndo: (snap) => { undoStack.push(snap); if (undoStack.length > 100) undoStack.shift(); redoStack.length = 0; },
   // After a change in a form: the top bar at once, the preview once typing pauses.
   changed() { drawBar(); clearTimeout(drawSoon); drawSoon = setTimeout(draw, 300); },

@@ -87,6 +87,7 @@ export function formView(app, root) {
   const rest = fields.filter((f) => !['status', 'publish_date', 'seo', 'sections'].includes(f.name));
   page.append(head(app, kind, title, LEADS[type], app.sharedNote(source)));
   page.append(card(null, null, buildForm(rest, data, ctx)));
+  if (type === 'page') page.append(card(null, null, app.addressCard(slug)));
 
   if (named('sections').length) {
     page.append(card('Abschnitte', type === 'page'
