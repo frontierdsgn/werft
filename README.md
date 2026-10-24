@@ -530,11 +530,13 @@ its size).
 960 and 1600 pixels wide (only widths below the image's own) in its own format and as WebP, into
 `_werft/img/` in the output; the repository keeps only the originals. `images` in `werft.config.js`
 changes that: `widths: [400, 800, 1200]`, and `formats: ['webp', 'avif']` adds AVIF (about 40 %
-smaller than WebP, slower to encode). GIFs and animated images keep their one size. The copies are
+smaller than WebP, slower to encode). GIFs and animated images keep their one size. Each width and
+format is one more file per image in the output: Cloudflare Pages' free plan takes at most 20,000
+files per deployment, so a site with thousands of images uses fewer widths or formats. The copies are
 made with [sharp](https://sharp.pixelplumbing.com/), an optional dependency installed with werft;
 where it cannot be installed, the build says so and the site uses the originals. The build keeps
-the copies in `node_modules/.cache/werft-images`, by the image's content, and encodes only new or
-changed images: four 2560-pixel photos took 1.5 s in the first build and 0.1 s in the next
+the copies in `node_modules/.cache/werft-images`, by the image's content, encodes only new or
+changed images and removes the copies no image needs any more: four 2560-pixel photos took 1.5 s in the first build and 0.1 s in the next
 (measured 24 October 2026 on a 48-thread workstation, Node 22; about one second of one core per
 photo). To keep the cache between GitHub Actions runs, add this step after `npm ci` in the site's
 `deploy` job (and in `gate`, if it builds):

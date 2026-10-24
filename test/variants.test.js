@@ -45,7 +45,8 @@ test('the build writes smaller copies of large JPEG, PNG and WebP images and src
   assert.deepEqual(index['assets/img/photo.jpg'].variants[0], { src: '_werft/img/assets/img/photo.480.jpg', width: 480, height: 240, type: 'image/jpeg' });
   assert.deepEqual(warnings, []);
 
-  // A second build takes every copy from the cache; a changed image is encoded again.
+  // A second build takes every copy from the cache; a changed image is encoded again, and the copies
+  // of its old content leave the cache.
   const cache = path.join(root, 'node_modules/.cache/werft-images');
   const stamps = () => Object.fromEntries(list(cache).map((f) => [f, fs.statSync(path.join(cache, f)).mtimeMs]));
   const first = stamps();
@@ -54,17 +55,40 @@ test('the build writes smaller copies of large JPEG, PNG and WebP images and src
   assert.deepEqual(stamps(), first);
   await image(2000, 1000, '#a37').jpeg().toFile(path.join(root, 'assets/img/photo.jpg'));
   await buildToDisk(root);
-  assert.equal(Object.keys(stamps()).length, 12);
+  const second = Object.keys(stamps());
+  assert.equal(second.length, 6);
+  assert.ok(second.every((f) => !(f in first)));
 });
 
 test('werft.config.js sets the widths and adds AVIF', async (t) => {
-  const root = await site(t, { widths: [250, 1000], formats: ['webp', 'avif'] });
-  const { outDir } = await buildToDisk(root);
+  const root = await site(t, { widths: [250, 1000], formats: ['WebP', 'avif', 'jpeg', 'tiff'] });
+  const warnings = [];
+  const { outDir } = await buildToDisk(root, { log: (line) => warnings.push(line) });
+  assert.deepEqual(warnings, ['werft: images.formats: tiff unknown, only jpg, png, webp and avif are made.']);
   assert.deepEqual(list(path.join(outDir, '_werft/img/assets/img')), [
     'photo.1000.avif', 'photo.1000.jpg', 'photo.1000.webp', 'photo.250.avif', 'photo.250.jpg', 'photo.250.webp',
-    'small.250.avif', 'small.250.png', 'small.250.webp',
+    'small.250.avif', 'small.250.jpg', 'small.250.png', 'small.250.webp',
   ]);
   assert.match(fs.readFileSync(path.join(outDir, 'index.html'), 'utf8'), /^<picture><source type="image\/avif" srcset="_werft\/img\/assets\/img\/photo\.250\.avif 250w, _werft\/img\/assets\/img\/photo\.1000\.avif 1000w" sizes="50vw"><source type="image\/webp"/);
+});
+
+test('identical images share their copies, a turned photo is sized upright, and unused copies leave the cache', async (t) => {
+  const root = await site(t);
+  fs.copyFileSync(path.join(root, 'assets/img/photo.jpg'), path.join(root, 'assets/img/same.jpg'));
+  // Stored 1700 × 1200 on its side, shown 1200 × 1700.
+  await image(1700, 1200).jpeg().withMetadata({ orientation: 6 }).toFile(path.join(root, 'assets/img/turned.jpg'));
+  const warnings = [];
+  const { outDir } = await buildToDisk(root, { log: (line) => warnings.push(line) });
+  assert.deepEqual(warnings, []);
+  const index = JSON.parse(fs.readFileSync(path.join(outDir, '_werft/media.json'), 'utf8'));
+  assert.equal(index['assets/img/same.jpg'].variants.length, 6);
+  assert.deepEqual([index['assets/img/turned.jpg'].width, index['assets/img/turned.jpg'].height], [1200, 1700]);
+  assert.deepEqual(index['assets/img/turned.jpg'].variants.map((v) => [v.width, v.height, v.type]), [[480, 680, 'image/jpeg'], [480, 680, 'image/webp'], [960, 1360, 'image/jpeg'], [960, 1360, 'image/webp']]);
+  const cache = path.join(root, 'node_modules/.cache/werft-images');
+  assert.equal(fs.readdirSync(cache).length, 10);
+  fs.rmSync(path.join(root, 'assets/img/turned.jpg'));
+  await buildToDisk(root);
+  assert.equal(fs.readdirSync(cache).length, 6);
 });
 
 test('without sharp the site is built with the originals and the build says so', async (t) => {

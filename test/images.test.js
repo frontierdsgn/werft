@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { downscaleTarget, maxSize, MAX_SIZE } from '../lib/images.js';
-import { build, createContext, html } from '../lib/index.js';
+import { build, createContext, html, imageSize } from '../lib/index.js';
 
 const u32 = (n) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
 const chunk = (name, data = []) => [...u32(data.length), ...Buffer.from(name), ...data, 0, 0, 0, 0];
@@ -31,6 +31,20 @@ test('an upload larger than the limit is scaled to it on its longer edge, in its
   // PNG stays PNG, so its transparency is kept.
   assert.deepEqual(downscaleTarget(png(5120, 5120)), { type: 'image/png', quality: undefined, width: 2560, height: 2560 });
   assert.equal(downscaleTarget(webp(4000, 3000)).type, 'image/webp');
+});
+
+test('the size of a JPEG is the size it is shown at, after the orientation the camera recorded', () => {
+  // A JPEG with an Exif block (orientation 6: stored on its side) before its frame header.
+  const turned = (order) => {
+    const le = order === 'II';
+    const u16 = (n) => (le ? [n & 255, n >> 8] : [n >> 8, n & 255]);
+    const tiff = [...Buffer.from(order), ...u16(42), ...(le ? [8, 0, 0, 0] : [0, 0, 0, 8]), ...u16(1), ...u16(0x0112), ...u16(3), ...(le ? [1, 0, 0, 0] : [0, 0, 0, 1]), ...u16(6), 0, 0, 0, 0, 0, 0];
+    const app1 = [...Buffer.from('Exif\0\0'), ...tiff];
+    return Uint8Array.from([0xff, 0xd8, 0xff, 0xe1, (app1.length + 2) >> 8, (app1.length + 2) & 255, ...app1, ...jpeg(1700, 1200).slice(2)]);
+  };
+  assert.deepEqual(imageSize(turned('II')), { width: 1200, height: 1700 });
+  assert.deepEqual(imageSize(turned('MM')), { width: 1200, height: 1700 });
+  assert.deepEqual(imageSize(jpeg(1700, 1200)), { width: 1700, height: 1200 });
 });
 
 test('small images, animations, GIFs and other files stay as they are', () => {
