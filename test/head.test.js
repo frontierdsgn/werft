@@ -93,6 +93,8 @@ test('ctx.head() takes a picture as image and keeps an absolute image without a 
   const ctx = createContext({ site: {}, theme: { blocks: {} }, content }).for(content.pages[0]);
   const out = ctx.head({ image: { src: 'https://cdn.example/a.jpg', alt: 'Ein Bild' } }).value;
   assert.match(out, /^<title>S<\/title>/, 'an untitled page gets the site name once');
+  const empty = createContext({ site: {}, theme: { blocks: {} }, content: { ...content, settings: { share_image: 'https://cdn.example/s.jpg' } } }).for(content.pages[0]);
+  assert.match(empty.head({ image: { src: '', alt: '' } }).value, /<meta property="og:image" content="https:\/\/cdn.example\/s.jpg">/, 'an empty picture falls through');
   assert.match(out, /<meta property="og:image" content="https:\/\/cdn.example\/a.jpg"><meta property="og:image:alt" content="Ein Bild"><meta name="twitter:card" content="summary_large_image">/);
 });
 
