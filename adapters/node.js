@@ -10,7 +10,7 @@ import { gitStorage } from '../gateway/storage/git.js';
 import { mailFromEnv } from '../gateway/mail.js';
 import { smtpFromEnv } from '../gateway/mail-smtp.js';
 
-const TYPES = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', ico: 'image/x-icon', txt: 'text/plain; charset=utf-8', xml: 'application/xml', woff2: 'font/woff2', pdf: 'application/pdf', map: 'application/json' };
+const TYPES = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', ico: 'image/x-icon', txt: 'text/plain; charset=utf-8', xml: 'application/xml', woff2: 'font/woff2', pdf: 'application/pdf', map: 'application/json', webmanifest: 'application/manifest+json' };
 
 async function toRequest(req, origin) {
   const chunks = [];

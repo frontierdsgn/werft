@@ -133,3 +133,49 @@ test('a page with the slug 404 builds to 404.html, noindex, out of the sitemap, 
   const slash = await built({ base: '/salon' }, files, page);
   assert.equal(slash['salon/.htaccess'], 'ErrorDocument 404 /salon/404.html\n', 'a base path with a leading slash');
 });
+
+test('the site icon appears on every page and in the web manifest', async () => {
+  const files = {
+    'content/settings/site.json': json({ title: 'Salon', icon: 'assets/img/icon.png' }),
+    'content/pages/index.json': json({ title: 'Start' }),
+    'content/en/pages/index.json': json({ title: 'Home' }),
+    'content/news/neu.json': json({ title: 'Neu' }),
+  };
+  const result = await build({ site: { languages: ['de', 'en'], mediaDirs: ['assets/img'] }, theme, store: memoryStore(files), now: NOW, media: { 'assets/img/icon.png': { width: 512, height: 512 } } });
+  const out = Object.fromEntries(result.files.map((f) => [f.path, f.text]));
+  const tags = '<link rel="icon" href="assets/img/icon.png" type="image/png" sizes="512x512"><link rel="apple-touch-icon" href="assets/img/icon.png"><link rel="manifest" href="manifest.webmanifest"></head>';
+  assert.ok(out['index.html'].endsWith(tags));
+  assert.ok(out['en/index.html'].endsWith(tags.replace(/href="/g, 'href="../')));
+  assert.ok(out['news/neu.html'].endsWith(tags.replace(/href="/g, 'href="../')));
+  assert.deepEqual(JSON.parse(out['manifest.webmanifest']), { name: 'Salon', start_url: './', display: 'browser', icons: [{ src: 'assets/img/icon.png', sizes: '512x512', type: 'image/png' }] });
+  // Without an icon: no tags and no manifest.
+  const plain = await built({}, { 'content/pages/index.json': json({ title: 'Start' }) });
+  assert.doesNotMatch(plain['index.html'], /icon|manifest/);
+  assert.equal(plain['manifest.webmanifest'], undefined);
+});
+
+test('the site icon works below a base path, on the not-found page and as the editor stores it', async () => {
+  const { schema } = await import('../lib/schema.js');
+  const files = {
+    'content/settings/site.json': json({ title: 'Salon', icon: '/salon/assets/img/icon.png' }),
+    'content/en/settings/site.json': json({ icon: 'assets/img/other.png' }),
+    'content/pages/index.json': json({ title: 'Start' }),
+    'content/pages/404.json': json({ title: 'Nicht gefunden' }),
+    'content/en/pages/404.json': json({ title: 'Not found' }),
+  };
+  const site = { base: 'salon', languages: ['de', 'en'], mediaDirs: ['assets/img'] };
+  const result = await build({ site, theme, store: memoryStore(files), now: NOW, media: { 'assets/img/icon.png': { width: 512, height: 512 } } });
+  const out = Object.fromEntries(result.files.map((f) => [f.path, f.text]));
+  assert.match(out['salon/index.html'], /<link rel="icon" href="assets\/img\/icon.png" type="image\/png" sizes="512x512">/);
+  assert.match(out['salon/404.html'], /^<head><base href="\/salon\/">.*<link rel="icon" href="assets\/img\/icon.png"/);
+  // The default language's icon serves every language; other languages' settings do not offer one.
+  assert.match(out['salon/en/404.html'], /^<head><base href="\/salon\/en\/">.*<link rel="icon" href="..\/assets\/img\/icon.png"/);
+  assert.equal(JSON.parse(out['salon/manifest.webmanifest']).icons[0].src, 'assets/img/icon.png');
+  const settings = (lang) => schema({ site, theme, lang }).collections.find((c) => c.name === 'settings').files.find((f) => f.name === 'site').fields.map((f) => f.name);
+  assert.ok(settings('de').includes('icon'));
+  assert.ok(!settings('en').includes('icon'));
+  // An SVG icon: no size, and no home-screen icon.
+  const svg = await built({}, { 'content/settings/site.json': json({ icon: 'assets/img/icon.svg' }), 'content/pages/index.json': json({ title: 'Start' }) });
+  assert.match(svg['index.html'], /<link rel="icon" href="assets\/img\/icon.svg" type="image\/svg\+xml"><link rel="manifest" href="manifest.webmanifest">/);
+  assert.equal(JSON.parse(svg['manifest.webmanifest']).name, undefined);
+});
