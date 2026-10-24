@@ -255,9 +255,13 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     await commit(`Einsendung: ${title}`, [{ path: `${SUBMISSIONS_DIR}/${slug}/${stamp(received)}-${random}.json`, data }]);
     // The form in the page's language, where it is translated.
     if (confirm || !silent(201, redirect)) lang ??= await languageOf(request, fields, main);
-    // (A form found in another language is missing in the default one.)
-    const local = !lang || !base || lang === base ? form
-      : lang === site.languages[0] ? null : parse(await storage.read(main, `${site.contentDir}/${lang}/forms/${slug}.json`));
+    // (A form found in another language is missing in the default one.) The submission is stored
+    // already, so a failed read only costs the translation's texts.
+    let local = form;
+    if (lang && base && lang !== base) {
+      local = lang === site.languages[0] ? null : await storage.read(main, `${site.contentDir}/${lang}/forms/${slug}.json`)
+        .then(parse, (e) => { console.error('werft forms: translated form not read:', e.message); return null; });
+    }
     if (mail) await inform({ form, local, lang, base, title, fields: kept, visitor, confirm });
     return say(201, 'thanks', { own: ownTexts(local, form, (f) => f.thanks), base, redirect });
   }

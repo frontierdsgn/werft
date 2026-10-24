@@ -299,6 +299,8 @@ test('the thank-you page and the confirmation are in the language of the form\'s
     'content/forms/rueckruf.json': json({ title: 'Rückruf', notify: { confirm: true, confirm_text: 'Wir rufen an.' } }),
     'content/forms/kurs.json': json({ title: 'Kurs', thanks: 'Danke <für> Ihre Anmeldung & bis bald.\nIhr Team' }),
     'content/en/forms/kurs.json': json({ title: 'Course', thanks: 'Danke <für> Ihre Anmeldung & bis bald.\nIhr Team' }),
+    'content/forms/kopie.json': json({ title: 'Kopie', notify: { confirm: true, confirm_text: 'Wir melden uns.' } }),
+    'content/en/forms/kopie.json': json({ title: 'Copy', notify: { confirm: true, confirm_text: 'Wir melden uns.' } }),
     'content/forms/leer.json': json({ title: 'Leer', thanks: '  ' }),
     'content/forms/kaputt.json': json({ title: 'Kaputt', thanks: { de: 'x' } }),
     'content/en/forms/nur.json': json({ title: 'Only English', thanks: 'Only in English, thanks.' }),
@@ -329,11 +331,13 @@ test('the thank-you page and the confirmation are in the language of the form\'s
   const bot = await gateway(new Request('https://site.test/api/werft/forms/anfrage', { method: 'POST', headers: { referer: 'https://site.test/en/contact.html' }, body: new URLSearchParams({ _gotcha: 'x', _redirect: '/en/thanks.html' }) }));
   assert.deepEqual([bot.status, bot.headers.get('location')], [303, 'https://site.test/en/thanks.html'], 'a bot is redirected like a person');
   await send('rueckruf', 'en/contact.html', { email: 'y@example.org' });
+  await send('kopie', 'en/contact.html', { email: 'z@example.org' });
   assert.deepEqual(mail.sent.map((m) => [m.to[0], m.subject, m.text]), [
     ['v@example.org', 'Ihre Nachricht an S', 'Wir melden uns.\n'],
     ['w@example.org', 'Your message to S', 'We will be in touch.\n'],
     ['x@example.org', 'Ihre Nachricht an S', 'Wir melden uns.\n'],
     ['y@example.org', 'Your message to S', 'Thank you, your message has arrived.\n\nS\n'],
+    ['z@example.org', 'Your message to S', 'Thank you, your message has arrived.\n\nS\n'],
   ], 'the confirmation in the page\'s language, from the translated form where there is one');
 });
 
@@ -366,4 +370,22 @@ test('a failed read of the settings still keeps the submission', async () => {
   } finally { console.error = original; }
   assert.ok([...hub.history('werft-submissions')].some((t) => t.includes('Hi')), 'the submission is kept');
   assert.match(errors.join('\n'), /settings not read: GitHub down/);
+});
+
+test('a failed read of the translated form still answers and sends the e-mails', async () => {
+  const hub = fakeGitHub();
+  hub.seed({ 'content/forms/anfrage.json': json({ title: 'Anfrage', notify: { to: 'team@example.org' } }), 'content/en/forms/anfrage.json': json({ title: 'Request' }) });
+  const storage = githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch });
+  const read = storage.read;
+  const flaky = { ...storage, read: (sha, path) => (path === 'content/en/forms/anfrage.json' ? Promise.reject(new Error('GitHub down')) : read(sha, path)) };
+  const mail = memoryMail();
+  const original = console.error;
+  console.error = () => {};
+  try {
+    const gateway = createGateway({ storage: flaky, mail, secret: 'x'.repeat(32), site: gatewaySite({ ...site, name: 'S' }, theme) });
+    const response = await gateway(new Request('https://site.test/api/werft/forms/anfrage', { method: 'POST', headers: { referer: 'https://site.test/en/contact.html' }, body: new URLSearchParams({ text: 'Hi' }) }));
+    assert.equal(response.status, 201);
+    assert.match(await response.text(), /<html lang="en">.*Thank you/s);
+  } finally { console.error = original; }
+  assert.equal(mail.sent.length, 1, 'the team still gets the e-mail');
 });
