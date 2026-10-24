@@ -1,6 +1,7 @@
 // Helpers for the editor's page preview: what makes a page safe to show next to the signed-in
 // user's tokens, and how a post is shown when it has no page of its own.
 import { createContext, safeURL, html } from 'werft';
+import { t, intlLocale } from './i18n.js';
 
 const replaceIn = (list, entry) => [...list.filter((e) => e.slug !== entry.slug), entry].sort((a, b) => (a.slug < b.slug ? -1 : 1));
 
@@ -50,27 +51,27 @@ export function postPreview(entry, content, { site, theme, media }) {
     if (shown === hidden) continue;
     const doc = parse(shown);
     addedElement(doc, parse(hidden))?.setAttribute('data-werft-focus', '');
-    return { html: doc.documentElement.outerHTML, focus: page.slug, note: `${label} haben keine eigene Seite. „${title}“ erscheint auf der Seite „${page.title}“ (markiert).` };
+    return { html: doc.documentElement.outerHTML, focus: page.slug, note: t('postPreview.onPage', { label, title, page: page.title }) };
   }
 
   for (const [type, block] of Object.entries(theme.blocks)) {
     const page = { slug: post.slug, title, sections: [{ type }] };
     try {
       const shown = render([post], page);
-      if (shown !== render([], page)) return { html: shown, note: `${label} haben keine eigene Seite, und „${title}“ steht noch auf keiner. So zeigt die Website sie im Abschnitt „${block.label}“.` };
+      if (shown !== render([], page)) return { html: shown, note: t('postPreview.inBlock', { label, title, block: block.label }) };
     } catch { /* the block needs fields a bare section lacks */ }
   }
 
   const value = (field) => {
     const v = post[field.name];
     if (field.widget === 'image' || v?.src) return html`<img src="${v?.src ?? v}" alt="" style="max-width:100%;max-height:50vh">`;
-    if (field.widget === 'datetime') return new Date(v).toLocaleString('de-DE', { dateStyle: 'long', ...(field.time_format !== false && { timeStyle: 'short' }) });
+    if (field.widget === 'datetime') return new Date(v).toLocaleString(intlLocale(), { dateStyle: 'long', ...(field.time_format !== false && { timeStyle: 'short' }) });
     return typeof v === 'object' ? JSON.stringify(v) : String(v);
   };
   const fields = theme.postType.fields.filter((f) => post[f.name] != null && post[f.name] !== '');
   return {
     html: html`<body><dl style="margin:24px;font:16px/1.5 system-ui,sans-serif">${fields.map((f) => html`<dt style="font-weight:700;margin-top:12px">${f.label}</dt><dd style="margin:0">${value(f)}</dd>`)}</dl></body>`.value,
-    note: `${label} haben keine eigene Seite, und „${title}“ steht noch auf keiner. Hier ihre Angaben.`,
+    note: t('postPreview.fields', { label, title }),
   };
 }
 

@@ -4,35 +4,43 @@
 import { buildForm } from './visual-form.js';
 import { versionDiff, diffHTML } from './diff.js';
 import { setupTwoFactor, recoveryCodes } from './two-factor.js';
+import { t, locale, intlLocale } from './i18n.js';
 
 const el = (tag, props = {}, ...children) => {
   const node = Object.assign(document.createElement(tag), props);
   node.append(...children.filter((c) => c != null && c !== false));
   return node;
 };
-const dateTime = (iso) => new Date(iso).toLocaleString('de-DE', { dateStyle: 'long', timeStyle: 'short' });
+const dateTime = (iso) => new Date(iso).toLocaleString(intlLocale(), { dateStyle: 'long', timeStyle: 'short' });
 
 // What a kind of entry is, in a sentence, above its form.
-const LEADS = {
-  page: 'Hier ändern Sie Titel, Texte und Bilder dieser Seite. Rechts sehen Sie, wie die Seite aussehen wird.',
-  post: 'Hier ändern Sie diesen Eintrag. Rechts sehen Sie, wie er auf der Website erscheint.',
-  pattern: 'Ein Muster ist eine Gruppe von Abschnitten, die auf mehreren Seiten gleich erscheint, zum Beispiel eine Anfahrtsbeschreibung.',
-  form: 'Ein Formular, das Besucher auf der Website ausfüllen. Hier legen Sie seine Felder und Texte fest.',
-  settings: 'Angaben, die für die ganze Website gelten.',
-  menus: 'Die Menüs der Website. Ein Eintrag besteht aus dem Text, den Besucher sehen, und der Seite, zu der er führt.',
-  redirects: 'Wenn sich die Adresse einer Seite ändert, leitet eine Weiterleitung Besucher der alten Adresse zur neuen.',
-};
-const STATUS_HELP = {
-  draft: 'Nur hier im Editor zu sehen. Besucher der Website sehen es nicht.',
-  pending: 'Wartet darauf, dass die Redaktion es freigibt.',
-  published: 'Für alle Besucher sichtbar, sobald Sie speichern.',
-};
-const ROLE_HELP = {
-  administrator: 'Darf alles, auch Website-Einstellungen und Benutzer.',
-  editor: 'Darf alle Seiten, Beiträge und Bilder bearbeiten.',
-  author: 'Darf eigene Beiträge schreiben und veröffentlichen und Bilder hochladen.',
-  contributor: 'Darf eigene Beiträge schreiben, aber nicht veröffentlichen.',
-};
+const lead = (kind) => ({
+  page: t('lead.page'),
+  post: t('lead.post'),
+  pattern: t('lead.pattern'),
+  form: t('lead.form'),
+  settings: t('lead.settings'),
+  menus: t('lead.menus'),
+  redirects: t('lead.redirects'),
+})[kind];
+const statusHelp = (status) => ({
+  draft: t('status.draftHelp'),
+  pending: t('status.pendingHelp'),
+  published: t('status.publishedHelp'),
+})[status];
+// A role's name; one the admin does not know by the gateway's label.
+const roleName = (role, roles = {}) => ({
+  administrator: t('role.administrator'),
+  editor: t('role.editor'),
+  author: t('role.author'),
+  contributor: t('role.contributor'),
+})[role] ?? roles[role]?.label ?? role;
+const roleHelp = (role) => ({
+  administrator: t('role.administratorHelp'),
+  editor: t('role.editorHelp'),
+  author: t('role.authorHelp'),
+  contributor: t('role.contributorHelp'),
+})[role];
 
 // Which list entries are open, per entry, while the editor is open.
 const openByEntry = new Map();
@@ -56,12 +64,12 @@ export function formView(app, root) {
   const from = !data && app.translatableFrom(source);
   if (from) {
     // A page of another language, not translated into the editor's language yet.
-    root.replaceChildren(el('div', { className: 've-form-page' }, head(app, kind, title, `Diese Seite gibt es auf ${app.languageName(from)}, aber noch nicht in dieser Sprache. „Übersetzen“ legt eine Kopie an; dann ersetzen Sie die Texte durch die Übersetzung.`),
-      card(null, null, el('div', { className: 've-actions-row' }, app.button('Übersetzen', null, () => app.translate(slug), 've-primary')))));
+    root.replaceChildren(el('div', { className: 've-form-page' }, head(app, kind, title, t('translate.lead', { language: app.languageName(from) })),
+      card(null, null, el('div', { className: 've-actions-row' }, app.button(t('translate'), null, () => app.translate(slug), 've-primary')))));
     return { reveal() {} };
   }
   if (!data) {
-    root.replaceChildren(el('div', { className: 've-form-page' }, head(app, kind, title, 'Dieser Eintrag ist gelöscht. Mit „Rückgängig“ holen Sie ihn zurück.')));
+    root.replaceChildren(el('div', { className: 've-form-page' }, head(app, kind, title, t('entry.deleted'))));
     return { reveal() {} };
   }
   const fields = app.topFields(source) ?? [];
@@ -78,7 +86,7 @@ export function formView(app, root) {
     }),
     openItems: openByEntry.get(source),
     radios: true,
-    confirmRemove: (label) => app.confirmDialog('Entfernen?', `„${label}“ wird entfernt. Mit „Rückgängig“ holen Sie es zurück, solange Sie nicht gespeichert haben.`, 'Entfernen'),
+    confirmRemove: (label) => app.confirmDialog(t('remove.title'), t('remove.text', { label }), t('remove')),
   };
   const page = el('div', { className: 've-form-page' });
   page.addEventListener('focusin', (event) => { if (event.target.closest('input, textarea, select, [contenteditable]')) { last = app.snapshot(); started = false; } });
@@ -86,35 +94,33 @@ export function formView(app, root) {
 
   const named = (...names) => fields.filter((f) => names.includes(f.name));
   const rest = fields.filter((f) => !['status', 'publish_date', 'seo', 'sections'].includes(f.name));
-  page.append(head(app, kind, title, LEADS[type], app.sharedNote(source)));
+  page.append(head(app, kind, title, lead(type), app.sharedNote(source)));
   page.append(card(null, null, buildForm(rest, data, ctx)));
   if (type === 'page') page.append(card(null, null, app.addressCard(slug)));
 
   if (named('sections').length) {
-    page.append(card('Abschnitte', type === 'page'
-      ? 'Die Seite besteht aus Abschnitten, von oben nach unten. Öffnen Sie einen Abschnitt, um ihn zu bearbeiten, oder klicken Sie rechts in der Vorschau darauf.'
-      : 'Die Abschnitte dieses Musters, von oben nach unten.',
+    page.append(card(t('sections'), type === 'page' ? t('sections.pageLead') : t('sections.patternLead'),
     buildForm(named('sections'), data, ctx)));
   }
 
   const status = named('status')[0];
   if (status) {
     const options = (status.options ?? []).map((o) => (typeof o === 'object' ? o : { label: o, value: o }));
-    const group = el('div', { className: 've-choices', role: 'radiogroup', 'aria-label': 'Sichtbarkeit' });
+    const group = el('div', { className: 've-choices', role: 'radiogroup', 'aria-label': t('visibility') });
     for (const o of options) {
       const input = el('input', { type: 'radio', name: 've-status', checked: (data.status ?? 'published') === o.value });
       input.addEventListener('change', () => { last = app.snapshot(); started = false; data.status = o.value; ctx.onChange(); });
-      group.append(el('label', { className: 've-choice' }, input, el('span', {}, el('strong', {}, o.label), el('small', {}, STATUS_HELP[o.value] ?? ''))));
+      group.append(el('label', { className: 've-choice' }, input, el('span', {}, el('strong', {}, o.label), el('small', {}, statusHelp(o.value) ?? ''))));
     }
-    page.append(card('Sichtbarkeit', null, group, buildForm(named('publish_date'), data, ctx)));
+    page.append(card(t('visibility'), null, group, buildForm(named('publish_date'), data, ctx)));
   }
   if (named('seo').length) page.append(buildForm(named('seo'), data, ctx));
 
   page.append(versions(app, source));
   if (type === 'page' || type === 'post') page.append(previewLinks(app, source));
   const actions = [
-    type === 'page' && app.can('content') ? app.button('Seite duplizieren …', null, () => app.duplicate(slug), 've-tool') : null,
-    ['post', 'pattern', 'form'].includes(type) || (type === 'page' && slug !== 'index') ? app.button(`${kind} löschen …`, null, () => app.removeEntry(source), 've-tool ve-danger') : null,
+    type === 'page' && app.can('content') ? app.button(t('page.duplicateMore'), null, () => app.duplicate(slug), 've-tool') : null,
+    ['post', 'pattern', 'form'].includes(type) || (type === 'page' && slug !== 'index') ? app.button(t('delete.kindMore', { kind }), null, () => app.removeEntry(source), 've-tool ve-danger') : null,
   ].filter(Boolean);
   if (actions.length) page.append(card(null, null, el('div', { className: 've-actions-row' }, ...actions)));
   root.replaceChildren(page);
@@ -136,21 +142,21 @@ export function formView(app, root) {
 function versions(app, source) {
   const path = app.fileOf(source);
   const list = el('div', { className: 've-versions' });
-  const load = app.button('Frühere Versionen anzeigen', null, async () => {
+  const load = app.button(t('versions.show'), null, async () => {
     load.disabled = true;
-    load.textContent = 'Wird geladen …';
+    load.textContent = t('loading');
     try {
       const commits = await app.api(`${app.REPO}/commits?sha=${encodeURIComponent(app.branch)}&path=${encodeURIComponent(path)}&limit=30`);
       load.remove();
-      if (!commits.length) { list.append(el('p', { className: 've-hint' }, 'Noch nicht gespeichert, daher gibt es keine früheren Versionen.')); return; }
+      if (!commits.length) { list.append(el('p', { className: 've-hint' }, t('versions.none'))); return; }
       list.append(...commits.map((c, i) => version(app, source, path, c, i === 0)));
     } catch (error) {
       load.disabled = false;
-      load.textContent = 'Frühere Versionen anzeigen';
-      app.toast(`Versionen konnten nicht geladen werden: ${error.message}`, true);
+      load.textContent = t('versions.show');
+      app.toast(t('versions.failed', { message: error.message }), true);
     }
   }, 've-tool');
-  return card('Frühere Versionen', 'Jedes Speichern legt eine Version an. Eine frühere Version können Sie ansehen und zurückholen.', list, load);
+  return card(t('versions'), t('versions.lead'), list, load);
 }
 
 // Links that show the saved entry, drafts too, to people without an account, until they expire or
@@ -158,29 +164,29 @@ function versions(app, source) {
 function previewLinks(app, source) {
   const path = app.fileOf(source);
   const list = el('div', { className: 've-versions' });
-  const days = el('select', { ariaLabel: 'Gültig für' }, ...[[1, '1 Tag'], [7, '7 Tage'], [30, '30 Tage']].map(([value, label]) => el('option', { value, selected: value === 7 }, label)));
+  const days = el('select', { ariaLabel: t('previewLink.validFor') }, ...[1, 7, 30].map((value) => el('option', { value, selected: value === 7 }, t('previewLink.days', { count: value }))));
   const draw = (previews) => list.replaceChildren(...(previews.length ? previews.map((link) => {
     const url = new URL(link.url, location.origin).href;
-    const field = el('input', { type: 'text', readOnly: true, value: url, ariaLabel: 'Vorschau-Link' });
+    const field = el('input', { type: 'text', readOnly: true, value: url, ariaLabel: t('previewLink') });
     return el('div', { className: 've-version' },
-      el('div', { className: 've-control' }, field, el('small', {}, `Gültig bis ${dateTime(link.expires_at)} · erstellt von ${link.by}`)),
+      el('div', { className: 've-control' }, field, el('small', {}, t('previewLink.validUntil', { date: dateTime(link.expires_at), by: link.by }))),
       el('div', { className: 've-actions-row' },
-        app.button('Kopieren', null, async () => {
-          try { await navigator.clipboard.writeText(url); app.toast('Link kopiert.'); } catch { field.select(); app.toast('Der Link ist markiert. Bitte mit Strg+C (Mac: ⌘+C) kopieren.'); }
+        app.button(t('copy'), null, async () => {
+          try { await navigator.clipboard.writeText(url); app.toast(t('previewLink.copied')); } catch { field.select(); app.toast(t('previewLink.selected')); }
         }, 've-tool'),
-        app.button('Widerrufen', null, async () => {
-          if (!(await app.confirmDialog('Link widerrufen?', 'Wer den Link hat, sieht die Vorschau danach nicht mehr.', 'Widerrufen'))) return;
-          send({ path, revoke: link.id }, 'Link widerrufen.');
+        app.button(t('previewLink.revoke'), null, async () => {
+          if (!(await app.confirmDialog(t('previewLink.revokeTitle'), t('previewLink.revokeText'), t('previewLink.revoke')))) return;
+          send({ path, revoke: link.id }, t('previewLink.revoked'));
         }, 've-tool ve-danger')));
-  }) : [el('p', { className: 've-hint' }, 'Es gibt keinen gültigen Vorschau-Link.')]));
+  }) : [el('p', { className: 've-hint' }, t('previewLink.none'))]));
   const send = async (body, done) => {
     try { draw((await app.api('/previews', body ? { method: 'POST', body } : undefined)).previews); if (done) app.toast(done); } catch (error) { app.toast(error.message, true); }
   };
-  const load = app.button('Vorschau-Links anzeigen', null, async () => {
+  const load = app.button(t('previewLink.show'), null, async () => {
     load.disabled = true;
-    try { draw((await app.api(`/previews?path=${encodeURIComponent(path)}`)).previews); load.replaceWith(el('div', { className: 've-actions-row' }, el('div', { className: 've-control' }, days), app.button('Link erstellen', null, () => send({ path, days: Number(days.value) }, 'Link erstellt.'), 've-tool'))); } catch (error) { load.disabled = false; app.toast(error.message, true); }
+    try { draw((await app.api(`/previews?path=${encodeURIComponent(path)}`)).previews); load.replaceWith(el('div', { className: 've-actions-row' }, el('div', { className: 've-control' }, days), app.button(t('previewLink.create'), null, () => send({ path, days: Number(days.value) }, t('previewLink.created')), 've-tool'))); } catch (error) { load.disabled = false; app.toast(error.message, true); }
   }, 've-tool');
-  return card('Vorschau-Link', 'Zeigt den gespeicherten Stand, auch einen Entwurf, Personen ohne Anmeldung, zum Beispiel zur Abstimmung. Suchmaschinen nehmen ihn nicht auf. Was Sie danach speichern, sieht man dort auch.', list, load);
+  return card(t('previewLink'), t('previewLink.lead'), list, load);
 }
 
 function version(app, source, path, commit, newest) {
@@ -189,28 +195,28 @@ function version(app, source, path, commit, newest) {
     el('div', {}, el('strong', {}, dateTime(date)), el('small', {}, `${name} · ${commit.commit.message.split('\n')[0]}`)));
   const read = async () => {
     const response = await app.api(`${app.REPO}/raw/${path.split('/').map(encodeURIComponent).join('/')}?ref=${commit.sha}`, { raw: true });
-    if (!response.ok) throw new Error('Version nicht lesbar');
+    if (!response.ok) throw new Error(t('version.unreadable'));
     return response.text();
   };
-  if (newest && app.savedText(source) !== null) row.append(el('span', { className: 've-badge' }, 'Gespeicherter Stand'));
-  const diff = el('details', { className: 've-diff' }, el('summary', {}, 'Unterschiede zu jetzt'));
+  if (newest && app.savedText(source) !== null) row.append(el('span', { className: 've-badge' }, t('version.saved')));
+  const diff = el('details', { className: 've-diff' }, el('summary', {}, t('version.diff')));
   diff.addEventListener('toggle', async () => {
     if (!diff.open || diff.dataset.loaded) return;
     diff.dataset.loaded = '1';
     try {
       const lines = versionDiff(`${JSON.stringify(app.fileData(source) ?? {}, null, 2)}\n`, await read());
       const pre = el('pre');
-      pre.innerHTML = lines.some(([k]) => k !== ' ') ? diffHTML(lines) : 'Keine inhaltlichen Unterschiede.';
-      diff.append(el('p', { className: 've-hint' }, 'Rot: steht jetzt da. Grün: stand in dieser Version.'), pre);
+      if (lines.some(([k]) => k !== ' ')) pre.innerHTML = diffHTML(lines); else pre.textContent = t('version.same');
+      diff.append(el('p', { className: 've-hint' }, t('version.diffHint')), pre);
     } catch (error) { diff.append(el('p', { className: 've-error' }, error.message)); }
   });
-  row.append(app.button('Diese Version zurückholen', null, async () => {
-    if (!(await app.confirmDialog('Version zurückholen?', `Der Inhalt vom ${dateTime(date)} ersetzt den jetzigen. Erst mit „Speichern“ wird er übernommen; mit „Rückgängig“ geht es zurück.`, 'Zurückholen'))) return;
+  row.append(app.button(t('version.restore'), null, async () => {
+    if (!(await app.confirmDialog(t('version.restoreTitle'), t('version.restoreText', { date: dateTime(date) }), t('version.restoreYes')))) return;
     try {
       const data = JSON.parse(await read());
       app.change(() => app.replaceData(source, data));
-      app.toast('Ältere Version übernommen. Prüfen Sie sie und klicken Sie dann auf „Speichern“.');
-    } catch (error) { app.toast(`Zurückholen fehlgeschlagen: ${error.message}`, true); }
+      app.toast(t('version.restored'));
+    } catch (error) { app.toast(t('version.restoreFailed', { message: error.message }), true); }
   }, 've-tool'), diff);
   return row;
 }
@@ -226,50 +232,49 @@ export function mediaView(app, root) {
   input.addEventListener('change', async () => {
     const notes = [];
     for (const file of input.files) notes.push((await app.upload(file)).note);
-    app.toast([`${input.files.length === 1 ? 'Bild' : 'Bilder'} hinzugefügt. Mit „Speichern“ kommen sie auf die Website.`, ...notes.filter(Boolean)].join(' '), false, notes.some(Boolean));
+    app.toast([t('images.added', { count: input.files.length }), ...notes.filter(Boolean)].join(' '), false, notes.some(Boolean));
     draw();
   });
-  const upload = el('label', { className: 've-primary ve-upload' }, 'Bilder hochladen …', input);
+  const upload = el('label', { className: 've-primary ve-upload' }, t('images.upload'), input);
   const fileName = (path) => path.split('/').pop();
-  const images = app.images().sort((a, b) => fileName(a).localeCompare(fileName(b), 'de'))
+  const images = app.images().sort((a, b) => fileName(a).localeCompare(fileName(b), locale()))
     .map((path) => ({ path, name: fileName(path), used: app.usesOf(path), ...app.altsOf(path) }));
   const filters = {
-    all: ['Alle Bilder', () => true],
-    unused: ['Nirgends verwendet', (image) => !image.used.length],
-    noalt: ['Ohne Alternativtext', (image) => image.missing.length > 0],
+    all: [t('images.all'), () => true],
+    unused: [t('images.unused'), (image) => !image.used.length],
+    noalt: [t('images.noAlt'), (image) => image.missing.length > 0],
   };
   const matches = (image) => {
-    const text = [image.name, ...image.alts, ...image.used].join(' ').toLocaleLowerCase('de');
-    return filters[library.filter][1](image) && library.query.toLocaleLowerCase('de').split(/\s+/).every((word) => text.includes(word));
+    const text = [image.name, ...image.alts, ...image.used].join(' ').toLocaleLowerCase(locale());
+    return filters[library.filter][1](image) && library.query.toLocaleLowerCase(locale()).split(/\s+/).every((word) => text.includes(word));
   };
   const replace = (image) => {
     const file = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/gif,image/webp' });
     file.addEventListener('change', async () => {
       if (!file.files[0]) return;
       let added;
-      try { added = await app.upload(file.files[0]); } catch (error) { app.toast(`Das Bild ließ sich nicht hochladen: ${error.message}`, true); return; }
+      try { added = await app.upload(file.files[0]); } catch (error) { app.toast(t('images.uploadFailed', { message: error.message }), true); return; }
       const left = app.replaceImage(image.path, added.path);
       const name = fileName(added.path);
-      const where = left.length
-        ? `„${name}“ steht jetzt überall, wo Sie es ändern dürfen. „${image.name}“ bleibt, weil es noch verwendet wird auf: ${left.join(', ')}.`
-        : image.used.length ? `Überall, wo „${image.name}“ war (${image.used.join(', ')}), steht jetzt „${name}“.` : `„${name}“ ersetzt „${image.name}“.`;
-      app.toast([where, 'Mit „Speichern“ kommt es auf die Website.', added.note].filter(Boolean).join(' '), false, true);
+      const where = left.length ? t('images.replacedLeft', { name, old: image.name, entries: left.join(', ') })
+        : image.used.length ? t('images.replacedAll', { name, old: image.name, entries: image.used.join(', ') }) : t('images.replaced', { name, old: image.name });
+      app.toast([where, t('images.saveToPublish'), added.note].filter(Boolean).join(' '), false, true);
       draw();
     });
-    const label = el('label', { className: 've-tool ve-upload', title: `${image.name} durch ein anderes Bild ersetzen` }, 'Ersetzen …', file);
+    const label = el('label', { className: 've-tool ve-upload', title: t('images.replaceTitle', { name: image.name }) }, t('images.replace'), file);
     return label;
   };
   const item = (image) => {
     const node = el('li', {}, el('img', { src: app.mediaURL(image.path), alt: '', loading: 'lazy' }),
       el('strong', {}, image.name),
-      el('small', {}, image.used.length ? `Verwendet auf: ${image.used.join(', ')}` : 'Wird nirgends verwendet.'),
-      image.missing.length ? el('small', { className: 've-alt-missing' }, `Ohne Alternativtext auf: ${image.missing.join(', ')}`) : null);
-    if (app.isUnsaved(image.path)) node.append(el('span', { className: 've-badge' }, 'Noch nicht gespeichert'));
+      el('small', {}, image.used.length ? t('images.usedOn', { entries: image.used.join(', ') }) : t('images.notUsed')),
+      image.missing.length ? el('small', { className: 've-alt-missing' }, t('images.noAltOn', { entries: image.missing.join(', ') })) : null);
+    if (app.isUnsaved(image.path)) node.append(el('span', { className: 've-badge' }, t('images.unsaved')));
     const tools = el('div', { className: 've-actions-row' });
     if (app.mayDeleteImages) tools.append(replace(image));
     if (app.mayDeleteImages && !image.used.length) {
-      tools.append(app.button('Löschen', `${image.name} löschen`, async () => {
-        if (await app.confirmDialog('Bild löschen?', `„${image.name}“ wird beim nächsten Speichern gelöscht.`, 'Löschen')) app.removeImage(image.path);
+      tools.append(app.button(t('delete'), t('deleteThing', { name: image.name }), async () => {
+        if (await app.confirmDialog(t('images.deleteTitle'), t('images.deleteText', { name: image.name }), t('delete'))) app.removeImage(image.path);
       }, 've-tool ve-danger'));
     }
     if (tools.childElementCount) node.append(tools);
@@ -279,17 +284,17 @@ export function mediaView(app, root) {
   const showList = () => {
     const shown = images.filter(matches);
     list.replaceChildren(shown.length ? el('ul', { className: 've-library' }, ...shown.map(item))
-      : card(null, images.length ? 'Kein Bild passt dazu.' : 'Noch keine Bilder.'));
+      : card(null, images.length ? t('images.noMatch') : t('images.none')));
   };
-  const search = el('input', { type: 'search', value: library.query, placeholder: 'Suchen: Dateiname, Alternativtext, Seite' });
-  search.setAttribute('aria-label', 'Bilder durchsuchen');
+  const search = el('input', { type: 'search', value: library.query, placeholder: t('images.searchPlaceholder') });
+  search.setAttribute('aria-label', t('images.search'));
   search.addEventListener('input', () => { library.query = search.value; showList(); });
   const filter = el('select', {}, ...Object.entries(filters).map(([value, [label, test]]) => el('option', { value, selected: value === library.filter }, `${label} (${images.filter(test).length})`)));
-  filter.setAttribute('aria-label', 'Welche Bilder');
+  filter.setAttribute('aria-label', t('images.filter'));
   filter.addEventListener('change', () => { library.filter = filter.value; showList(); });
   showList();
   root.replaceChildren(el('div', { className: 've-form-page ve-wide-page' },
-    head(app, 'Website', 'Bilder', 'Alle Bilder der Website. Laden Sie neue Bilder hier hoch; auf einer Seite wählen Sie sie dann beim jeweiligen Bild aus. „Ersetzen“ tauscht ein Bild überall, wo es verwendet wird, gegen ein neues. Löschen lässt sich nur ein Bild, das nirgends verwendet wird.'),
+    head(app, t('site'), t('images'), t('images.lead')),
     el('p', { className: 've-actions-row' }, upload),
     images.length ? el('p', { className: 've-actions-row ve-library-tools' }, search, filter) : null,
     list));
@@ -298,20 +303,20 @@ export function mediaView(app, root) {
 
 // Pages, posts, patterns and forms deleted in the history, each restorable as an unsaved change.
 export function deletedView(app, root) {
-  const page = el('div', { className: 've-form-page' }, head(app, 'Website', 'Gelöschte Inhalte', 'Seiten, Einträge, Muster und Formulare, die gelöscht wurden. „Zurückholen“ legt eines wieder an, so wie es zuletzt gespeichert war; erst mit „Speichern“ ist es wieder da.'));
+  const page = el('div', { className: 've-form-page' }, head(app, t('site'), t('deleted'), t('deleted.lead')));
   root.replaceChildren(page);
-  if (!app.can('content')) { page.append(card(null, 'Nur Administratoren und Redakteure holen gelöschte Inhalte zurück.')); return { reveal() {} }; }
-  const list = card(null, null, el('p', { className: 've-hint' }, 'Wird gesucht …'));
+  if (!app.can('content')) { page.append(card(null, t('deleted.notAllowed'))); return { reveal() {} }; }
+  const list = card(null, null, el('p', { className: 've-hint' }, t('searching')));
   page.append(list);
   const load = (limit) => app.findDeleted(limit).then(({ entries, searched, more }) => {
     list.replaceChildren(
-      el('p', { className: 've-hint' }, `Durchsucht: die letzten ${searched} gespeicherten Änderungen an Inhalten.`),
+      el('p', { className: 've-hint' }, t('deleted.searched', { count: searched })),
       entries.length ? el('ul', { className: 've-people' }, ...entries.map((e) => el('li', {},
-        el('div', {}, el('strong', {}, `${e.kindName} „${e.title}“`), el('small', {}, `Gelöscht am ${dateTime(e.deleted.date)} von ${e.deleted.author}${e.language ? ` · ${e.language}` : ''}`)),
-        app.button('Zurückholen', `${e.kindName} „${e.title}“ zurückholen`, () => app.restoreDeleted(e), 've-tool'))))
-        : el('p', {}, 'Keine gelöschten Inhalte gefunden.'),
-      ...(more ? [el('div', { className: 've-actions-row' }, app.button('Weiter zurück suchen', null, () => { list.replaceChildren(el('p', { className: 've-hint' }, 'Wird gesucht …')); load(100); }, 've-tool'))] : []));
-  }, (e) => { list.replaceChildren(el('p', { className: 've-error', role: 'alert' }, `Gelöschte Inhalte konnten nicht geladen werden: ${e.message}`)); });
+        el('div', {}, el('strong', {}, t('deleted.entry', { kind: e.kindName, title: e.title })), el('small', {}, `${t('deleted.when', { date: dateTime(e.deleted.date), author: e.deleted.author })}${e.language ? ` · ${e.language}` : ''}`)),
+        app.button(t('deleted.restore'), t('deleted.restoreTitle', { kind: e.kindName, title: e.title }), () => app.restoreDeleted(e), 've-tool'))))
+        : el('p', {}, t('deleted.none')),
+      ...(more ? [el('div', { className: 've-actions-row' }, app.button(t('deleted.searchMore'), null, () => { list.replaceChildren(el('p', { className: 've-hint' }, t('searching'))); load(100); }, 've-tool'))] : []));
+  }, (e) => { list.replaceChildren(el('p', { className: 've-error', role: 'alert' }, t('deleted.failed', { message: e.message }))); });
   load(30);
   return { reveal() {} };
 }
@@ -320,16 +325,16 @@ export function deletedView(app, root) {
 // What visitors sent through the site's forms (gateway/submissions.js): read, download as CSV,
 // delete. Like users, a deletion is stored at once.
 export function submissionsView(app, root) {
-  const page = el('div', { className: 've-form-page' }, head(app, 'Website', 'Einsendungen', 'Was Besucher über die Formulare der Website gesendet haben, neueste zuerst. Löschen gilt sofort und endgültig, ohne „Speichern“.'));
+  const page = el('div', { className: 've-form-page' }, head(app, t('site'), t('submissions'), t('submissions.lead')));
   root.replaceChildren(page);
-  if (!app.can('content')) { page.append(card(null, 'Nur Administratoren und Redakteure sehen Einsendungen.')); return { reveal() {} }; }
-  const list = el('div', {}, card(null, null, el('p', { className: 've-hint' }, 'Wird geladen …')));
+  if (!app.can('content')) { page.append(card(null, t('submissions.notAllowed'))); return { reveal() {} }; }
+  const list = el('div', {}, card(null, null, el('p', { className: 've-hint' }, t('loading'))));
   page.append(list);
   const text = (value) => [value].flat().join(', ');
   const download = (form) => {
     const names = [...new Set(form.submissions.flatMap((s) => Object.keys(s.fields)))];
     const cell = (value) => `"${String(value).replace(/"/g, '""')}"`;
-    const rows = [['Eingegangen', ...names], ...form.submissions.map((s) => [s.received_at, ...names.map((n) => text(s.fields[n] ?? ''))])];
+    const rows = [[t('submissions.received'), ...names], ...form.submissions.map((s) => [s.received_at, ...names.map((n) => text(s.fields[n] ?? ''))])];
     // The byte order mark makes Excel read the file as UTF-8.
     const blob = new Blob([`﻿${rows.map((r) => r.map(cell).join(';')).join('\r\n')}\r\n`], { type: 'text/csv;charset=utf-8' });
     const link = el('a', { href: URL.createObjectURL(blob), download: `${form.slug}.csv` });
@@ -337,26 +342,26 @@ export function submissionsView(app, root) {
     URL.revokeObjectURL(link.href);
   };
   const draw = (forms) => {
-    list.replaceChildren(...(forms.length ? forms.map((form) => card(`${form.title} (${form.submissions.length})`, form.submissions.length ? null : 'Noch keine Einsendungen.',
-      form.submissions.length ? el('div', { className: 've-actions-row' }, app.button('Als Tabelle herunterladen (CSV)', `Einsendungen „${form.title}“ als CSV herunterladen`, () => download(form), 've-tool')) : null,
+    list.replaceChildren(...(forms.length ? forms.map((form) => card(`${form.title} (${form.submissions.length})`, form.submissions.length ? null : t('submissions.none'),
+      form.submissions.length ? el('div', { className: 've-actions-row' }, app.button(t('submissions.download'), t('submissions.downloadTitle', { title: form.title }), () => download(form), 've-tool')) : null,
       el('ul', { className: 've-people ve-submissions' }, ...form.submissions.map((s) => el('li', {},
         el('div', {}, el('strong', {}, dateTime(s.received_at)), ...Object.entries(s.fields).map(([name, value]) => el('small', {}, `${name}: ${text(value)}`))),
-        app.button('Löschen', `Einsendung vom ${dateTime(s.received_at)} löschen`, async () => {
-          if (await app.confirmDialog('Einsendung löschen?', 'Sie wird endgültig gelöscht und lässt sich nicht wiederherstellen.', 'Löschen')) load({ method: 'POST', body: { delete: [s.id] } });
+        app.button(t('delete'), t('submissions.deleteThing', { date: dateTime(s.received_at) }), async () => {
+          if (await app.confirmDialog(t('submissions.deleteTitle'), t('submissions.deleteText'), t('delete'))) load({ method: 'POST', body: { delete: [s.id] } });
         }, 've-tool ve-danger'))))))
-      : [card(null, 'Die Website hat keine Formulare.')]));
+      : [card(null, t('submissions.noForms'))]));
   };
-  const load = (options) => app.api('/submissions', options).then(({ forms }) => { draw(forms); if (options) app.toast('Einsendung gelöscht.'); },
+  const load = (options) => app.api('/submissions', options).then(({ forms }) => { draw(forms); if (options) app.toast(t('submissions.deleted')); },
     (e) => { list.replaceChildren(card(null, null, el('p', { className: 've-error', role: 'alert' }, e.message))); });
   load();
   return { reveal() {} };
 }
 
 export function usersView(app, root) {
-  const page = el('div', { className: 've-form-page' }, head(app, 'Website', 'Benutzer', 'Wer die Website bearbeiten darf. Änderungen an Benutzern gelten sofort, ohne „Speichern“.'));
+  const page = el('div', { className: 've-form-page' }, head(app, t('site'), t('users'), t('users.lead')));
   root.replaceChildren(page);
-  if (app.me.role !== 'administrator') { page.append(card(null, 'Nur Administratoren verwalten Benutzer.')); return { reveal() {} }; }
-  const listCard = card('Alle Benutzer', null, el('p', { className: 've-hint' }, 'Wird geladen …'));
+  if (app.me.role !== 'administrator') { page.append(card(null, t('users.notAllowed'))); return { reveal() {} }; }
+  const listCard = card(t('users.all'), null, el('p', { className: 've-hint' }, t('loading')));
   const formCard = el('section', { className: 've-card' });
   page.append(listCard, formCard);
   let users = [], roles = {};
@@ -367,22 +372,22 @@ export function usersView(app, root) {
     try { ({ users } = await app.api('/users', { method: 'POST', body })); drawList(); return true; } catch (e) { error.textContent = e.message; return false; }
   };
   const drawList = () => {
-    listCard.replaceChildren(el('h2', {}, 'Alle Benutzer'), el('ul', { className: 've-people' }, ...users.map((u) => el('li', {},
-      el('div', {}, el('strong', {}, u.name || u.email), el('small', {}, `${u.email} · ${roles[u.role]?.label ?? u.role}${u.two_factor ? ' · Zwei-Faktor' : ''}${u.email === app.me.email ? ' · Sie selbst' : ''}`)),
+    listCard.replaceChildren(el('h2', {}, t('users.all')), el('ul', { className: 've-people' }, ...users.map((u) => el('li', {},
+      el('div', {}, el('strong', {}, u.name || u.email), el('small', {}, `${u.email} · ${roleName(u.role, roles)}${u.two_factor ? ` · ${t('users.twoFactor')}` : ''}${u.email === app.me.email ? ` · ${t('users.you')}` : ''}`)),
       el('div', { className: 've-actions-row' },
-        app.button('Bearbeiten', `${u.name || u.email} bearbeiten`, () => drawForm(u), 've-tool'),
-        app.button('Überall abmelden', `${u.name || u.email} auf allen Geräten abmelden`, async () => {
+        app.button(t('edit'), t('editThing', { name: u.name || u.email }), () => drawForm(u), 've-tool'),
+        app.button(t('signOutEverywhere'), t('users.signOutTitle', { name: u.name || u.email }), async () => {
           const self = u.email === app.me.email;
-          if (!(await app.confirmDialog('Überall abmelden?', self ? 'Sie werden auf allen Geräten abgemeldet, auch hier.' : `${u.name || u.email} wird auf allen Geräten abgemeldet und muss sich neu anmelden.`, 'Abmelden'))) return;
+          if (!(await app.confirmDialog(t('signOutEverywhere.title'), self ? t('signOutEverywhere.self') : t('users.signOutText', { name: u.name || u.email }), t('signOut')))) return;
           if (self) app.signOut({ everywhere: true });
-          else if (await send({ action: 'signout', email: u.email })) app.toast(`${u.name || u.email} ist überall abgemeldet.`);
+          else if (await send({ action: 'signout', email: u.email })) app.toast(t('users.signedOut', { name: u.name || u.email }));
         }, 've-tool'),
-        u.two_factor && u.email !== app.me.email ? app.button('Zwei-Faktor zurücksetzen', `Zwei-Faktor-Anmeldung von ${u.name || u.email} zurücksetzen`, async () => {
-          if (!(await app.confirmDialog('Zwei-Faktor-Anmeldung zurücksetzen?', `Zum Beispiel, wenn ${u.name || u.email} das Telefon und die Wiederherstellungscodes verloren hat. Die Person meldet sich danach nur mit dem Passwort an und kann die Zwei-Faktor-Anmeldung neu einrichten.`, 'Zurücksetzen'))) return;
-          if (await send({ action: 'two-factor-off', email: u.email })) app.toast('Zwei-Faktor-Anmeldung zurückgesetzt.');
+        u.two_factor && u.email !== app.me.email ? app.button(t('users.twoFactorReset'), t('users.twoFactorResetTitle', { name: u.name || u.email }), async () => {
+          if (!(await app.confirmDialog(t('users.twoFactorResetQuestion'), t('users.twoFactorResetText', { name: u.name || u.email }), t('reset')))) return;
+          if (await send({ action: 'two-factor-off', email: u.email })) app.toast(t('users.twoFactorResetDone'));
         }, 've-tool') : null,
-        u.email === app.me.email ? null : app.button('Löschen', `${u.name || u.email} löschen`, async () => {
-          if (await app.confirmDialog('Benutzer löschen?', `${u.name || u.email} kann die Website danach nicht mehr bearbeiten.`, 'Löschen')) send({ action: 'delete', email: u.email });
+        u.email === app.me.email ? null : app.button(t('delete'), t('deleteThing', { name: u.name || u.email }), async () => {
+          if (await app.confirmDialog(t('users.deleteTitle'), t('users.deleteText', { name: u.name || u.email }), t('delete'))) send({ action: 'delete', email: u.email });
         }, 've-tool ve-danger'))))));
   };
   const drawForm = (user = null) => {
@@ -391,21 +396,21 @@ export function usersView(app, root) {
     const name = el('input', { id: 've-user-name', type: 'text', value: user?.name ?? '', required: true, autocomplete: 'off' });
     const email = el('input', { id: 've-user-email', type: 'email', value: user?.email ?? '', required: true, readOnly: !!user, autocomplete: 'off' });
     const password = el('input', { id: 've-user-password', type: 'password', minLength: 10, required: !user, autocomplete: 'new-password' });
-    const choices = el('div', { className: 've-choices', role: 'radiogroup', 'aria-label': 'Rolle' }, ...Object.entries(roles).map(([id, r]) => el('label', { className: 've-choice' },
+    const choices = el('div', { className: 've-choices', role: 'radiogroup', 'aria-label': t('users.role') }, ...Object.keys(roles).map((id) => el('label', { className: 've-choice' },
       el('input', { type: 'radio', name: 've-role', value: id, checked: (user?.role ?? 'editor') === id }),
-      el('span', {}, el('strong', {}, r.label), el('small', {}, ROLE_HELP[id] ?? '')))));
-    form.append(field('Name', name), field('E-Mail-Adresse', email, user ? 'Die Adresse lässt sich nicht ändern.' : 'Mit dieser Adresse meldet sich die Person an.'),
-      el('div', { className: 've-control' }, el('span', { className: 've-label' }, 'Was darf die Person?'), choices),
-      field('Passwort', password, user ? 'Leer lassen, um es nicht zu ändern. Sonst mindestens 10 Zeichen.' : 'Mindestens 10 Zeichen. Teilen Sie es der Person persönlich mit.'),
+      el('span', {}, el('strong', {}, roleName(id, roles)), el('small', {}, roleHelp(id) ?? '')))));
+    form.append(field(t('name'), name), field(t('users.email'), email, user ? t('users.emailFixed') : t('users.emailNew')),
+      el('div', { className: 've-control' }, el('span', { className: 've-label' }, t('users.mayDo')), choices),
+      field(t('password'), password, user ? t('users.passwordKeep') : t('users.passwordNew')),
       error,
-      el('div', { className: 've-actions-row' }, el('button', { type: 'submit', className: 've-primary' }, user ? 'Änderungen übernehmen' : 'Benutzer anlegen'),
-        user ? app.button('Abbrechen', null, () => drawForm(), 've-tool') : null));
+      el('div', { className: 've-actions-row' }, el('button', { type: 'submit', className: 've-primary' }, user ? t('users.apply') : t('users.create')),
+        user ? app.button(t('cancel'), null, () => drawForm(), 've-tool') : null));
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const body = { email: email.value, name: name.value, role: form.querySelector('input[name=ve-role]:checked')?.value, ...(password.value && { password: password.value }) };
-      if (await send(body)) { app.toast(user ? 'Benutzer geändert.' : 'Benutzer angelegt.'); drawForm(); }
+      if (await send(body)) { app.toast(user ? t('users.changed') : t('users.created')); drawForm(); }
     });
-    formCard.replaceChildren(el('h2', {}, user ? `${user.name || user.email} bearbeiten` : 'Neuen Benutzer anlegen'), form);
+    formCard.replaceChildren(el('h2', {}, user ? t('editThing', { name: user.name || user.email }) : t('users.new')), form);
     if (user) { formCard.scrollIntoView({ behavior: 'smooth', block: 'start' }); name.focus({ preventScroll: true }); }
   };
   app.api('/users').then((result) => { ({ users, roles } = result); drawList(); drawForm(); }, (e) => { listCard.replaceChildren(el('p', { className: 've-error' }, e.message)); });
@@ -414,7 +419,7 @@ export function usersView(app, root) {
 
 // "Mein Konto", for every role: one's own name and password, and signing out on all devices.
 export function accountView(app, root) {
-  const page = el('div', { className: 've-form-page' }, head(app, 'Konto', 'Mein Konto', `Angemeldet als ${app.me.email}.`));
+  const page = el('div', { className: 've-form-page' }, head(app, t('account.kind'), t('account'), t('account.lead', { email: app.me.email })));
   root.replaceChildren(page);
   const field = (label, input, hint) => el('div', { className: 've-control' }, el('label', { className: 've-label', htmlFor: input.id }, label), hint ? el('small', { className: 've-hint' }, hint) : null, input);
   const form = (card, inputs, submit, onSubmit) => {
@@ -430,27 +435,27 @@ export function accountView(app, root) {
   };
 
   const name = el('input', { id: 've-account-name', type: 'text', value: app.me.name ?? '', required: true, maxLength: 100, autocomplete: 'name' });
-  const nameCard = form(card('Name', 'So erscheinen Sie bei Ihren Änderungen.'), [field('Name', name)], 'Namen speichern', async () => {
+  const nameCard = form(card(t('name'), t('account.nameLead')), [field(t('name'), name)], t('account.saveName'), async () => {
     const result = await app.api('/me', { method: 'POST', body: { name: name.value } });
     app.me.name = result.name;
     document.querySelector('#ve-user').textContent = result.name;
-    app.toast('Name gespeichert.');
+    app.toast(t('account.nameSaved'));
   });
 
   const current = el('input', { id: 've-account-current', type: 'password', required: true, autocomplete: 'current-password' });
   const next = el('input', { id: 've-account-new', type: 'password', required: true, minLength: 10, autocomplete: 'new-password' });
   const repeat = el('input', { id: 've-account-repeat', type: 'password', required: true, minLength: 10, autocomplete: 'new-password' });
-  const passwordCard = form(card('Passwort ändern', 'Danach sind Sie auf anderen Geräten abgemeldet, hier nicht.'),
-    [field('Bisheriges Passwort', current), field('Neues Passwort', next, 'Mindestens 10 Zeichen.'), field('Neues Passwort wiederholen', repeat)], 'Passwort ändern', async () => {
-      if (next.value !== repeat.value) throw new Error('Die beiden neuen Passwörter sind nicht gleich.');
+  const passwordCard = form(card(t('account.password'), t('account.passwordLead')),
+    [field(t('account.currentPassword'), current), field(t('password.new'), next, t('password.min')), field(t('password.repeat'), repeat)], t('account.password'), async () => {
+      if (next.value !== repeat.value) throw new Error(t('account.passwordsDiffer'));
       await app.api('/me', { method: 'POST', body: { password: next.value, current_password: current.value } });
       for (const input of [current, next, repeat]) input.value = '';
-      app.toast('Passwort geändert.');
+      app.toast(t('account.passwordChanged'));
     });
 
-  const devices = card('Auf allen Geräten abmelden', 'Zum Beispiel, wenn Sie sich an einem fremden Computer nicht abgemeldet haben. Danach melden Sie sich überall neu an, auch hier.',
-    el('div', { className: 've-actions-row' }, app.button('Überall abmelden', null, async () => {
-      if (await app.confirmDialog('Überall abmelden?', 'Sie werden auf allen Geräten abgemeldet, auch hier.', 'Abmelden')) app.signOut({ everywhere: true });
+  const devices = card(t('account.devices'), t('account.devicesLead'),
+    el('div', { className: 've-actions-row' }, app.button(t('signOutEverywhere'), null, async () => {
+      if (await app.confirmDialog(t('signOutEverywhere.title'), t('signOutEverywhere.self'), t('signOut'))) app.signOut({ everywhere: true });
     }, 've-tool')));
   page.append(nameCard, passwordCard, twoFactorCard(app), devices);
   return { reveal() {} };
@@ -459,14 +464,14 @@ export function accountView(app, root) {
 // "Zwei-Faktor-Anmeldung" in "Mein Konto": off, it offers to set it up; on, new recovery codes and
 // switching it off (not where the site requires it), each with the password.
 function twoFactorCard(app) {
-  const section = card('Zwei-Faktor-Anmeldung', null);
+  const section = card(t('twoFactor'), null);
   const body = el('div');
   section.append(body);
   const withPassword = (label, action, then) => {
     const password = el('input', { id: `ve-2fa-${action}`, type: 'password', autocomplete: 'current-password', required: true });
     const error = el('p', { className: 've-error', role: 'alert' });
-    const form = el('form', { className: 've-form ve-user-form' }, el('div', { className: 've-control' }, el('label', { className: 've-label', htmlFor: password.id }, 'Ihr Passwort zur Bestätigung'), password), error,
-      el('div', { className: 've-actions-row' }, el('button', { type: 'submit', className: 've-primary' }, label), app.button('Abbrechen', null, draw, 've-tool')));
+    const form = el('form', { className: 've-form ve-user-form' }, el('div', { className: 've-control' }, el('label', { className: 've-label', htmlFor: password.id }, t('twoFactor.confirmPassword')), password), error,
+      el('div', { className: 've-actions-row' }, el('button', { type: 'submit', className: 've-primary' }, label), app.button(t('cancel'), null, draw, 've-tool')));
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       try { then(await app.api('/me/two-factor', { method: 'POST', body: { action, current_password: password.value } })); } catch (e) { error.textContent = e.message; }
@@ -476,18 +481,18 @@ function twoFactorCard(app) {
   };
   const draw = () => {
     if (!app.me.two_factor) {
-      body.replaceChildren(el('p', { className: 've-hint' }, 'Aus. Mit der Zwei-Faktor-Anmeldung braucht die Anmeldung außer dem Passwort einen Code aus einer App auf Ihrem Telefon. Wer nur Ihr Passwort kennt, kommt dann nicht hinein.'), el('div'));
-      setupTwoFactor(body.lastChild, { api: app.api, siteName: app.site.name, onDone: (result) => { Object.assign(app.me, { two_factor: true, recovery_left: result.recovery_codes.length }); app.toast('Zwei-Faktor-Anmeldung eingeschaltet.'); draw(); } });
+      body.replaceChildren(el('p', { className: 've-hint' }, t('twoFactor.off')), el('div'));
+      setupTwoFactor(body.lastChild, { api: app.api, siteName: app.site.name, onDone: (result) => { Object.assign(app.me, { two_factor: true, recovery_left: result.recovery_codes.length }); app.toast(t('twoFactor.enabled')); draw(); } });
       return;
     }
     body.replaceChildren(
-      el('p', { className: 've-hint' }, `An. Noch ${app.me.recovery_left ?? 0} von 10 Wiederherstellungscodes übrig.`),
+      el('p', { className: 've-hint' }, t('twoFactor.on', { count: app.me.recovery_left ?? 0 })),
       el('div', { className: 've-actions-row' },
-        app.button('Neue Wiederherstellungscodes', null, () => withPassword('Neue Codes erzeugen', 'recovery', (result) => {
+        app.button(t('twoFactor.newCodes'), null, () => withPassword(t('twoFactor.makeCodes'), 'recovery', (result) => {
           app.me.recovery_left = result.recovery_codes.length;
-          body.replaceChildren(el('p', { className: 've-hint' }, 'Die alten Codes gelten nicht mehr.'), recoveryCodes(result.recovery_codes, app.site.name, draw, 'Fertig'));
+          body.replaceChildren(el('p', { className: 've-hint' }, t('twoFactor.oldCodes')), recoveryCodes(result.recovery_codes, app.site.name, draw, t('done')));
         }), 've-tool'),
-        app.me.two_factor_mandatory ? null : app.button('Ausschalten', null, () => withPassword('Ausschalten', 'disable', () => { Object.assign(app.me, { two_factor: false, recovery_left: null }); app.toast('Zwei-Faktor-Anmeldung ausgeschaltet.'); draw(); }), 've-tool ve-danger')));
+        app.me.two_factor_mandatory ? null : app.button(t('twoFactor.disable'), null, () => withPassword(t('twoFactor.disable'), 'disable', () => { Object.assign(app.me, { two_factor: false, recovery_left: null }); app.toast(t('twoFactor.disabled')); draw(); }), 've-tool ve-danger')));
   };
   draw();
   return section;

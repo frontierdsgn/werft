@@ -112,6 +112,12 @@ one, and unsaved changes, undo and "Speichern" carry over between them.
   replaces those with the kept changes, as unsaved changes. New images too large for the browser's
   storage are not kept, and the message says so. "Abmelden" removes them from the browser.
 
+The admin's texts live in [admin/locales/](admin/locales/), German ([de.js](admin/locales/de.js))
+first and the default; code shows them with `t('key', values)` from [i18n.js](admin/i18n.js), and
+the page's static texts carry `data-t` attributes. A new text gets a key there;
+[test/locales.test.js](test/locales.test.js) fails on a key without a text, a text no code uses and
+a locale that lacks a key.
+
 How "Auf der Seite" finds the content on the page ([visual-map.js](admin/visual-map.js)): it renders
 the page a second time with each text wrapped in invisible private-use markers and keeps a marker
 only where the page without markers is unchanged, so a value the theme compares or slugifies is

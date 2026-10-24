@@ -2,6 +2,7 @@
 // renders, and its content is turned back into Markdown on every change. Only what the CMS's
 // rich-text field offers survives: paragraphs, line breaks, bold, italic, links, headings, lists.
 import { markdown } from 'werft';
+import { t } from './i18n.js';
 
 const BLOCKS = new Set(['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'blockquote', 'section', 'article']);
 
@@ -66,17 +67,17 @@ export function formatBar(doc, onChange) {
   const bar = document.createElement('div');
   bar.className = 've-format';
   const commands = [
-    ['Fett', 'Markierten Text fett', () => doc.execCommand('bold'), 've-fmt-bold'],
-    ['Kursiv', 'Markierten Text kursiv', () => doc.execCommand('italic'), 've-fmt-italic'],
-    ['Link', 'Markierten Text verlinken', () => {
-      const url = prompt('Adresse des Links (z. B. kontakt.html oder https://…)');
+    [t('format.bold'), t('format.boldTitle'), () => doc.execCommand('bold'), 've-fmt-bold'],
+    [t('format.italic'), t('format.italicTitle'), () => doc.execCommand('italic'), 've-fmt-italic'],
+    [t('format.link'), t('format.linkTitle'), () => {
+      const url = prompt(t('format.linkPrompt'));
       if (url) doc.execCommand('createLink', false, url);
     }],
-    ['Überschrift', 'Zwischenüberschrift', () => doc.execCommand('formatBlock', false, 'h2')],
-    ['Kleine Überschrift', 'Kleine Überschrift', () => doc.execCommand('formatBlock', false, 'h3')],
-    ['Normaler Text', 'Normaler Absatz', () => doc.execCommand('formatBlock', false, 'p')],
-    ['• Liste', 'Aufzählung', () => doc.execCommand('insertUnorderedList')],
-    ['1. Liste', 'Nummerierte Liste', () => doc.execCommand('insertOrderedList')],
+    [t('format.heading'), t('format.headingTitle'), () => doc.execCommand('formatBlock', false, 'h2')],
+    [t('format.subheading'), t('format.subheadingTitle'), () => doc.execCommand('formatBlock', false, 'h3')],
+    [t('format.paragraph'), t('format.paragraphTitle'), () => doc.execCommand('formatBlock', false, 'p')],
+    [t('format.list'), t('format.listTitle'), () => doc.execCommand('insertUnorderedList')],
+    [t('format.numbered'), t('format.numberedTitle'), () => doc.execCommand('insertOrderedList')],
   ];
   for (const [text, label, run, className] of commands) {
     const button = document.createElement('button');
