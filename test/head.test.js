@@ -133,3 +133,23 @@ test('a page with the slug 404 builds to 404.html, noindex, out of the sitemap, 
   const slash = await built({ base: '/salon' }, files, page);
   assert.equal(slash['salon/.htaccess'], 'ErrorDocument 404 /salon/404.html\n', 'a base path with a leading slash');
 });
+
+test('the site icon appears on every page and in the web manifest', async () => {
+  const files = {
+    'content/settings/site.json': json({ title: 'Salon', icon: 'assets/img/icon.png' }),
+    'content/pages/index.json': json({ title: 'Start' }),
+    'content/en/pages/index.json': json({ title: 'Home' }),
+    'content/news/neu.json': json({ title: 'Neu' }),
+  };
+  const result = await build({ site: { languages: ['de', 'en'], mediaDirs: ['assets/img'] }, theme, store: memoryStore(files), now: NOW, media: { 'assets/img/icon.png': { width: 512, height: 512 } } });
+  const out = Object.fromEntries(result.files.map((f) => [f.path, f.text]));
+  const tags = '<link rel="icon" href="assets/img/icon.png" type="image/png" sizes="512x512"><link rel="apple-touch-icon" href="assets/img/icon.png"><link rel="manifest" href="manifest.webmanifest"></head>';
+  assert.ok(out['index.html'].endsWith(tags));
+  assert.ok(out['en/index.html'].endsWith(tags.replace(/href="/g, 'href="../')));
+  assert.ok(out['news/neu.html'].endsWith(tags.replace(/href="/g, 'href="../')));
+  assert.deepEqual(JSON.parse(out['manifest.webmanifest']), { name: 'Salon', start_url: './', display: 'browser', icons: [{ src: 'assets/img/icon.png', sizes: '512x512', type: 'image/png' }] });
+  // Without an icon: no tags and no manifest.
+  const plain = await built({}, { 'content/pages/index.json': json({ title: 'Start' }) });
+  assert.doesNotMatch(plain['index.html'], /icon|manifest/);
+  assert.equal(plain['manifest.webmanifest'], undefined);
+});

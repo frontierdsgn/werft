@@ -194,8 +194,11 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      (`{ title, description, image, type }`) replace what the entry gives; `image` is a media
      path, an `https://` address or a `fields.picture()` value (its `alt` becomes `og:image:alt`),
      e.g. `ctx.head({ description: post.teaser, image: post.image })` in `renderPost` (a post has
-     SEO fields only if its type adds `fields.seo()`). The theme keeps writing `<meta charset>`,
-     the viewport and its assets.
+     SEO fields only if its type adds `fields.seo()`). With the site setting `icon` ("Symbol der
+     Website"), it also writes `<link rel="icon">` (with type and size), `apple-touch-icon` and
+     `<link rel="manifest">` for `manifest.webmanifest`, which the build then writes; the icon is
+     used as uploaded, so a square PNG of 512 × 512 pixels serves every place. The theme keeps
+     writing `<meta charset>`, the viewport and its assets.
 4. **Content**: `content/pages/<slug>.json` (`index` becomes `index.html`), `content/patterns/`,
    `content/forms/` (see [Form submissions](#form-submissions)), `content/<post type>/`, `content/settings/{site,menus,redirects}.json`;
    other languages in `content/<lang>/` (see [Languages](#languages)).
