@@ -161,6 +161,16 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      `date` names the post field that orders posts (default `publish_date`); declare it with
      `fields.date(name, label)`, which stores an ISO date (`2026-11-14`) and shows it in the
      editor's locale (14.11.2026 in a German browser). Older files with "14.11.2026" are read too.
+     Once the site setting `url` is set, the build writes `feed.xml` (RSS 2.0, `en/feed.xml` for a
+     language with posts of its own) with the 20 newest published posts by their publish date
+     (else the date field), leaving out noindex posts: title, link to the post's page (to the home
+     page without `renderPost`), date and the text `postType.feed.description(post, ctx)` returns
+     (with the post's `ctx` as in `renderPost`; default: the post's SEO description), shown as
+     plain text. `postType.feed.title` (text, or
+     a function of the language) replaces the title "<site name>: <post type label>". A site set
+     to "Nicht indexieren" or without public posts gets no feed. The build's `feed.xml` replaces a
+     file of that name from the theme; a theme with its own feed sets `feed: false`, which also
+     leaves out the link.
    - `ctx` offers `settings`, `menu(id)`, `image(src)` (with width and height), `img(image, options)`
      (a responsive `<img>`, see [Images](#images)), `posts()`, `form(slug)`,
      `md()`, `inline()`. `posts()` returns the published posts newest first by their date, posts
@@ -198,8 +208,9 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      (`{ title, description, image, type }`) replace what the entry gives; `image` is a media
      path, an `https://` address or a `fields.picture()` value (its `alt` becomes `og:image:alt`),
      e.g. `ctx.head({ description: post.teaser, image: post.image })` in `renderPost` (a post has
-     SEO fields only if its type adds `fields.seo()`). With the site setting `icon` ("Symbol der
-     Website (Favicon)", set in the default language and used for all), it also writes
+     SEO fields only if its type adds `fields.seo()`). It links the language's feed of posts
+     (see `postType` above). With the site setting `icon` ("Symbol der Website (Favicon)", set in
+     the default language and used for all), it also writes
      `<link rel="icon">` (with its type, and its size for a PNG, JPEG, GIF or WebP),
      `apple-touch-icon` (for a PNG or JPEG) and `<link rel="manifest">` for
      `manifest.webmanifest`, which the build then writes at the site's root; the icon is used as
