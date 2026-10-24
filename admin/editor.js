@@ -1071,12 +1071,14 @@ const DRAFT = draftKey({ site: `${location.origin}${base}`, branch, email: me.em
 // or until the next change, which replaces it.
 let draftOffered = (() => { try { return JSON.parse(localStorage.getItem(DRAFT)); } catch { return null; } })();
 let keepTimer;
+let signingOut = false; // signing out leaves nothing behind in the browser
 function keepDraft() {
   clearTimeout(keepTimer);
   keepTimer = setTimeout(keepNow, 400);
 }
 function keepNow() {
   clearTimeout(keepTimer);
+  if (signingOut) return;
   if (!isDirty()) { if (!draftOffered) localStorage.removeItem(DRAFT); return; }
   draftOffered = null;
   const pending = [...uploads].filter(([, u]) => !u.saved).map(([path, u]) => ({ path, base64: u.base64, size: media[path] ?? {} }));
@@ -1555,7 +1557,7 @@ const app = {
 // ---- Start ----
 $('#ve-user').textContent = me.name ?? me.email;
 $('#ve-site').textContent = site.name;
-$('#ve-signout').addEventListener('click', () => { signOut(); location.href = './'; });
+$('#ve-signout').addEventListener('click', () => { signingOut = true; localStorage.removeItem(DRAFT); signOut(); location.href = './'; });
 for (const b of document.querySelectorAll('.ve-views button[data-view]')) b.addEventListener('click', () => { if (b.dataset.view !== view) setView(b.dataset.view); });
 $('#ve-app').hidden = false;
 if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'submissions', 'users'].includes(hashOpen)) {

@@ -101,7 +101,7 @@ one, and unsaved changes, undo and "Speichern" carry over between them.
   a closed tab or a crash does not lose them. When the admin opens again on that browser, it offers
   "Wiederherstellen", "Verwerfen" or "Später" and names entries someone saved since; restoring
   replaces those with the kept changes, as unsaved changes. New images too large for the browser's
-  storage are not kept, and the message says so.
+  storage are not kept, and the message says so. "Abmelden" removes them from the browser.
 
 How "Auf der Seite" finds the content on the page ([visual-map.js](admin/visual-map.js)): it renders
 the page a second time with each text wrapped in invisible private-use markers and keeps a marker
