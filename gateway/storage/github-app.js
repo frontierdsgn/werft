@@ -10,6 +10,9 @@
 // githubStorage only needs a function that resolves to { token, committer }. A central service
 // that holds the key and issues tokens per repository can supply the same function.
 import { base64url } from '../auth.js';
+import { messages } from '../messages.js';
+
+const german = messages('de');
 
 const RENEW_BEFORE = 5 * 60 * 1000;
 const encoder = new TextEncoder();
@@ -76,7 +79,7 @@ export function githubApp({ appId, privateKey, owner, repo, api = 'https://api.g
     const { id } = await installation;
     const access = await gh(`/app/installations/${id}/access_tokens`, { method: 'POST', token: signed, body: { repositories: [repo], permissions: { actions: 'write' } } }).catch((e) => {
       if (e.github === 404) installation = null;
-      if (e.github === 422) throw Object.assign(new Error('Die GitHub App hat die Berechtigung „Actions: Read and write“ noch nicht, oder diese Installation hat sie noch nicht bestätigt.'), { permission: true });
+      if (e.github === 422) throw Object.assign(new Error(german('tick.appPermission')), { permission: true, reason: { key: 'tick.appPermission' } });
       throw e;
     });
     return { token: access.token };

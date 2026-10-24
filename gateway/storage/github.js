@@ -7,6 +7,10 @@
 // The committer, if given, makes the commits; the editor is always the author. dispatch() starts a
 // workflow and needs "Actions: Read and write" as well (githubApp: auth.actions()).
 
+import { messages } from '../messages.js';
+
+const german = messages('de');
+
 const decodeBase64 = (text) => Uint8Array.from(atob(text.replace(/\s/g, '')), (c) => c.charCodeAt(0));
 // Text goes into the tree request itself; only other files need a request each.
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -147,18 +151,19 @@ export function githubStorage({ owner, repo, token, auth = async () => ({ token 
     return { sha: created.sha, date: created.committer?.date ?? date, blobs: blobsByPath };
   }
 
-  // Starts a workflow of the repository on `ref` (its trigger workflow_dispatch). A refusal says in
-  // plain German what is missing, for the editor and the tick's answer.
+  // Starts a workflow of the repository on `ref` (its trigger workflow_dispatch). A refusal names
+  // what is missing as `reason`, a key of gateway/messages.js, for the tick's answer in the
+  // admin's language; its message is the German text, for the log.
   async function dispatch(workflow, ref) {
     try {
       await gh(`/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, { method: 'POST', body: { ref }, credentials: auth.actions ?? auth });
     } catch (e) {
-      const reason = e.permission ? e.message
-        : e.github === 403 ? 'Die Berechtigung „Actions: Read and write“ für das Repository fehlt.'
-          : e.github === 404 ? `Den Workflow ${workflow} gibt es im Repository nicht.`
-            : e.github === 422 ? `Der Workflow ${workflow} lässt sich auf ${ref} nicht starten: ihm fehlt der Auslöser workflow_dispatch, oder den Branch ${ref} gibt es nicht.`
+      const reason = e.permission ? e.reason ?? { key: 'tick.actionsPermission' }
+        : e.github === 403 ? { key: 'tick.actionsPermission' }
+          : e.github === 404 ? { key: 'tick.noWorkflow', values: { workflow } }
+            : e.github === 422 ? { key: 'tick.notStartable', values: { workflow, ref } }
               : null;
-      throw reason ? Object.assign(new Error(`Veröffentlichen nach Zeitplan: ${reason}`), { plain: true }) : e;
+      throw reason ? Object.assign(new Error(german('tick.problem', { reason: german(reason.key, reason.values) })), { plain: true, reason }) : e;
     }
   }
 
