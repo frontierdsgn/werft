@@ -53,7 +53,7 @@ test('an HTTP driver rejects when the provider refuses, without the key in the e
   await assert.rejects(mailFromEnv(ENV.resend, { fetch: api.fetch }).send(message), /\(502\)/);
   api.failure = null;
   api.bounce = true;
-  await assert.rejects(mailFromEnv(ENV.cloudflare, { fetch: api.fetch }).send(message), /no recipient accepted the e-mail \(bounced: owner@example.org, team@example.org\)/);
+  await assert.rejects(mailFromEnv(ENV.cloudflare, { fetch: api.fetch }).send(message), /no recipient accepted the e-mail \(2 bounced\)/);
   await assert.rejects(cloudflareMail({ from: FROM, account: KEYS.account, token: KEYS.cloudflare, fetch: () => Promise.reject(new TypeError('fetch failed')) }).send(message), /no answer from the provider \(fetch failed\)/);
   assert.equal(api.requests.length, 1, 'only the bounced e-mail reached the provider');
 });
@@ -159,7 +159,7 @@ test('smtp: rejects a refused password or recipient and a server that does not a
       assert.doesNotMatch(error.message, /wrong-password|AUTH PLAIN/);
       return true;
     });
-    await assert.rejects(driver(server).send(message), /RCPT TO team@example\.org: 550 5\.1\.1/);
+    await assert.rejects(driver(server).send(message), /RCPT TO \(recipient 2 of 2\): 550 5\.1\.1/);
     assert.equal(server.sessions[1].data, null, 'no e-mail when a recipient was refused');
     await assert.rejects(driver(silent, { timeout: 200 }).send(message), /did not answer in time/);
     await assert.rejects(driver(stalled, { timeout: 200 }).send(message), /did not answer in time/, 'a stalled TLS handshake ends too');
@@ -180,7 +180,14 @@ test('smtp: long headers are folded, and international domains go out in punycod
     assert.equal(mail.headers.to, to.slice(0, -1).concat('info@xn--mller-kva.de').join(', '));
     assert.match(mail.headers.date, /^\w{3}, \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} \+0000$/);
     assert.ok(session.data.split('\r\n').every((line) => line.length <= 78), 'no line longer than 78 characters');
-    await assert.rejects(driver(server).send({ to: 'jürgen@example.org', subject: 'S', text: 'T' }), /^Error: E-mail \(smtp\): "jürgen@example\.org" cannot be sent over SMTP/);
+    await assert.rejects(driver(server).send({ to: 'jürgen@example.org', subject: 'S', text: 'T' }), (error) => {
+      assert.match(error.message, /^E-mail \(smtp\): an address has letters such as umlauts before the @/);
+      assert.doesNotMatch(error.message, /jürgen/, 'no address in the log');
+      return true;
+    });
     assert.equal(server.sessions.length, 1, 'refused before connecting');
+    await driver(server).send({ to: 'team@example.org', subject: 'S', text: 'T', replyTo: 'jürgen@example.org' });
+    assert.deepEqual(server.sessions[1].rcptTo, ['<team@example.org>'], 'a reply-to SMTP cannot carry does not stop the e-mail');
+    assert.equal(parseMail(server.sessions[1].data).headers['reply-to'], undefined);
   } finally { server.close(); }
 });

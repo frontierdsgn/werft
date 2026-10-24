@@ -62,12 +62,12 @@ function encodeWords(text) {
 // Short ASCII as it is, anything else in folded encoded words.
 const header = (text) => (ascii(text) && text.length <= 68 ? text : encodeWords(text));
 
-// An address as SMTP without SMTPUTF8 takes it: the domain in punycode, ASCII before the @.
+// An address as SMTP without SMTPUTF8 takes it: the domain in punycode, ASCII before the @; null
+// when it has none.
 function asciiAddress(address) {
   const at = address.lastIndexOf('@');
   const domain = domainToASCII(address.slice(at + 1));
-  if (!ascii(address.slice(0, at)) || !domain) throw new Error(`"${address}" cannot be sent over SMTP (letters such as umlauts before the @, or a domain that is not valid)`);
-  return `${address.slice(0, at)}@${domain}`;
+  return ascii(address.slice(0, at)) && domain ? `${address.slice(0, at)}@${domain}` : null;
 }
 
 // The checked message as an RFC 5322 e-mail, the text base64 encoded, so no line can end the DATA.
@@ -91,7 +91,7 @@ export function smtpMessage({ from, to, replyTo, subject, text }, { id, date = n
 
 // options: { from, host, port (587), secure (TLS from the start; default for port 465), user,
 //   password, tls (more tls.connect options, such as ca), timeout (ms for the whole delivery) }
-export function smtpMail({ from, host, port = 587, secure = Number(port) === 465, user, password, tls: tlsOptions = {}, timeout = 30000 }) {
+export function smtpMail({ from, host, port = 587, secure = Number(port) === 465, user, password, tls: tlsOptions = {}, timeout = 15000 }) {
   if (!host) throw new Error('The smtp mail driver needs a host (WERFT_MAIL_HOST).');
   if (!user !== !password) throw new Error('The smtp mail driver needs both a user and a password (WERFT_MAIL_USER, WERFT_MAIL_KEY), or neither.');
   port = Number(port);
@@ -100,10 +100,12 @@ export function smtpMail({ from, host, port = 587, secure = Number(port) === 465
   const encrypt = (options) => tls.connect({ servername, ...tlsOptions, ...options });
 
   async function deliver(checked) {
-    let message;
-    try {
-      message = { ...checked, from: { ...checked.from, email: asciiAddress(checked.from.email) }, to: checked.to.map(asciiAddress), replyTo: checked.replyTo && asciiAddress(checked.replyTo) };
-    } catch (error) { throw new Error(`E-mail (smtp): ${error.message}.`); }
+    // Errors leave addresses out: they land in the log, and a visitor's address is personal data.
+    const to = checked.to.map(asciiAddress);
+    const sender = asciiAddress(checked.from.email);
+    if (!sender || to.includes(null)) throw new Error('E-mail (smtp): an address has letters such as umlauts before the @, which SMTP cannot send.');
+    // Such a reply-to is left out rather than losing the e-mail.
+    const message = { ...checked, from: { ...checked.from, email: sender }, to, replyTo: checked.replyTo && (asciiAddress(checked.replyTo) ?? undefined) };
     const domain = message.from.email.split('@')[1];
     const id = `${randomUUID()}@${domain}`;
     let socket = secure ? encrypt({ host, port }) : net.connect({ host, port });
@@ -141,7 +143,7 @@ export function smtpMail({ from, host, port = 587, secure = Number(port) === 465
         } else throw new Error('the server offers neither AUTH PLAIN nor AUTH LOGIN');
       }
       await command(`MAIL FROM:<${message.from.email}>`, 'MAIL FROM', 250);
-      for (const to of message.to) await command(`RCPT TO:<${to}>`, `RCPT TO ${to}`, 250, 251);
+      for (const [i, address] of message.to.entries()) await command(`RCPT TO:<${address}>`, `RCPT TO (recipient ${i + 1} of ${message.to.length})`, 250, 251);
       await command('DATA', 'DATA', 354);
       await command(`${smtpMessage(message, { id })}.`, 'DATA', 250);
       socket.write('QUIT\r\n');

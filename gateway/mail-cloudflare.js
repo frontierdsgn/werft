@@ -18,8 +18,9 @@ export function cloudflareMail({ from, account, token, fetch = (...args) => glob
       const result = answer.result ?? {};
       // Cloudflare answers 200 even when every recipient bounced at once.
       if (!result.delivered?.length && !result.queued?.length) {
-        const refused = [['bounced', result.permanent_bounces], ['suppressed', result.suppressed_recipients]].filter(([, list]) => list?.length).map(([what, list]) => `${what}: ${list.join(', ')}`);
-        throw new Error(`E-mail (cloudflare): no recipient accepted the e-mail${refused.length ? ` (${refused.join('; ')})` : ''}.`);
+        // Counts, not addresses: the error lands in the log.
+        const refused = [['bounced', result.permanent_bounces], ['suppressed', result.suppressed_recipients]].filter(([, list]) => list?.length).map(([what, list]) => `${list.length} ${what}`);
+        throw new Error(`E-mail (cloudflare): no recipient accepted the e-mail${refused.length ? ` (${refused.join(', ')})` : ''}.`);
       }
       return { id: result.message_id };
     },

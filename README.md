@@ -625,7 +625,9 @@ a secret. What each provider costs (as of October 2026; check its pricing page):
   and 3,000 a month), paid plans above it.
 - `smtp`: whatever the mail server's provider charges. werft always encrypts: port 465 speaks TLS
   from the start, any other port must offer STARTTLS, and the server's certificate must be valid;
-  it never sends the password unencrypted.
+  it never sends the password unencrypted. Domains with umlauts go out in punycode; an address with
+  umlauts before the @ cannot go over SMTP, so such a recipient fails the e-mail and such a
+  reply-to is left out.
 
 The sending domain (the one in `WERFT_MAIL_FROM`) has to prove it may send, or the e-mails land in
 spam: an SPF and a DKIM record, which the provider names when the domain is added there, and a
