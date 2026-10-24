@@ -38,9 +38,10 @@ export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site
 
 // options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs, languages? },
 //   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?(),
-//   turnstileSecret? (forms need Cloudflare Turnstile), fetch? (for Turnstile) }
+//   turnstileSecret? (forms need Cloudflare Turnstile), fetch? (for Turnstile),
+//   mail? (an e-mail driver from mail.js; without it the gateway sends no e-mail) }
 export function createGateway(options) {
-  const { storage, secret, branch = 'main', site, onCommit, onTick } = options;
+  const { storage, secret, branch = 'main', site, onCommit, onTick, mail = null } = options;
   const now = options.now ?? (() => Date.now());
   if (!secret || secret.length < 32) throw new Error('WERFT_SECRET must be set to at least 32 characters.');
 
@@ -294,7 +295,7 @@ export function createGateway(options) {
       if (path === '/tick' && options.tickKey && url.searchParams.get('key')
         && (await sha256(url.searchParams.get('key'))) === (await sha256(options.tickKey))) return await tick(url);
       if (path.startsWith('/forms/')) return await forms.receive(request, url, decodeURIComponent(path.slice(7)));
-      if (path === '/status') return json({ ok: true, storage: storage.kind, branch, has_users: (await loadUsers()).users.length > 0 });
+      if (path === '/status') return json({ ok: true, storage: storage.kind, branch, has_users: (await loadUsers()).users.length > 0, mail: !!mail });
       const user = await authenticate(request);
       if (!user) return error(401, 'Bitte anmelden.');
       if (path === '/tick') return await tick(url);
