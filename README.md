@@ -226,7 +226,7 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      holds no more than its defaults; the address only with a street or a city. A language's
      settings can change single values (another city, other hours). `organization({ types })`
      offers schema.org types of the theme's choice instead, e.g.
-     `[{ label: 'Friseursalon', value: 'HairSalon' }]`. Stored as `organization: { type, name,
+     `[{ label: 'Friseursalon', value: 'HairSalon' }]` (or plain names like `'HairSalon'`). Stored as `organization: { type, name,
      street, postal_code, city, country, phone, email, hours: [{ from: 'Mo', to: 'Fr', opens:
      '09:00', closes: '18:00' }] }` (days `Mo` … `So`, `to` empty for a single day; times like
      `09:00` or `9.30`, `24:00` for midnight; a line werft cannot read is left out), so a theme

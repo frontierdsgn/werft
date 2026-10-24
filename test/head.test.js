@@ -278,4 +278,7 @@ test('ctx.head() writes the organization the site settings describe as JSON-LD o
   assert.deepEqual(jsonLd(typed['index.html']), { '@context': 'https://schema.org', '@type': 'Organization', name: 'Salon', telephone: '1' });
   const unknown = await built({}, { ...files, 'content/settings/site.json': json({ title: 'Salon', organization: { type: 'Bakery', phone: '1' } }) }, salon);
   assert.equal(jsonLd(unknown['index.html'])['@type'], 'HairSalon', 'a type the theme does not offer becomes its first');
+  const named = { ...theme, settingsFields: [fields.organization({ types: ['Dentist', 'Organization'] })] };
+  assert.equal(jsonLd((await built({}, { ...files, 'content/settings/site.json': json({ title: 'Praxis', organization: { type: 'Dentist', phone: '1' } }) }, named))['index.html'])['@type'], 'Dentist', 'types as plain names');
+  assert.deepEqual(fields.organization({ types: [] }).fields[0].options.map((o) => o.value), ['LocalBusiness', 'Organization'], 'no types: the default kinds');
 });
