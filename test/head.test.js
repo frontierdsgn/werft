@@ -231,3 +231,33 @@ test('the build writes an RSS feed of the newest posts per language, and ctx.hea
     assert.equal(link(none['index.html']), undefined, why);
   }
 });
+
+test('ctx.head() writes the organization the site settings describe as JSON-LD on the home page', async () => {
+  const { fields } = await import('../lib/index.js');
+  const withOrg = { ...theme, settingsFields: [fields.organization()] };
+  const files = {
+    'content/settings/site.json': json({
+      title: 'Salon', url: 'https://salon.example/', icon: 'assets/img/icon.png',
+      organization: { type: 'LocalBusiness', street: 'Am Fluss 1', postal_code: '12345', city: 'Ort', country: 'DE', phone: '0123 456', email: '', hours: [
+        { days: 'Montag bis Freitag', opens: '09:00', closes: '18:00' }, { days: 'Samstag', opens: '10:00', closes: '</script>' }, { days: 'Sonntag', opens: '', closes: '' },
+      ] },
+    }),
+    'content/pages/index.json': json({ title: 'Start' }),
+    'content/pages/kontakt.json': json({ title: 'Kontakt' }),
+  };
+  const out = await built({}, files, withOrg);
+  const script = out['index.html'].match(/<script type="application\/ld\+json">(.*?)<\/script>/)[1];
+  assert.doesNotMatch(script, /<\//, 'no text ends the script early');
+  assert.deepEqual(JSON.parse(script), {
+    '@context': 'https://schema.org', '@type': 'LocalBusiness', name: 'Salon', url: 'https://salon.example/',
+    logo: 'https://salon.example/assets/img/icon.png', telephone: '0123 456',
+    address: { '@type': 'PostalAddress', streetAddress: 'Am Fluss 1', postalCode: '12345', addressLocality: 'Ort', addressCountry: 'DE' },
+    openingHoursSpecification: [
+      { '@type': 'OpeningHoursSpecification', dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'], opens: '09:00', closes: '18:00' },
+      { '@type': 'OpeningHoursSpecification', dayOfWeek: ['Saturday'], opens: '10:00', closes: '</script>' },
+    ],
+  });
+  assert.doesNotMatch(out['kontakt.html'], /ld\+json/, 'only on the home page');
+  // Without the field in the theme, the settings are not read.
+  assert.doesNotMatch((await built({}, files))['index.html'], /ld\+json/);
+});

@@ -218,6 +218,11 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      tags or `manifest.webmanifest` leaves the setting empty, since the build's manifest replaces
      a file of that name. The theme keeps
      writing `<meta charset>`, the viewport and its assets.
+   - Structured data: with `fields.organization()` in `settingsFields`, the site settings get
+     "Firma, Adresse und Öffnungszeiten für Suchmaschinen" (kind, name, address, phone, e-mail,
+     opening hours), and `ctx.head()` writes them on the home page as JSON-LD (schema.org
+     `LocalBusiness` or `Organization`, with the site's address, icon and share image), which
+     search engines read for their results.
 4. **Content**: `content/pages/<slug>.json` (`index` becomes `index.html`), `content/patterns/`,
    `content/forms/` (see [Form submissions](#form-submissions)), `content/<post type>/`, `content/settings/{site,menus,redirects}.json`;
    other languages in `content/<lang>/` (see [Languages](#languages)).
