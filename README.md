@@ -149,6 +149,7 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      passthrough: [{ from: '.', paths: ['alt'] }], // copied unchanged into the output
      languages: ['de', 'en'],       // optional, the first is the default; see Languages
      images: { maxSize: 2560, widths: [480, 960, 1600], formats: ['webp'] }, // optional; see Images
+     twoFactor: true,               // optional: administrators must use two-factor sign-in (or a list of roles)
    };
    ```
 3. **Theme** (`theme/index.js`), a plain object:
@@ -676,6 +677,33 @@ cannot read. A reload, or an access token that has expired, renews the session w
 - werft 0.5 kept both tokens in `localStorage`. The admin moves such a session to the cookie on its
   next renewal and deletes the stored tokens; a copy taken before then ends only with "Überall
   abmelden" or after its 30 days.
+
+### Two-factor sign-in
+
+Every account can switch on two-factor sign-in in "Mein Konto" ([totp.js](gateway/totp.js)):
+the sign-in then asks for the password and then a six-digit code from an authenticator app on
+the phone (TOTP, as Google Authenticator, Microsoft Authenticator or 2FAS make them).
+
+- Setting it up: the editor shows a QR code (made in the browser, [qr.js](admin/qr.js)) and the
+  key to type in, and a link that opens the app on the phone itself; a code from the app and the
+  password switch it on. Then it shows ten recovery codes once, to copy, download or print: each
+  replaces the app's code once, for when the phone is not at hand. New codes (the old ones end) and
+  switching it off need the password; switching on or off ends the account's other sessions.
+- Signing in: the password earns a ticket for five minutes, the code the session (also after a
+  [new password by e-mail](#forgotten-passwords), so the mailbox alone is not enough). Wrong codes count
+  like wrong passwords ([Sign-in](#sign-in): 5, then a growing wait). A code works once in each
+  process; on Cloudflare another isolate could take the same code within its 30 to 90 seconds.
+- In `.werft/users.json` the account's secret is encrypted with `WERFT_SECRET` (AES-GCM) and the
+  recovery codes are kept as hashes keyed with it, so a copy of the repository does not make codes.
+  After a change of `WERFT_SECRET` neither app codes nor recovery codes work: an administrator
+  resets the accounts, and an administrator who has it too removes `totp` and `recovery` from
+  their own entry in `.werft/users.json` by hand (a commit).
+- An administrator resets it for someone who lost phone and codes ("Zwei-Faktor zurücksetzen" on
+  "Benutzer"); that person then signs in with the password and sets it up again.
+- `twoFactor: true` in `werft.config.js` requires it of administrators (a list such as
+  `['administrator', 'editor']` of those roles). Until they have set it up, their sessions reach
+  only "Mein Konto": right after signing in the editor shows the setup first, and they cannot
+  switch it off.
 
 ### Forgotten passwords
 

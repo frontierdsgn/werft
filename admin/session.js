@@ -1,3 +1,5 @@
+import { setupTwoFactor } from './two-factor.js';
+
 // Session of the werft admin: the access token lives in this page only; the gateway keeps the
 // refresh token in an HttpOnly cookie, which renews it after a reload or once it has expired.
 let token = null;
@@ -45,10 +47,14 @@ export async function api(path, { method = 'GET', body, raw = false } = {}, retr
 
 // Resolves with the signed-in user. Without a valid session it shows the sign-in form, with
 // "Passwort vergessen?" where the site sends e-mail; the link in that e-mail (#passwort=…) opens the
-// form for a new password, which signs in too.
+// form for a new password, which signs in too. With two-factor sign-in a code follows the password;
+// where the site requires it and the user has none yet, setting it up comes first.
 export async function requireUser(siteName) {
   const resetToken = /^#passwort=([\w.-]+)$/.exec(location.hash)?.[1];
-  if (!resetToken) { try { return await api('/me'); } catch (error) { if (error.status !== 401) throw error; } }
+  let signedInAlready = null;
+  if (!resetToken) {
+    try { signedInAlready = await api('/me'); if (!signedInAlready.two_factor_required) return signedInAlready; } catch (error) { if (error.status !== 401) throw error; }
+  }
   const mailing = fetch('/api/werft/status').then((r) => r.json()).then((s) => !!s.mail, () => false);
   const post = async (path, body) => {
     const response = await fetch(`/api/werft${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -60,15 +66,33 @@ export async function requireUser(siteName) {
   const field = (id, label, type, autocomplete) => `<label for="${id}">${label}</label><input id="${id}" type="${type}" autocomplete="${autocomplete}" required${type === 'password' && autocomplete === 'new-password' ? ' minlength="10"' : ''}>`;
   const $ = (selector) => form.querySelector(selector);
   return new Promise((resolve) => {
-    const signedIn = async (data) => { token = data.access_token; form.remove(); resolve(await api('/me')); };
+    let second = null; // { ticket, email } between the password and the code
+    const setup = () => {
+      form.onsubmit = (event) => event.preventDefault();
+      const steps = document.createElement('div');
+      form.replaceChildren(Object.assign(document.createElement('h1'), { textContent: 'Zwei-Faktor-Anmeldung' }),
+        Object.assign(document.createElement('p'), { className: 'werft-lead', textContent: 'Diese Website verlangt sie für Ihre Rolle. Bitte richten Sie sie jetzt ein, danach geht es weiter.' }), steps);
+      setupTwoFactor(steps, { api, siteName, onDone: async () => { form.remove(); resolve(await api('/me')); } });
+    };
+    const signedIn = async (data) => {
+      token = data.access_token;
+      const me = await api('/me');
+      if (me.two_factor_required) return setup();
+      form.remove();
+      resolve(me);
+    };
     const show = (mode) => {
-      const title = { signin: 'Anmelden', forgot: 'Passwort vergessen?', reset: 'Neues Passwort' }[mode];
+      const title = { signin: 'Anmelden', forgot: 'Passwort vergessen?', reset: 'Neues Passwort', code: 'Code eingeben' }[mode];
       form.innerHTML = `<h1>${title}</h1><p class="werft-lead"></p>${{
+        code: '<label for="werft-code">Code aus der Authenticator-App</label><input id="werft-code" inputmode="numeric" autocomplete="one-time-code" required>',
         signin: field('werft-email', 'E-Mail', 'email', 'username') + field('werft-password', 'Passwort', 'password', 'current-password'),
         forgot: field('werft-email', 'E-Mail', 'email', 'username'),
         reset: field('werft-email', 'E-Mail', 'email', 'username') + field('werft-password', 'Neues Passwort (mindestens 10 Zeichen)', 'password', 'new-password') + field('werft-repeat', 'Neues Passwort wiederholen', 'password', 'new-password'),
-      }[mode]}<p class="werft-error" role="alert"></p><button type="submit">${{ signin: 'Anmelden', forgot: 'Link schicken', reset: 'Passwort festlegen' }[mode]}</button>`;
-      $('.werft-lead').textContent = mode === 'forgot' ? 'Sie bekommen eine E-Mail mit einem Link, mit dem Sie ein neues Passwort festlegen.' : `${siteName} · Redaktion`;
+      }[mode]}<p class="werft-error" role="alert"></p><button type="submit">${{ signin: 'Anmelden', forgot: 'Link schicken', reset: 'Passwort festlegen', code: 'Anmelden' }[mode]}</button>`;
+      $('.werft-lead').textContent = {
+        forgot: 'Sie bekommen eine E-Mail mit einem Link, mit dem Sie ein neues Passwort festlegen.',
+        code: 'Die App auf Ihrem Telefon zeigt ihn. Ohne Telefon geben Sie einen Ihrer Wiederherstellungscodes ein.',
+      }[mode] ?? `${siteName} · Redaktion`;
       const switchTo = (to, text) => {
         if ([...form.querySelectorAll('.werft-link')].some((b) => b.textContent === text)) return;
         const b = document.createElement('button'); b.type = 'button'; b.className = 'werft-link'; b.textContent = text; b.addEventListener('click', () => show(to)); form.append(b);
@@ -92,7 +116,18 @@ export async function requireUser(siteName) {
           const email = $('#werft-email').value.trim().toLowerCase();
           const { ok, data } = await post('/session', { email, password: $('#werft-password').value, device: devices()[email] });
           if (!ok) { error.textContent = data.message; return; }
+          if (data.second_factor) { second = { ticket: data.ticket, email }; return show('code'); }
           if (data.device) localStorage.setItem(DEVICES, JSON.stringify({ ...devices(), [email]: data.device }));
+          return signedIn(data);
+        }
+        if (mode === 'code') {
+          const { ok, status, data } = await post('/session', { ticket: second.ticket, code: $('#werft-code').value });
+          if (!ok) {
+            if (status === 401 && /noch einmal an/.test(data.message ?? '')) { show('signin'); $('.werft-error').textContent = data.message; return; }
+            error.textContent = data.message;
+            return;
+          }
+          if (data.device) localStorage.setItem(DEVICES, JSON.stringify({ ...devices(), [second.email]: data.device }));
           return signedIn(data);
         }
         if (mode === 'forgot') {
@@ -109,10 +144,12 @@ export async function requireUser(siteName) {
           return;
         }
         history.replaceState(null, '', location.pathname + location.search);
+        if (data.second_factor) { second = { ticket: data.ticket, email: $('#werft-email').value.trim().toLowerCase() }; return show('code'); }
         return signedIn(data);
       };
     };
-    show(resetToken ? 'reset' : 'signin');
+    if (signedInAlready) setup();
+    else show(resetToken ? 'reset' : 'signin');
   });
 }
 
