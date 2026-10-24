@@ -98,8 +98,9 @@ test('untranslated-link: links the build leads to the default language pass, oth
     'content/pages/index.json': page('Start'), 'content/pages/impressum.json': page('Impressum'), 'content/en/pages/index.json': page('Home'),
     'content/settings/menus.json': JSON.stringify({ footer: { items: [{ label: 'Impressum', url: 'impressum.html' }] } }),
   }) });
-  const { findings } = check({ files: result.files.map((f) => ({ path: f.path, size: f.text.length, text: f.text })), site });
-  assert.deepEqual(findings.map((f) => `${f.file} ${f.rule} ${f.message.split('"')[1]}`), ['en/index.html untranslated-link /en/impressum.html']);
+  const { findings } = check({ files: result.files.map((f) => ({ path: f.path, size: f.text.length, text: f.text })), site, redirects: result.redirects });
+  assert.deepEqual(findings.map((f) => `${f.file} ${f.rule} ${f.message}`), ['en/index.html untranslated-link "/en/impressum.html" leads to en/impressum.html, a page "en" does not have; the "de" page is impressum/index.html. Write the link relative to the page ("impressum.html") so the build leads there, or translate the page.'],
+    'with clean addresses the page\'s old address /impressum.html redirects to it');
 });
 
 test('missing-file: images, sources, stylesheets, scripts and CSS references that are not in the build', () => {
@@ -189,7 +190,8 @@ function site(t, { content = {}, config = '' } = {}) {
 const werft = (...args) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
 
 test('werft check builds the site elsewhere, prints each problem once with its places and fails on errors', (t) => {
-  const root = site(t, { content: {
+  // With werft 0.5's addresses, where every page lies in one folder.
+  const root = site(t, { config: ", urls: 'html'", content: {
     'content/settings/menus.json': JSON.stringify({ main: { items: [{ label: 'Start', url: 'index.html' }, { label: 'Preise', url: 'preise.html' }] } }, null, 2),
     'content/pages/team.json': JSON.stringify({ title: 'Team', status: 'published', sections: [{ type: 'text', body: '![](assets/img/a.jpg) ![Weg](assets/img/weg.jpg)' }] }, null, 2),
   } });
@@ -231,7 +233,7 @@ test('werft check stops on a mistake in check of werft.config.js', (t) => {
 
 test('werft check names the first places of a problem on many pages and counts the rest', (t) => {
   const pages = Object.fromEntries(['a', 'b', 'c', 'd'].map((slug) => [`content/pages/${slug}.json`, JSON.stringify({ title: slug, status: 'published' })]));
-  const root = site(t, { content: { ...pages, 'content/settings/menus.json': JSON.stringify({ main: { items: [{ label: 'Preise', url: 'preise.html' }] } }) } });
+  const root = site(t, { config: ", urls: 'html'", content: { ...pages, 'content/settings/menus.json': JSON.stringify({ main: { items: [{ label: 'Preise', url: 'preise.html' }] } }) } });
   const lines = werft('check', root).stdout.split('\n');
   assert.deepEqual(lines.slice(0, 2), ['error broken-link: "preise.html": there is no preise.html in the build', '  at a.html:1:25, b.html:1:25, c.html:1:25 and 2 more']);
 });

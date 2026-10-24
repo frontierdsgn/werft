@@ -58,8 +58,9 @@ const built = async (site, files, t = theme) => {
 };
 
 test('a site without languages builds as before', async () => {
-  // Recorded with werft 0.5.0 before languages existed; the feed of posts came later.
-  const { 'feed.xml': feed, ...out } = await built({ name: 'S' }, defaultContent);
+  // Recorded with werft 0.5.0 before languages existed (and clean addresses: `urls: 'html'` keeps
+  // its addresses); the feed of posts came later.
+  const { 'feed.xml': feed, ...out } = await built({ name: 'S', urls: 'html' }, defaultContent);
   assert.deepEqual(out, GOLDEN);
   assert.match(feed, /^<\?xml/);
 });
@@ -105,39 +106,41 @@ const switching = {
 test('each language is built: the default at the root, the others below their code', async () => {
   const out = await built(site, english);
   const pages = Object.keys(out).filter((p) => p.endsWith('.html')).sort();
-  assert.deepEqual(pages, ['en/index.html', 'en/nur-englisch.html', 'geheim.html', 'index.html', 'kontakt.html', 'termine/konzert.html'], 'shared posts are published once, in German');
+  assert.deepEqual(pages, ['en/index.html', 'en/nur-englisch/index.html', 'geheim/index.html', 'index.html', 'kontakt/index.html', 'termine/konzert/index.html'], 'shared posts are published once, in German');
   const home = out['en/index.html'];
   assert.match(home, /<html lang="en">/, 'settings.lang is the language');
   assert.match(home, /<title>Home \| Salon<\/title>/, 'site settings come from German unless English has them');
   assert.match(home, /<footer>By the river 0123 Impressum<\/footer>/, 'English settings are laid over German ones; the footer menu is the German one');
-  assert.match(home, /<nav><a href="index.html">Home<\/a><\/nav>/, 'the English main menu replaces the German one');
+  assert.match(home, /<nav><a href=".\/">Home<\/a><\/nav>/, 'the English main menu replaces the German one');
   assert.match(home, /<section><p>By ferry<\/p><\/section><section><p>Geöffnet<\/p><\/section>/, 'a pattern in English, else in German');
   assert.match(home, /<form>Senden<\/form>/, 'a form not translated comes from German');
-  assert.match(home, /<a href="..\/kontakt.html">Contact<\/a> <img src="..\/assets\/img\/a.jpg" alt="Ferry">/, 'a page English lacks is the German one, media lead to the root');
+  assert.match(home, /<a href="..\/kontakt\/">Contact<\/a> <img src="..\/assets\/img\/a.jpg" alt="Ferry">/, 'a page English lacks is the German one, media lead to the root');
   assert.match(home, /<ul><li>Konzert<\/li><\/ul>/, 'without own posts the German ones');
-  assert.equal(out['index.html'], GOLDEN['index.html'], 'the default language is built as before');
+  assert.equal(out['index.html'], GOLDEN['index.html'].replaceAll('"index.html"', '"./"').replaceAll('"kontakt.html"', '"kontakt/"'), 'the default language is built as before, with clean addresses');
 });
 
 test('a language with its own posts shows only those', async () => {
   const out = await built(site, { ...english, 'content/en/events/concert.json': json({ title: 'Concert', status: 'published', date: '2026-07-01' }) });
   assert.match(out['en/index.html'], /<ul><li>Concert<\/li><\/ul>/);
-  assert.ok(out['en/termine/concert.html'] && !out['en/termine/konzert.html']);
+  assert.ok(out['en/termine/concert/index.html'] && !out['en/termine/konzert/index.html']);
 });
 
 test('ctx.url and ctx.translations work from every page', async () => {
   const out = await built(site, english, switching);
   assert.match(out['index.html'], /<link href="assets\/css\/site.css"><p>de,en <a href=".\/" aria-current="true">de<\/a><a href="en\/">en<\/a><\/p>/);
-  assert.match(out['kontakt.html'], /<a href="kontakt.html" aria-current="true">de<\/a><a href="en\/" data-missing>en<\/a>/, 'no English page: the English home page');
+  assert.match(out['kontakt/index.html'], /<link href="..\/assets\/css\/site.css"><p>de,en <a href=".\/" aria-current="true">de<\/a><a href="..\/en\/" data-missing>en<\/a>/, 'no English page: the English home page');
   assert.match(out['en/index.html'], /<link href="..\/assets\/css\/site.css"><p>de,en <a href="..\/">de<\/a><a href=".\/" aria-current="true">en<\/a><\/p>/);
-  assert.match(out['en/nur-englisch.html'], /<a href="..\/" data-missing>de<\/a><a href="nur-englisch.html" aria-current="true">en<\/a>/);
-  const ctx = createContext({ site, theme, content: { pages: [{ slug: 'p' }], posts: [], patterns: [], forms: [], settings: {}, menus: {}, redirects: [], languages: { en: {} } }, lang: 'en' }).for({ slug: 'p' });
-  assert.deepEqual(['assets/a.jpg', 'en/b.html', '', 'https://x.test/', '#top', '/abs'].map(ctx.url), ['../assets/a.jpg', 'b.html', '../', 'https://x.test/', '#top', '/abs']);
+  assert.match(out['en/nur-englisch/index.html'], /<a href="..\/..\/" data-missing>de<\/a><a href=".\/" aria-current="true">en<\/a>/);
+  const ctx = createContext({ site, theme, content: { pages: [{ slug: 'p' }, { slug: 'b' }], posts: [], patterns: [], forms: [], settings: {}, menus: {}, redirects: [], languages: { en: { pages: [{ slug: 'p' }, { slug: 'b' }] } } }, lang: 'en' }).for({ slug: 'p' });
+  assert.deepEqual(['assets/a.jpg', 'en/b.html', 'en/b/', '', 'https://x.test/', '#top', '/abs'].map(ctx.url), ['../../assets/a.jpg', '../b/', '../b/', '../../', 'https://x.test/', '#top', '/abs']);
+  const html = createContext({ site: { ...site, urls: 'html' }, theme, content: { pages: [{ slug: 'p' }], posts: [], patterns: [], forms: [], settings: {}, menus: {}, redirects: [], languages: { en: {} } }, lang: 'en' }).for({ slug: 'p' });
+  assert.deepEqual(['assets/a.jpg', 'en/b.html', '', 'https://x.test/', '#top', '/abs'].map(html.url), ['../assets/a.jpg', 'b.html', '../', 'https://x.test/', '#top', '/abs'], "urls: 'html' keeps the addresses");
 });
 
 test('without languages, ctx.lang is the site setting and there is nothing to switch', () => {
   const content = { pages: [], posts: [], patterns: [], forms: [], settings: { lang: 'fr' }, menus: {}, redirects: [] };
   const ctx = createContext({ site: {}, theme, content }).for({ slug: 'p' });
-  assert.deepEqual([ctx.lang, ctx.languages, ctx.translations, ctx.url('assets/a.jpg')], ['fr', [], [], 'assets/a.jpg']);
+  assert.deepEqual([ctx.lang, ctx.languages, ctx.translations, ctx.url('assets/a.jpg')], ['fr', [], [], '../assets/a.jpg'], 'the page p is at p/');
   assert.equal(createContext({ site: {}, theme, content: { ...content, settings: {} } }).lang, 'de');
 });
 
@@ -157,11 +160,11 @@ test('links to pages a language lacks lead to the default language\'s page', asy
     ] }),
   }, linking);
   const home = out['en/index.html'];
-  assert.match(home, /<nav><a href="index.html">Home<\/a><a href="..\/impressum.html">Impressum<\/a><\/nav>/, 'English main menu; the German footer menu leads to German pages');
-  assert.match(home, /<a href="..\/kontakt.html\?von=en">Contact<\/a> <a href="nur-englisch.html">Only English<\/a> <a href="#top">Top<\/a> <a href=".\/">Home<\/a> <a href="fehlt.html">Nowhere<\/a> <a href="https:\/\/x.test\/impressum.html">Web<\/a>/);
-  assert.match(home, /<footer><a href="..\/impressum.html#anbieter">Impressum<\/a><\/footer>/, 'inherited settings too');
-  assert.match(home, /<p><a href="..\/termine\/konzert.html">Konzert<\/a><\/p>/, 'shared posts link to their German page');
-  assert.match(out['impressum.html'], /<a href="impressum.html#anbieter">/, 'the default language is left as it is');
+  assert.match(home, /<nav><a href=".\/">Home<\/a><a href="..\/impressum\/">Impressum<\/a><\/nav>/, 'English main menu; the German footer menu leads to German pages');
+  assert.match(home, /<a href="..\/kontakt\/\?von=en">Contact<\/a> <a href="nur-englisch\/">Only English<\/a> <a href="#top">Top<\/a> <a href=".\/">Home<\/a> <a href="fehlt.html">Nowhere<\/a> <a href="https:\/\/x.test\/impressum.html">Web<\/a>/);
+  assert.match(home, /<footer><a href="..\/impressum\/#anbieter">Impressum<\/a><\/footer>/, 'inherited settings too');
+  assert.match(home, /<p><a href="..\/termine\/konzert\/">Konzert<\/a><\/p>/, 'shared posts link to their German page');
+  assert.match(out['impressum/index.html'], /<a href=".\/#anbieter">/, 'the default language leads to its own page');
 });
 
 test('post pages of a language lead to the default language\'s pages it lacks, too', async () => {
@@ -175,14 +178,14 @@ test('post pages of a language lead to the default language\'s pages it lacks, t
     'content/pages/impressum.json': json({ title: 'Impressum', status: 'published', sections: [] }),
     'content/en/events/concert.json': json({ title: 'Concert', status: 'published', date: '2026-07-01' }),
   }, posting);
-  assert.equal(out['en/termine/concert.html'], '<title>Concert</title><nav><a href="../index.html">Home</a><a href="../../impressum.html">Impressum</a></nav><a href="../nur-englisch.html#x">E</a>');
+  assert.equal(out['en/termine/concert/index.html'], '<title>Concert</title><nav><a href="../../">Home</a><a href="../../../impressum/">Impressum</a></nav><a href="../../nur-englisch/#x">E</a>');
 });
 
 test('a language\'s own posts count once one of them is public', async () => {
   const draft = { ...english, 'content/en/events/concert.json': json({ title: 'Concert', status: 'draft', date: '2026-07-01' }) };
   let out = await built(site, draft);
   assert.match(out['en/index.html'], /<ul><li>Konzert<\/li><\/ul>/, 'a draft changes nothing on the public site');
-  assert.ok(!out['en/termine/concert.html'] && !out['en/termine/konzert.html']);
+  assert.ok(!out['en/termine/concert/index.html'] && !out['en/termine/konzert/index.html']);
   const scheduled = { ...english, 'content/en/events/concert.json': json({ title: 'Concert', status: 'published', publish_date: '2026-06-02T00:00:00Z' }) };
   out = await built(site, scheduled);
   assert.match(out['en/index.html'], /<ul><li>Konzert<\/li><\/ul>/, 'nor does a post that is not due');
@@ -217,9 +220,9 @@ test('the sitemap lists every language and names the versions of a page', async 
   const map = out['sitemap.xml'];
   assert.match(map, /<urlset xmlns="http:\/\/www.sitemaps.org\/schemas\/sitemap\/0.9" xmlns:xhtml="http:\/\/www.w3.org\/1999\/xhtml">/);
   assert.match(map, /<url><loc>https:\/\/salon.example\/<\/loc><xhtml:link rel="alternate" hreflang="de" href="https:\/\/salon.example\/"\/><xhtml:link rel="alternate" hreflang="en" href="https:\/\/salon.example\/en\/"\/><\/url>/);
-  assert.match(map, /<url><loc>https:\/\/salon.example\/kontakt.html<\/loc><\/url>/, 'a page in one language has no alternates');
-  assert.match(map, /<url><loc>https:\/\/salon.example\/en\/nur-englisch.html<\/loc><\/url>/);
-  assert.match(map, /<url><loc>https:\/\/salon.example\/termine\/konzert.html<\/loc><\/url>/, 'a shared post is German only');
+  assert.match(map, /<url><loc>https:\/\/salon.example\/kontakt\/<\/loc><\/url>/, 'a page in one language has no alternates');
+  assert.match(map, /<url><loc>https:\/\/salon.example\/en\/nur-englisch\/<\/loc><\/url>/);
+  assert.match(map, /<url><loc>https:\/\/salon.example\/termine\/konzert\/<\/loc><\/url>/, 'a shared post is German only');
   assert.doesNotMatch(map, /en\/termine/);
   assert.equal(out['robots.txt'], GOLDEN['robots.txt']);
 });

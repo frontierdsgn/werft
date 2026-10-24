@@ -45,6 +45,15 @@ export function mentions(data, slug) {
   return new RegExp(`(^|[^A-Za-z0-9_-])${escapeRegExp(slug)}\\.html`).test(JSON.stringify(data));
 }
 
+// After a page's slug changed from `from` to `to`, the pages that named it as their parent name the
+// new one (`pages`: their data, changed in place), so they keep their place below it. Returns how
+// many there were.
+export function retargetParents(pages, from, to) {
+  let count = 0;
+  for (const page of pages) if (page && page.parent === from) { page.parent = to; count++; }
+  return count;
+}
+
 // The redirects after a page moved from each `from` address to its `to` (moves: [{ from, to }]):
 // a redirect for each move; earlier redirects that led to an old address lead to the new one, and
 // a redirect away from a new address (the page had it before) is dropped, so none loops.

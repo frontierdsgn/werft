@@ -39,6 +39,7 @@ const commands = {
     const started = Date.now();
     const result = await buildToDisk(positional[0] ?? '.', { out: option('out'), now: option('now') ? new Date(option('now')) : undefined });
     console.log(`Built ${result.files.length} files into ${result.outDir} in ${Date.now() - started} ms`);
+    for (const warning of result.warnings) console.warn(`warning: ${warning}`);
     if (result.schedule.next_publish) console.log(`Next scheduled publication: ${result.schedule.next_publish}`);
   },
   // Builds the site into a temporary directory and checks the build (lib/check.js).
@@ -60,7 +61,7 @@ const commands = {
       const themeFiles = themeDir ? (await store.list(themeDir)).filter((p) => /\.(js|css|html|json)$/.test(p) && !p.includes('node_modules/')).map((p) => `${themeDir}/${p}`) : [path.normalize(result.site.theme)];
       const sources = [];
       for (const p of [...(await store.list(contentDir)).filter((p) => p.endsWith('.json')).map((p) => `${contentDir}/${p}`), ...themeFiles]) sources.push({ path: p, text: await store.readText(p) });
-      const { findings, pages } = check({ files, site: result.site, redirects: result.content.redirects, sources });
+      const { findings, pages } = check({ files, site: result.site, redirects: result.redirects, sources });
       // The same problem on many pages (a menu link, say) is printed once, with the places.
       const problems = new Map();
       for (const f of findings) {
@@ -72,6 +73,7 @@ const commands = {
         const places = p.places.length > 4 ? `${p.places.slice(0, 3).join(', ')} and ${p.places.length - 3} more` : p.places.join(', ');
         console.log(`${p.severity} ${p.rule}: ${p.message}\n  at ${places}${p.sources.length ? `\n  written in ${p.sources.join(', ')}` : ''}`);
       }
+      for (const warning of result.warnings) console.warn(`warning: ${warning}`);
       const errors = findings.filter((f) => f.severity === 'error').length;
       const warnings = findings.length - errors;
       const failed = errors + (args.includes('--strict') ? warnings : 0);

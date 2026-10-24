@@ -68,7 +68,7 @@ Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 | WordPress | werft |
 |---|---|
 | Login at /admin, users, roles | Own e-mail/password logins, no GitHub account needed. Roles Administrator, Redakteur, Autor, Mitarbeiter with WordPress's rules ([roles.js](gateway/roles.js)), enforced by the gateway. "Benutzer" in the editor for administrators; "Mein Konto" for everyone. |
-| Pages and posts | Pages built from sections (the theme's blocks), plus one post type per theme (e.g. events). Add, delete, reorder sections. "Seite duplizieren" (in a page's settings and at the end of its form) copies a page in the language being edited as a draft under a new title and address, without its publishing date and SEO title. "Adresse" in a page's settings changes its address (administrators, since it adds a redirect): in one save the page and its translations are renamed, links in the content follow, a published page's old address redirects to the new one, and what still names the old address (a full URL) is listed. |
+| Pages and posts | Pages built from sections (the theme's blocks), plus one post type per theme (e.g. events). Add, delete, reorder sections. "Seite duplizieren" (in a page's settings and at the end of its form) copies a page in the language being edited as a draft under a new title and address, without its publishing date and SEO title. "Adresse" in a page's settings changes its address and the page it sits below ("Unter der Seite", see [Addresses](#addresses)); administrators only, since it adds redirects: in one save the page and its translations are renamed, links in the content follow, every published page whose address changed (the page and those below it) redirects from its old address, and what still names the old address (a full URL) is listed. The sidebar shows pages below their parent page. |
 | Draft, pending review, publish, schedule | Status per entry; a publish date in the future schedules it (see [Scheduling](#scheduling)). Contributors are offered only "Entwurf" and "Zur Prüfung"; when the gateway refuses a change for the editor's role, the admin says so instead of "try again later". |
 | Visual editing, preview | Two views of the same [editor](#editor), switched at the top of the sidebar: "Formular" shows the fields beside a live preview rendered by the site's own theme (a click on a section in the preview opens it in the form); "Auf der Seite" edits on the page itself. A post without a page of its own (no `renderPost` in the theme) is previewed marked on the page that lists it, else alone in the theme's listing section, else as a card of its fields. |
 | Media library, alt text | "Bilder": all images with where each is used, searchable by file name, alternative text and page, and filtered to unused images or images used without alternative text (marked "Ohne Alternativtext auf: …"); upload several at once, "Ersetzen" swaps an image for a new upload everywhere the editor may change (the old file stays while anything else still names it), delete only unused ones (replace and delete: Administrator, Redakteur). Large photos are scaled down before they are saved (see [Images](#images)). Images are fields with file, alt text, caption and focal point. |
@@ -176,6 +176,7 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      languages: ['de', 'en'],       // optional, the first is the default; see Languages
      images: { maxSize: 2560, widths: [480, 960, 1600], formats: ['webp'] }, // optional; see Images
      twoFactor: true,               // optional: administrators must use two-factor sign-in (or a list of roles)
+     urls: 'html',                  // optional: werft 0.6's addresses (kontakt.html); see Addresses
    };
    ```
 3. **Theme** (`theme/index.js`), a plain object:
@@ -209,9 +210,12 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      `translations`.
      `url(path)` turns a path relative to the site's root (`assets/css/site.css`, a media file
      from the content, `en/kontakt.html`, `''` for the home page) into an address that works from
-     the page being rendered (`../assets/css/site.css` on `en/` pages, unchanged on pages at the
-     root); addresses with a scheme or starting with `/`, `#` or `?` stay as they are. Use it for the
-     theme's assets and for media files outside Markdown. `asset(path)` is `url(path)` with a hash
+     the page being rendered (`../assets/css/site.css` on `kontakt/` or `en/` pages, unchanged on
+     the home page); a page named as in the content (`kontakt.html`, `en/kontakt.html`) becomes its
+     [address](#addresses) (`../kontakt/`). Addresses with a scheme or starting with `/`, `#` or `?`
+     stay as they are. Every page but the home page lies in a folder of its own, so a theme builds
+     every path to its assets and to media files outside Markdown with `url()` (or `asset()`,
+     `img()`). `asset(path)` is `url(path)` with a hash
      of the file's content for a stylesheet or script (`.css`, `.js`, `.mjs`) in the theme's
      `staticDir` (`assets/css/site.css?v=3f2a…`), so a visitor's browser does not keep an old copy
      after the file changed. The path is written as the file's path inside `staticDir` (no `./`
@@ -258,7 +262,8 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      '09:00', closes: '18:00' }] }` (days `Mo` … `So`, `to` empty for a single day; times like
      `09:00` or `9.30`, `24:00` for midnight; a line werft cannot read is left out), so a theme
      can show the opening hours itself; `fields.WEEKDAYS` maps the days to schema.org's.
-4. **Content**: `content/pages/<slug>.json` (`index` becomes `index.html`), `content/patterns/`,
+4. **Content**: `content/pages/<slug>.json` (`index` is the home page; addresses: see
+   [Addresses](#addresses)), `content/patterns/`,
    `content/forms/` (see [Form submissions](#form-submissions)), `content/<post type>/`, `content/settings/{site,menus,redirects}.json`;
    other languages in `content/<lang>/` (see [Languages](#languages)).
    A page is `{ "title": "Start", "status": "published", "sections": [{ "type": "text", … }] }`.
@@ -552,13 +557,14 @@ way:
 | `settings/menus.json` | Replaces the default menu of each location it has. |
 
 Redirects (`content/settings/redirects.json`) and media are shared. The default language is built at
-the site's root as before; the others below their code (`en/index.html`, `en/<slug>.html`, posts at
-`en/<postType.url>`). Inside a language, links in the content (`kontakt.html`, `#anfrage`) lead to
-pages of the same language. On every page and post page of a language, a relative link that leads
-to a page the language does not have (`impressum.html` from `en/`, `../impressum.html` from
-`en/termine/`; also `index.html` and `./`, with `?…` or `#…`), for example from a menu or settings
-it takes from the default language, is rewritten to the default language's page of that name
-(`../impressum.html`, `../../impressum.html`), in the build and in the editor's preview. Markdown images from the media folders are made relative to the page.
+the site's root as before; the others below their code (`en/`, `en/<slug>/`, posts at
+`en/<postType.url>`; see [Addresses](#addresses)). Inside a language, links in the content
+(`kontakt.html`, `#anfrage`) lead to pages of the same language. On every page and post page of a
+language, a relative link that leads to a page the language does not have or has not published
+(`impressum.html` from `en/`, `../impressum.html` from `en/termine/`; also `index.html` and `./`,
+with `?…` or `#…`), for example from a menu or settings it takes from the default language, leads
+to the default language's page of that name (`../impressum/`), in the build and in the editor's
+preview. Markdown images from the media folders are made relative to the page.
 `sitemap.xml` lists every language and names the versions of an entry with
 `<xhtml:link rel="alternate" hreflang="…">`. The theme writes the `lang` attribute, its assets and a
 language switch with `ctx.lang`, `ctx.url()` and `ctx.translations` (see [Install](#install)):
@@ -580,6 +586,48 @@ shows only its own. The gateway checks `content/<lang>/…` like
 the same path of the default language (roles and kinds), and a translated form's submissions go with
 its original's. The gateway's thank-you page, its messages and the confirmation e-mail are in the
 language of the page the form was on (see [Form submissions](#form-submissions)).
+
+### Addresses
+
+A page's address is its slug as a folder: `content/pages/kontakt.json` is `kontakt/` (the file
+`kontakt/index.html`), the home page `index` the site's root, the [not-found page](#not-found-page)
+`404.html`. A page can sit below another: `"parent": "tagen"` in `content/pages/preise.json` makes
+its address `tagen/preise/`, and a page below that one `tagen/preise/raeume/`. In the editor,
+"Adresse ändern" sets it ("Unter der Seite"). The default language's page decides the parent for
+every language, so a page has the same place in each (`en/tagen/preise/`). The home page and the
+not-found page stay at the top. Slugs stay unique across the site, so a page keeps its slug when it
+moves below another.
+
+- Links in the content and menus name a page by its slug, `kontakt.html` (the editor suggests
+  that form; `index.html` is the home page), wherever the page sits; the build, the editor's preview
+  and [preview links](#preview-links) lead them to the page's address from the page they are on
+  (`../kontakt/#karte`). They are read from the language's folder, on a post's page from the
+  post's address as the theme gives it. A link to a page that does not exist stays as written, and so
+  does an address without `.html` that leads to a page from where it is (`./`, `../kontakt/`).
+- Posts: `postType.url(post)` stays as it is (`termine/${post.slug}.html`); a post at
+  `termine/fest.html` is built to `termine/fest/` (a theme may also return `termine/fest/`).
+- Redirects: every published page and post whose address is not its old one (`kontakt.html`)
+  redirects from it with 301, in `_redirects` (Cloudflare Pages), `.htaccess` (PHP web space) and
+  for `werft serve` and `werft dev`. A redirect in `redirects.json` to a page named as in the
+  content (`/kontakt.html`) leads to its address, a redirect away from an old address `/alt/` also
+  takes `/alt.html` along, and a redirect in `redirects.json` with the same source comes first. A
+  redirect that would then lead to itself (`/kontakt/` to `/kontakt.html`, from werft 0.6) is left
+  out, since it would hide the page. Cloudflare Pages reads at most 2,000 plain redirects and 100
+  with `*` or a placeholder per site; `werft build` and `werft check` warn above that.
+- The build stops when two entries would get the same address (a page `fest` below `termine` and
+  the post `termine/fest.html`) or a page's folder is one the site needs (`admin`, `_werft`, a
+  media directory, a language's code). Renaming a page in the editor keeps the pages below it there.
+- `urls: 'html'` in `werft.config.js` keeps the addresses of werft 0.6 and earlier: `kontakt.html`,
+  `tagen/preise.html` for a page below another, posts at `postType.url` as given, and redirects only
+  for pages that moved below another.
+
+Moving a site to clean addresses (werft 0.7): every page's address changes, and the old ones
+redirect. Before the update, check that the theme builds every path with `ctx.url()`,
+`ctx.asset()` or `ctx.img()` (a plain `assets/css/site.css` breaks on `kontakt/`), that links the
+theme writes itself name pages as `kontakt.html` or through `ctx.url()`, and that the site setting
+`url`, links from elsewhere and search engines can follow the redirects. `npm run update-sites` holds
+such a site back (its public pages change, see [Moving the sites](#moving-the-sites-to-a-release)),
+so each switch is looked at with `npm run dev` first; a site that is not ready sets `urls: 'html'`.
 
 ### Images
 
@@ -996,7 +1044,8 @@ html`<header>${ctx.search({ label: 'Suche', placeholder: 'Suchbegriff', empty: '
 - The index is `_werft/search/<ctx.lang>.json`: `{ lang, entries: [{ url, title, text }] }`, one
   entry per published page and post page of the language (a language that shows the default
   language's posts lists those), except those set to `noindex` in SEO.
-  `url` is relative to the site's root (`''` for the home page, `en/` for the English one), `title`
+  `url` is relative to the site's root (`''` for the home page, `en/` for the English one,
+  `kontakt/` for a page), `title`
   is the entry's title (else its first `<h1>`), `text` the text of the page's `<main>` (else its
   `<body>`) without `<nav>`, `<search>`, scripts and styles. Put the content in `<main>`, so the
   menu, header and footer do not make every page match.

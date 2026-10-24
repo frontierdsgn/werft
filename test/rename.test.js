@@ -1,7 +1,7 @@
 // A page's new address in the editor (admin/rename.js): links in the content and the redirects.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { retargetLink, retargetLinks, mentions, movedRedirects } from '../admin/rename.js';
+import { retargetLink, retargetLinks, mentions, movedRedirects, retargetParents } from '../admin/rename.js';
 
 test('links to the old address lead to the new one, other links stay', () => {
   const retarget = retargetLink('angebot', 'leistungen', { base: '/', languages: ['de', 'en'] });
@@ -68,4 +68,10 @@ test('the old address redirects to the new one, without chains or loops', () => 
     { from: '/en/angebot.html', to: '/en/leistungen.html', status: 301 },
   ]);
   assert.deepEqual(movedRedirects(undefined, [{ from: '/a.html', to: '/b.html' }]), [{ from: '/a.html', to: '/b.html', status: 301 }]);
+});
+
+test('pages below a renamed page keep their place below it', () => {
+  const pages = [{ title: 'Preise', parent: 'tagen' }, { title: 'Räume', parent: 'preise' }, { title: 'Kontakt' }, null];
+  assert.equal(retargetParents(pages, 'tagen', 'tagungen'), 1);
+  assert.deepEqual(pages.map((p) => p?.parent), ['tagungen', 'preise', undefined, undefined]);
 });

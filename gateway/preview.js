@@ -2,7 +2,7 @@
 // someone without an account. The gateway checks the link (signed, expiring, listed until revoked,
 // see core.js); this module only finds the entry and renders it the way the build does, with a
 // draft or scheduled entry shown as published.
-import { loadContent, siteLanguages, pageLinks } from '../lib/content.js';
+import { loadContent, siteAddresses } from '../lib/content.js';
 import { createContext } from '../lib/build.js';
 
 const escapeAttr = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -38,27 +38,20 @@ export async function renderPreview({ site, theme, target, files, media = {}, re
   if (!shown) return null;
   let page = shown;
   let kind = target.kind;
-  let html;
-  if (kind === 'page') html = theme.renderPage(shown, ctx.for(shown, 'page')).value;
-  else if (theme.renderPost && theme.postType?.url?.(shown)) html = theme.renderPost(shown, ctx.for(shown, 'post')).value;
-  else {
+  if (kind === 'post' && !(theme.renderPost && theme.postType?.url?.(shown))) {
     // A post without a page of its own: the page that lists posts, with this one among them.
     const pages = ctx.content.pages;
     page = pages.find((p) => p.slug === theme.postType?.previewPage) ?? pages.find((p) => p.slug === 'index') ?? pages[0];
     if (!page) return null;
     kind = 'page';
-    html = theme.renderPage(page, ctx.for(page, 'page')).value;
   }
+  const pageCtx = ctx.for(page, kind);
+  // Links the content writes ("kontakt.html") lead to their pages as on the site, where another
+  // language's drafts are not shown.
+  const html = pageCtx.links((kind === 'page' ? theme.renderPage(page, pageCtx) : theme.renderPost(page, pageCtx)).value, siteAddresses({ site, theme, content, now }));
   // Relative addresses start from the page's folder on the site, not from the gateway's path.
-  const languages = siteLanguages(site);
-  const folder = target.lang && target.lang !== languages[0] ? `${target.lang}/` : '';
-  const file = kind === 'post' ? theme.postType.url(shown) : `${page.slug}.html`;
-  const dir = `${site.base ? `${String(site.base).replace(/^\/+|\/+$/g, '')}/` : ''}${folder}${file.includes('/') ? file.slice(0, file.lastIndexOf('/') + 1) : ''}`;
-  // In another language, links to pages it lacks lead to the default language's, as in the build.
-  if (folder) {
-    const link = pageLinks({ site, content: ctx.content, now });
-    html = html.replace(/ href="([^"]*)"/g, (m, href) => ` href="${link(href, folder + file)}"`);
-  }
+  const { file } = kind === 'post' ? ctx.addresses.post(page, target.lang) : ctx.addresses.page(page.slug, target.lang);
+  const dir = `${site.base ? `${String(site.base).replace(/^\/+|\/+$/g, '')}/` : ''}${file.slice(0, file.lastIndexOf('/') + 1)}`;
   const head = `<base href="/${escapeAttr(dir)}"><meta name="robots" content="noindex">`;
   return /<head(\s[^>]*)?>/i.test(html) ? html.replace(/<head(\s[^>]*)?>/i, (tag) => tag + head) : head + html;
 }

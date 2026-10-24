@@ -40,14 +40,14 @@ test('the build writes a search index per language with the text of each public 
   assert.equal(de.lang, 'de');
   assert.deepEqual(de.entries, [
     { url: '', title: 'Start', text: 'Start Willkommen im Salon am Fluss.' },
-    { url: 'kontakt.html', title: 'Kontakt', text: 'Kontakt Rufen Sie an: Café & Fähre' },
+    { url: 'kontakt/', title: 'Kontakt', text: 'Kontakt Rufen Sie an: Café & Fähre' },
     // A post without a `title` is named by its first heading.
-    { url: 'termine/konzert.html', title: 'Konzert am Fluss', text: 'Konzert am Fluss Am 2026-07-01' },
+    { url: 'termine/konzert/', title: 'Konzert am Fluss', text: 'Konzert am Fluss Am 2026-07-01' },
   ]);
   // The other language: its own pages, below its code, and the default language's posts it shows.
   assert.deepEqual(JSON.parse(files['_werft/search/en.json']).entries, [
     { url: 'en/', title: 'Home', text: 'Home Welcome to the ferry.' },
-    { url: 'termine/konzert.html', title: 'Konzert am Fluss', text: 'Konzert am Fluss Am 2026-07-01' },
+    { url: 'termine/konzert/', title: 'Konzert am Fluss', text: 'Konzert am Fluss Am 2026-07-01' },
   ]);
   assert.match(files['_werft/search.js'], /^\/\/ werft site search/);
   // ASCII only: a host may serve it without a charset.
@@ -62,7 +62,9 @@ test('the build writes a search index per language with the text of each public 
 test('a site below a base path and in one language gets one index at its base', async () => {
   const files = await built({ base: 'salon' });
   assert.deepEqual(Object.keys(files).filter((p) => p.includes('search')), ['salon/_werft/search.js', 'salon/_werft/search/de.json']);
-  assert.deepEqual(JSON.parse(files['salon/_werft/search/de.json']).entries.map((e) => e.url), ['', 'kontakt.html', 'termine/konzert.html']);
+  assert.deepEqual(JSON.parse(files['salon/_werft/search/de.json']).entries.map((e) => e.url), ['', 'kontakt/', 'termine/konzert/']);
+  const html = await built({ base: 'salon', urls: 'html' });
+  assert.deepEqual(JSON.parse(html['salon/_werft/search/de.json']).entries.map((e) => e.url), ['', 'kontakt.html', 'termine/konzert.html'], "urls: 'html' keeps the addresses");
 });
 
 test('without `search` in the theme nothing is written and ctx.search() says what is missing', async () => {
