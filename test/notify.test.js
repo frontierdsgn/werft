@@ -95,8 +95,9 @@ test('without an e-mail driver, submissions are kept as before', async () => {
 
 test('the editor offers the e-mail settings with every form', () => {
   const forms = schema({ site: { name: 'S' }, theme: { blocks: {}, formFields: [{ name: 'title', label: 'Titel', widget: 'string' }] } }).collections.find((c) => c.name === 'forms');
-  assert.deepEqual(forms.fields.map((f) => f.name), ['title', 'notify']);
-  assert.deepEqual(forms.fields[1].fields.map((f) => f.name), ['to', 'confirm', 'confirm_subject', 'confirm_text']);
+  assert.deepEqual(forms.fields.map((f) => f.name), ['title', 'thanks', 'notify']);
+  assert.deepEqual(forms.fields[2].fields.map((f) => f.name), ['to', 'confirm', 'confirm_subject', 'confirm_text']);
   const translated = schema({ site: { name: 'S', languages: ['de', 'en'] }, theme: { blocks: {}, formFields: [{ name: 'title', label: 'Titel', widget: 'string' }] }, lang: 'en' }).collections.find((c) => c.name === 'forms');
-  assert.deepEqual(translated.fields.map((f) => f.name), ['title'], 'only the default language\'s form decides');
+  assert.deepEqual(translated.fields.map((f) => f.name), ['title', 'thanks', 'notify']);
+  assert.deepEqual(translated.fields[2].fields.map((f) => f.name), ['confirm_subject', 'confirm_text'], 'who gets e-mail is set in the default language');
 });
