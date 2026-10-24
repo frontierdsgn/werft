@@ -127,7 +127,7 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
    <!-- x-release-please-start-version -->
    ```json
    { "type": "module", "scripts": { "build": "werft build", "dev": "werft dev" },
-     "dependencies": { "werft": "github:frontierdsgn/werft#v0.5.0" } }
+     "dependencies": { "werft": "github:frontierdsgn/werft#v0.6.0" } }
    ```
    <!-- x-release-please-end -->
    A new werft version is a new tag (see [Releasing](#releasing)); sites in the frontierdsgn
