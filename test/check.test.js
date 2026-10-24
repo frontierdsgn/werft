@@ -24,14 +24,14 @@ test('a clean build has no findings', () => {
       + '<link rel="stylesheet" href="assets/site.css"><link rel="canonical" href="https://example.org/"><script src="assets/site.js"></script>'
       + '<form method="post" action="/api/werft/forms/anfrage"></form><a href="/api/werft/tick">Tick</a><div style="background:url(\'assets/img/a.jpg\')"></div>'
       + '<img src="assets/img/a.jpg" alt="x" srcset="data:image/gif;base64,R0lGODlh,AAAA 1x, https://cdn.example/w_400,h_300/a.jpg 400w">'
-      + '<a href="kontakt.html#:~:text=Telefon">Text</a><link rel="alternate" hreflang="de" href="./"><iframe src="team/"></iframe><map><area href="kontakt.html" alt="K"></map><a href="blog/eintrag.html">Blog</a>',
+      + '<a href="kontakt.html#:~:text=Telefon">Text</a><a href="kontakt.html#form:~:text=Telefon">Text</a><img src="assets/img/a.jpg" alt="x" srcset="assets/img/a.jpg 1x), assets/img/a.jpg 2x"><link rel="alternate" hreflang="de" href="./"><iframe src="team/"></iframe><map><area href="kontakt.html" alt="K"></map><a href="blog/eintrag.html">Blog</a>',
     'kontakt.html': '<section id="form"></section>',
     'team/index.html': '<p>Team</p>',
     'assets/site.css': '/* url(gone.png) */ body { background: url(img/a.jpg) } .x { mask: url("#m") }',
     'assets/site.js': 'x',
     'assets/img/a.jpg': 10,
     'assets/img/a b.jpg': 10,
-  }, { redirects: [{ from: '/blog/:slug', to: '/kontakt.html' }, { from: '/news/:slug', to: '/blog/:slug' }] });
+  }, { redirects: [{ from: '/blog/:slug', to: '/kontakt.html' }, { from: '/alt/:slug', to: '/neu/:slug' }] });
   assert.deepEqual(result.findings, []);
   assert.equal(result.pages, 3);
 });
@@ -74,6 +74,9 @@ test('untranslated-link: a language page links to its version of a page it does 
   assert.match(result.findings[0].message, /leads to en\/impressum\.html, a page "en" does not have; the "de" page is impressum\.html\. Write the link relative to the page \("impressum\.html"\)/);
   const nested = run({ 'impressum.html': '', 'en/termine/a.html': '<a href="/en/impressum.html">Imprint</a>' }, { site });
   assert.match(nested.findings[0].message, /\("\.\.\/impressum\.html"\)/);
+  // Deeper pages and folders the build does not rewrite: the default language's address itself.
+  const deeper = run({ 'termine/x.html': '', 'team/index.html': '', 'en/index.html': '<a href="/en/termine/x.html">x</a><a href="/en/team/">Team</a>' }, { site });
+  assert.deepEqual(deeper.findings.map((f) => f.message.match(/\. (Link "[^"]*")/)?.[1]), ['Link "/termine/x.html"', 'Link "/team/"']);
   // Below a base path, too.
   const below = run({ 'salon/impressum.html': '', 'salon/en/index.html': '<a href="/salon/en/impressum.html">Imprint</a>' }, { site: { ...site, base: 'salon' } });
   assert.deepEqual(rules(below), ['salon/en/index.html:1:4 error untranslated-link']);
@@ -146,6 +149,8 @@ test('check in werft.config.js: rules change a level, ignore leaves paths out, m
   assert.throws(() => run(map, { site: { check: { rules: { 'empty-alt': 'fatal' } } } }), /must be 'error', 'warning', 'off'/);
   assert.throws(() => run(map, { site: { check: { maxFileSize: '1 MB' } } }), /maxFileSize must be a number of bytes/);
   assert.throws(() => run(map, { site: { check: { rules: 'strict' } } }), /check\.rules must be an object/);
+  assert.throws(() => run(map, { site: { check: 'strict' } }), /check must be an object/);
+  assert.throws(() => run(map, { site: { check: { rule: {} } } }), /unknown key "rule"/);
   assert.equal(run(map, { site: { check: { rules: null, ignore: null, maxFileSize: null } } }).findings.length, 3, 'null leaves the default');
 });
 
