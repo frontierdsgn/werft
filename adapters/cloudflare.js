@@ -23,6 +23,8 @@
 //   WERFT_GITHUB_API   optional, for GitHub Enterprise Server (default https://api.github.com)
 //   TURNSTILE_SECRET_KEY  optional, forms then need Cloudflare Turnstile (secret)
 //   WERFT_MAIL, WERFT_MAIL_FROM  optional, the e-mail driver and sender (see gateway/mail.js)
+//   WERFT_MAIL_KEY     the mail provider's API key or token (secret); WERFT_MAIL_ACCOUNT the
+//                      Cloudflare account ID for WERFT_MAIL=cloudflare
 //
 // Bindings (Pages project settings → Functions):
 //   WERFT_KV           optional KV namespace; failed sign-ins then count across all isolates
