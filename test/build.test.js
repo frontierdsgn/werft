@@ -39,3 +39,22 @@ test('without a date field posts are ordered by their publish date', async () =>
   };
   assert.deepEqual(createContext({ site: {}, theme: { postType: { name: 'news' } }, content, now: new Date('2026-01-01') }).posts().map((p) => p.slug), ['b', 'a']);
 });
+
+test('ctx.url() gives theme files a content hash, so a changed file gets a new address', async () => {
+  const site = (css) => ({
+    ...memoryStore({ 'content/pages/index.json': '{"title":"Start"}', 'content/en/pages/index.json': '{"title":"Home"}', 'theme/static/assets/css/site.css': css, 'theme/static/assets/js/site.js': 'x' }),
+    readBytes: async (path) => new TextEncoder().encode({ 'theme/static/assets/css/site.css': css, 'theme/static/assets/js/site.js': 'x' }[path]),
+  });
+  const theme = {
+    staticDir: 'theme/static',
+    renderPage: (page, ctx) => ({ value: [ctx.url('assets/css/site.css'), ctx.url('assets/js/site.js?defer#top'), ctx.url('assets/img/a.jpg'), ctx.url('kontakt.html')].join(' ') }),
+  };
+  const page = async (css, path = 'index.html') => (await build({ site: { languages: ['de', 'en'] }, theme, store: site(css), media: {} })).files.find((f) => f.path === path).text;
+  const [css, js, media, link] = (await page('body{}')).split(' ');
+  assert.match(css, /^assets\/css\/site\.css\?v=[0-9a-f]{10}$/);
+  assert.match(js, /^assets\/js\/site\.js\?defer&v=[0-9a-f]{10}#top$/);
+  assert.deepEqual([media, link], ['assets/img/a.jpg', 'kontakt.html'], 'other addresses stay as they are');
+  assert.equal((await page('body{}')).split(' ')[0], css, 'the same file keeps its address');
+  assert.notEqual((await page('body{color:red}')).split(' ')[0], css);
+  assert.equal((await page('body{}', 'en/index.html')).split(' ')[0], `../${css}`);
+});

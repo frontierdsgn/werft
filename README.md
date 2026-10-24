@@ -166,7 +166,9 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      from the content, `en/kontakt.html`, `''` for the home page) into an address that works from
      the page being rendered (`../assets/css/site.css` on `en/` pages, unchanged on pages at the
      root); addresses with a scheme or starting with `/`, `#` or `?` stay as they are. Use it for the
-     theme's assets and for media files outside Markdown. `translations` is one item per language,
+     theme's assets and for media files outside Markdown. In the build, a file from the theme's
+     `staticDir` also gets a hash of its content (`assets/css/site.css?v=3f2a…`), so a visitor's
+     browser does not keep showing an old copy after the file changed. `translations` is one item per language,
      `{ lang, url, current, exists }`: `url` leads to the entry in that language if it is
      published (`exists`), else to that language's home page, and is ready for an `href`.
    - `search: true` adds [site search](#site-search); `ctx.search()` then renders the search box.
