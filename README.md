@@ -554,7 +554,7 @@ html`<header>${ctx.search({ label: 'Suche', placeholder: 'Suchbegriff', empty: '
   is the entry's title (else its first `<h1>`), `text` the text of the page's `<main>` (else its
   `<body>`) without `<nav>`, `<search>`, scripts and styles. Put the content in `<main>`, so the
   menu, header and footer do not make every page match.
-- The script `_werft/search.js` (2.8 KB, 1.1 KB gzipped, no dependencies) shows the box, which is
+- The script `_werft/search.js` (3.0 KB, 1.2 KB gzipped, no dependencies) shows the box, which is
   hidden until then (without JavaScript there is no box that does nothing), and lists up to 10
   matches while the visitor types: every word must occur in the title or the text, case and accents
   are ignored (`fahre` finds "Fähre"), matches in the title come first, each with an excerpt.
