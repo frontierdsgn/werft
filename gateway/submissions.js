@@ -10,7 +10,8 @@
 //
 // Fields whose name starts with "_" are not stored. A filled-in "_gotcha" (a field hidden from
 // people) marks a bot: it gets the success reply and nothing is stored. "_redirect" sends a plain
-// form post on to that path of the page's site; without it the visitor gets a short thank-you page.
+// form post on to that path of the page's site; without it the visitor gets a short thank-you page
+// in the language of the page the form was on (see TEXTS).
 // With a Turnstile secret, a submission needs a valid "cf-turnstile-response" (Cloudflare's widget
 // adds it to the form). Each form takes at most PER_HOUR submissions an hour.
 //
@@ -39,8 +40,32 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), { status
 const escapeHTML = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 // A submission's id starts with its time, so ids sort by time: 20260601T120000Z-1a2b3c4d.
 const stamp = (time) => new Date(time).toISOString().replace(/[-:]|\.\d+/g, '');
+const parse = (bytes) => { try { return JSON.parse(decoder.decode(bytes)); } catch { return null; } };
 const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
+
+// What visitors read, by language. A text comes from the form in the page's language (`thanks`,
+// `notify.confirm_subject`, `notify.confirm_text`), else from here, else from the form in the
+// default language, else from here in German.
+const TEXTS = {
+  de: {
+    thanks: 'Vielen Dank, Ihre Nachricht ist angekommen.', back: 'Zurück', post: 'Formulare werden per POST gesendet.',
+    missing: 'Dieses Formular gibt es nicht.', long: 'Die Nachricht ist zu lang.', unreadable: 'Das Formular konnte nicht gelesen werden.',
+    check: 'Die Sicherheitsprüfung hat nicht geklappt. Bitte die Seite neu laden und noch einmal senden.', empty: 'Das Formular ist leer.',
+    busy: 'Gerade kommen sehr viele Nachrichten an. Bitte in einer Stunde noch einmal versuchen.',
+    confirmSubject: (name) => (name ? `Ihre Nachricht an ${name}` : 'Ihre Nachricht ist angekommen'),
+    confirmText: (name) => `Vielen Dank, Ihre Nachricht ist angekommen.${name ? `\n\n${name}` : ''}`,
+  },
+  en: {
+    thanks: 'Thank you, your message has arrived.', back: 'Back', post: 'Forms are sent with POST.',
+    missing: 'This form does not exist.', long: 'The message is too long.', unreadable: 'The form could not be read.',
+    check: 'The security check did not work. Please reload the page and send the form again.', empty: 'The form is empty.',
+    busy: 'A great many messages are arriving right now. Please try again in an hour.',
+    confirmSubject: (name) => (name ? `Your message to ${name}` : 'Your message has arrived'),
+    confirmText: (name) => `Thank you, your message has arrived.${name ? `\n\n${name}` : ''}`,
+  },
+};
+const builtIn = (lang, key) => (TEXTS[lang] ?? TEXTS[lang.split('-')[0].toLowerCase()])?.[key];
 
 // The visitor's address: a field named email (e-mail, mail), else the first field holding one.
 function visitorOf(fields) {
@@ -95,19 +120,35 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     }
   }
 
-  // A plain form post gets a page, a script (Accept: application/json) gets JSON.
-  function reply(request, url, status, message, redirect) {
-    if ((request.headers.get('accept') ?? '').includes('application/json')) return json(status < 300 ? { ok: true } : { message }, status);
-    // The page the form was on, so a form on another host (PHP web space) leads back there.
-    const referer = (() => { try { return new URL(request.headers.get('referer')); } catch { return null; } })();
-    if (status < 300 && redirect) return new Response(null, { status: 303, headers: { location: new URL(redirect, referer ?? url).href } });
-    const back = referer ? `<p><a href="${escapeHTML(referer.href)}">Zurück</a></p>` : '';
-    // The page takes the language of the page the form was on (a folder named after one of the
-    // site's languages); its text is German and marked so. A thank-you page in the visitor's
-    // language comes through _redirect.
+  const refererOf = (request) => { try { return new URL(request.headers.get('referer')); } catch { return null; } };
+
+  // The language of the page the form was on: a folder named after one of the site's other
+  // languages, else the default language; a site without languages has its settings' `lang`.
+  async function languageOf(request) {
     const languages = site.languages ?? [];
-    const lang = languages.slice(1).find((l) => referer?.pathname.split('/').includes(l)) ?? languages[0] ?? 'de';
-    const body = `<!doctype html><html lang="${escapeHTML(lang)}"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${escapeHTML(site.name ?? '')}</title><body style="font:17px/1.5 system-ui,sans-serif;max-width:32em;margin:15vh auto;padding:0 16px"><main lang="de"><p>${escapeHTML(message)}</p>${back}</main></body></html>`;
+    const path = refererOf(request)?.pathname.split('/') ?? [];
+    if (languages.length) return languages.slice(1).find((l) => path.includes(l)) ?? languages[0];
+    const settings = parse(await storage.read((await storage.head(branch)).sha, `${site.contentDir}/settings/site.json`));
+    return typeof settings?.lang === 'string' && /^[a-z]{2,3}(-[a-z0-9]+)*$/i.test(settings.lang) ? settings.lang : 'de';
+  }
+
+  // A text for the visitor and its language (see TEXTS); own: [the form's text in the page's
+  // language, the form's text in the default language].
+  function pick(lang, key, own = []) {
+    const choices = [[own[0], lang], [builtIn(lang, key), lang], [own[1], site.languages?.[0] ?? lang], [TEXTS.de[key], 'de']];
+    const [value, language] = choices.find(([text]) => (typeof text === 'string' ? text.trim() : text));
+    return { text: typeof value === 'function' ? value(site.name) : value.trim(), lang: language };
+  }
+
+  // A plain form post gets a page, a script (Accept: application/json) gets JSON. lang: the page's.
+  function reply(request, url, status, lang, { text, lang: textLang }, redirect) {
+    if ((request.headers.get('accept') ?? '').includes('application/json')) return json(status < 300 ? { ok: true } : { message: text }, status);
+    // The page the form was on, so a form on another host (PHP web space) leads back there.
+    const referer = refererOf(request);
+    if (status < 300 && redirect) return new Response(null, { status: 303, headers: { location: new URL(redirect, referer ?? url).href } });
+    const back = referer ? `<p><a href="${escapeHTML(referer.href)}">${escapeHTML(pick(lang, 'back').text)}</a></p>` : '';
+    const main = textLang === lang ? '<main>' : `<main lang="${escapeHTML(textLang)}">`;
+    const body = `<!doctype html><html lang="${escapeHTML(lang)}"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${escapeHTML(site.name ?? '')}</title><body style="font:17px/1.5 system-ui,sans-serif;max-width:32em;margin:15vh auto;padding:0 16px">${main}<p>${escapeHTML(text).replace(/\r?\n/g, '<br>')}</p>${back}</main></body></html>`;
     return new Response(body, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
 
@@ -118,7 +159,7 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     return hex(new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(`confirmation:${address.toLowerCase()}`))).subarray(0, 2));
   }
 
-  async function inform({ form, title, fields, visitor, confirm }) {
+  async function inform({ form, local, lang, title, fields, visitor, confirm }) {
     const fromName = site.name;
     const to = String(form.notify?.to ?? '').split(/[\s,;]+/).filter(isAddress);
     const sending = [];
@@ -127,8 +168,9 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
       sending.push(mail.send({ to, subject: `Neue Einsendung: ${oneLine(title)}`, text, ...(visitor && { replyTo: visitor }), fromName }));
     }
     if (confirm) {
-      const subject = oneLine(form.notify.confirm_subject) || (site.name ? `Ihre Nachricht an ${oneLine(site.name)}` : 'Ihre Nachricht ist angekommen');
-      const text = String(form.notify.confirm_text ?? '').trim() || `Vielen Dank, Ihre Nachricht ist angekommen.${site.name ? `\n\n${site.name}` : ''}`;
+      const own = (key) => [local?.notify?.[key], form.notify?.[key]].map((t) => (typeof t === 'string' ? t : null));
+      const subject = oneLine(pick(lang, 'confirmSubject', own('confirm_subject')).text);
+      const text = pick(lang, 'confirmText', own('confirm_text')).text;
       sending.push(mail.send({ to: visitor, subject, text: `${text}\n`, fromName }));
     }
     for (const result of await Promise.allSettled(sending)) {
@@ -148,26 +190,34 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
   }
 
   async function receive(request, url, slug) {
-    if (request.method !== 'POST') return reply(request, url, 405, 'Formulare werden per POST gesendet.');
-    if (!SLUG.test(slug)) return reply(request, url, 404, 'Dieses Formular gibt es nicht.');
-    if (Number(request.headers.get('content-length') ?? 0) > MAX_BYTES) return reply(request, url, 413, 'Die Nachricht ist zu lang.');
+    let lang;
+    const say = async (status, key, { own, redirect } = {}) => {
+      lang ??= await languageOf(request);
+      return reply(request, url, status, lang, pick(lang, key, own), redirect);
+    };
+    if (request.method !== 'POST') return say(405, 'post');
+    if (!SLUG.test(slug)) return say(404, 'missing');
+    if (Number(request.headers.get('content-length') ?? 0) > MAX_BYTES) return say(413, 'long');
     let fields;
-    try { fields = await readFields(request); } catch { return reply(request, url, 400, 'Das Formular konnte nicht gelesen werden.'); }
+    try { fields = await readFields(request); } catch { return say(400, 'unreadable'); }
     const redirect = typeof fields._redirect === 'string' && /^\/(?![/\\])/.test(fields._redirect) ? fields._redirect : null;
-    const thanks = 'Vielen Dank, Ihre Nachricht ist angekommen.';
-    if (fields._gotcha) return reply(request, url, 200, thanks, redirect);
-    if (turnstileSecret && !(await human(fields, request))) return reply(request, url, 403, 'Die Sicherheitsprüfung hat nicht geklappt. Bitte die Seite neu laden und noch einmal senden.');
+    if (fields._gotcha) return say(200, 'thanks', { redirect });
+    if (turnstileSecret && !(await human(fields, request))) return say(403, 'check');
     const kept = Object.fromEntries(Object.entries(fields).filter(([name]) => !name.startsWith('_') && name !== TURNSTILE));
     const chars = Object.entries(kept).flat(2).join('').length;
-    if (Object.keys(kept).length > MAX_FIELDS || chars > MAX_CHARS) return reply(request, url, 413, 'Die Nachricht ist zu lang.');
-    if (!Object.values(kept).flat().some((v) => v.trim())) return reply(request, url, 422, 'Das Formular ist leer.');
-    const definition = await definitionOf((await storage.head(branch)).sha, slug);
-    if (!definition) return reply(request, url, 404, 'Dieses Formular gibt es nicht.');
+    if (Object.keys(kept).length > MAX_FIELDS || chars > MAX_CHARS) return say(413, 'long');
+    if (!Object.values(kept).flat().some((v) => v.trim())) return say(422, 'empty');
+    const main = (await storage.head(branch)).sha;
+    const definition = await definitionOf(main, slug);
+    if (!definition) return say(404, 'missing');
     const sent = await sentAt(await head());
     const hourAgo = stamp(now() - 3600 * 1000);
     const recent = sent.filter((p) => p.startsWith(`${SUBMISSIONS_DIR}/${slug}/`) && p.split('/').pop().slice(0, hourAgo.length) > hourAgo);
-    if (recent.length >= PER_HOUR) return reply(request, url, 429, 'Gerade kommen sehr viele Nachrichten an. Bitte in einer Stunde noch einmal versuchen.');
-    const form = (() => { try { return JSON.parse(decoder.decode(definition)) ?? {}; } catch { return {}; } })();
+    if (recent.length >= PER_HOUR) return say(429, 'busy');
+    const form = parse(definition) ?? {};
+    // The form in the page's language, where it is translated.
+    lang ??= await languageOf(request);
+    const local = (site.languages ?? []).slice(1).includes(lang) ? parse(await storage.read(main, `${site.contentDir}/${lang}/forms/${slug}.json`)) : form;
     const title = form.title ?? slug;
     const visitor = visitorOf(kept);
     const tag = mail && form.notify?.confirm && visitor ? await tagOf(visitor) : null;
@@ -180,8 +230,9 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     const random = `${confirm ? tag : ''}${hex(crypto.getRandomValues(new Uint8Array(confirm ? 2 : 4)))}`;
     const data = encoder.encode(`${JSON.stringify({ form: slug, received_at: received, fields: kept }, null, 2)}\n`);
     await commit(`Einsendung: ${title}`, [{ path: `${SUBMISSIONS_DIR}/${slug}/${stamp(received)}-${random}.json`, data }]);
-    if (mail) await inform({ form, title, fields: kept, visitor, confirm });
-    return reply(request, url, 201, thanks, redirect);
+    if (mail) await inform({ form, local, lang, title, fields: kept, visitor, confirm });
+    const own = [local?.thanks, form.thanks].map((t) => (typeof t === 'string' ? t : null));
+    return say(201, 'thanks', { own, redirect });
   }
 
   async function api(request, user) {
@@ -205,7 +256,6 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     // The title in the default language where the form has one.
     const titles = await readMany(main, forms.map((slug) => formDirs.map((dir) => `${dir}/forms/${slug}.json`).find((p) => tree.includes(p))));
     const texts = at ? await readMany(at, sent) : [];
-    const parse = (bytes) => { try { return JSON.parse(decoder.decode(bytes)); } catch { return null; } };
     const bySlug = new Map(forms.map((slug, i) => [slug, { slug, title: parse(titles[i])?.title ?? slug, submissions: [] }]));
     sent.forEach((path, i) => {
       const [slug, file] = path.slice(SUBMISSIONS_DIR.length + 1).split('/');

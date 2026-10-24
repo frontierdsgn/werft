@@ -498,9 +498,8 @@ and edits the default language's posts (the sidebar says so); "Eigene … beginn
 may publish) creates its first own post, and once one of its own posts is published the language
 shows only its own. The gateway checks `content/<lang>/…` like
 the same path of the default language (roles and kinds), and a translated form's submissions go with
-its original's. The gateway's thank-you page is German (it takes the `lang` of the page the form was
-on and marks its text `lang="de"`); for one in the visitor's language, send `_redirect` to a page
-of that language.
+its original's. The gateway's thank-you page, its messages and the confirmation e-mail are in the
+language of the page the form was on (see [Form submissions](#form-submissions)).
 
 ### Images
 
@@ -677,6 +676,12 @@ there (`git rm -r .werft/submissions`), they remain in that branch's history.
 - A plain form post gets a short thank-you page with a link back, or a redirect to `_redirect` (a
   path on the site the form was on). A request with `Accept: application/json` gets `{ "ok": true }`
   or `{ "message": … }` with the status.
+- The thank-you page and the messages are in the language of the page the form was on: a folder
+  named after one of the site's [languages](#languages) (`en/kontakt.html`), else the default
+  language; a site without `languages` takes `lang` from its settings. The text after sending is
+  the form's `thanks` ("Text nach dem Absenden" in the editor) in that language, else werft's own
+  (German and English), else the default language's `thanks`, else werft's German one, marked with
+  its language.
 - A submission is not a content change: `werft serve` does not rebuild for it, and on Cloudflare
   Pages the excluded preview branch (step 3 above) keeps it from starting a build (the free plan has
   500 a month). `werft dev` and `werft serve` commit to the local `werft-submissions` branch and
@@ -709,9 +714,10 @@ In the editor, each form has "E-Mail bei neuer Einsendung" (the field `notify` o
   cannot send them to strangers.
 - The submission is stored first. An e-mail that fails is written to the log and the visitor still
   gets the normal reply, so nothing is lost; it stays under "Einsendungen".
-- The recipients and texts are read from the form in the default language; the editor shows the
-  setting there only. They are part of the content: anyone who can read the repository, and the
-  theme through `ctx.form()`, sees the addresses.
+- The recipients and whether to confirm are read from the form in the default language; the editor
+  shows them there only. They are part of the content: anyone who can read the repository, and the
+  theme through `ctx.form()`, sees the addresses. The confirmation's subject and text come from the
+  form in the page's language, with the same fallbacks as `thanks`.
 
 #### Spam
 
