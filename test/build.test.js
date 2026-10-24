@@ -58,3 +58,22 @@ test('ctx.asset() gives theme stylesheets and scripts a content hash, so a chang
   assert.notEqual((await page('body{color:red}')).split(' ')[0], css);
   assert.equal((await page('body{}', 'en/index.html')).split(' ')[0], `../${css}`);
 });
+
+test('ctx.asset() on a real static folder skips linked folders and broken links', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { fsStore } = await import('../lib/node.js');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'werft-assets-'));
+  try {
+    const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text); };
+    write('content/pages/index.json', '{"title":"Start"}');
+    write('theme/static/site.css', 'body{}');
+    write('shared/lib.js', 'x');
+    fs.symlinkSync(path.join(root, 'shared'), path.join(root, 'theme/static/vendor.js'));
+    fs.symlinkSync(path.join(root, 'missing.css'), path.join(root, 'theme/static/broken.css'));
+    const theme = { staticDir: 'theme/static', renderPage: (page, ctx) => ({ value: `${ctx.asset('site.css')} ${ctx.asset('vendor.js/lib.js')}` }) };
+    const { files } = await build({ site: {}, theme, store: fsStore(root), media: {} });
+    assert.match(files.find((f) => f.path === 'index.html').text, /^site\.css\?v=[0-9a-f]{10} vendor\.js\/lib\.js$/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

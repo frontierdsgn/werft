@@ -161,7 +161,8 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      `limit` cuts the list. The admin lists posts newest first too.
    - For [languages](#languages), `ctx` (inside `renderPage`, `renderPost` and block renders) also
      offers `lang` (the entry's language; without `languages` the site setting `lang`, else `'de'`),
-     `languages` (the configured list, `[]` without the option), `url(path)` and `translations`.
+     `languages` (the configured list, `[]` without the option), `url(path)`, `asset(path)` and
+     `translations`.
      `url(path)` turns a path relative to the site's root (`assets/css/site.css`, a media file
      from the content, `en/kontakt.html`, `''` for the home page) into an address that works from
      the page being rendered (`../assets/css/site.css` on `en/` pages, unchanged on pages at the
@@ -169,10 +170,12 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      theme's assets and for media files outside Markdown. `asset(path)` is `url(path)` with a hash
      of the file's content for a stylesheet or script (`.css`, `.js`, `.mjs`) in the theme's
      `staticDir` (`assets/css/site.css?v=3f2a…`), so a visitor's browser does not keep an old copy
-     after the file changed. Only the build adds the hash (not the editor's preview), and only to
-     the address given to `asset()`: files a stylesheet or script names itself (fonts in `url()`,
-     `@import`, a module's `import`) keep their addresses. A JavaScript module that other modules
-     import is best loaded with `url()`, or the browser runs it twice. `translations` is one item per language,
+     after the file changed. The path is written as the file's path inside `staticDir` (no `./`
+     or `/` in front; files below a symbolically linked folder get no hash). Only the build adds
+     the hash (not the editor's preview), and only to the address given to `asset()`: files a
+     stylesheet or script names itself (fonts in `url()`, `@import`, a module's `import`) keep
+     their addresses. A JavaScript module that other modules import is best loaded with `url()`,
+     or the browser runs it twice. `translations` is one item per language,
      `{ lang, url, current, exists }`: `url` leads to the entry in that language if it is
      published (`exists`), else to that language's home page, and is ready for an `href`.
    - `search: true` adds [site search](#site-search); `ctx.search()` then renders the search box.
