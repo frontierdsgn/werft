@@ -8,6 +8,7 @@ import { buildToDisk, loadSite } from '../lib/node.js';
 import { createGateway, gatewaySite } from '../gateway/core.js';
 import { gitStorage } from '../gateway/storage/git.js';
 import { mailFromEnv } from '../gateway/mail.js';
+import { smtpFromEnv } from '../gateway/mail-smtp.js';
 
 const TYPES = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', ico: 'image/x-icon', txt: 'text/plain; charset=utf-8', xml: 'application/xml', woff2: 'font/woff2', pdf: 'application/pdf', map: 'application/json' };
 
@@ -92,7 +93,7 @@ export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret
   const gateway = createGateway({
     storage, secret, branch, tickKey,
     turnstileSecret: process.env.TURNSTILE_SECRET_KEY || undefined,
-    mail: mailFromEnv(process.env, { fallback: mail, log }),
+    mail: mailFromEnv(process.env, { fallback: mail, log, drivers: { smtp: smtpFromEnv } }),
     site: gatewaySite(site, theme),
     onCommit: (commit) => { rebuild(commit.message); },
     onTick: ({ due }) => rebuild(`scheduled: ${due.join(', ')}`),

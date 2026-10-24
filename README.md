@@ -54,6 +54,9 @@ Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 - **Storage drivers**: [git.js](gateway/storage/git.js) commits to a local checkout;
   [github.js](gateway/storage/github.js) commits through GitHub's REST API (GraphQL for bulk reads),
   signed in as a GitHub App ([github-app.js](gateway/storage/github-app.js)) or with a token.
+- **Mail drivers** ([mail.js](gateway/mail.js)): Cloudflare Email Service, Brevo and Resend through
+  their HTTP APIs; [mail-smtp.js](gateway/mail-smtp.js), like git.js, needs Node and runs only in
+  `werft serve` and `werft dev`. See [E-mail](#e-mail).
 - **Build** ([lib/build.js](lib/build.js)): isomorphic; the CLI builds the site, and the admin uses
   the same code for its live preview, so the preview is the published page.
 - **Adapters**: [node.js](adapters/node.js) (`werft dev` / `werft serve`),
@@ -282,6 +285,7 @@ each save is a commit to `main` that goes live once its `gate` passed.
    | `WERFT_GITHUB_API` | optional: GitHub Enterprise Server API URL |
    | `TURNSTILE_SECRET_KEY` | optional, secret: forms then need [Cloudflare Turnstile](#spam) |
    | `WERFT_MAIL`, `WERFT_MAIL_FROM` | optional: the [e-mail](#e-mail) driver and the sender address |
+   | `WERFT_MAIL_KEY`, `WERFT_MAIL_ACCOUNT` | for e-mail through a provider, see [E-mail](#e-mail); the key is a secret |
 
    Optional binding: a KV namespace bound as `WERFT_KV` makes the [sign-in limits](#sign-in)
    count across Cloudflare's isolates.
@@ -603,15 +607,41 @@ names: `WERFT_MAIL` is the driver, `WERFT_MAIL_FROM` the sender address (Pages e
 variables, or the environment of `werft serve` and `werft dev`). Without `WERFT_MAIL`, `werft dev`
 uses `log`; `werft serve` and Pages send nothing, and `/api/werft/status` reports `"mail": false`.
 
-| `WERFT_MAIL` | Sends |
-|---|---|
-| `log` | nothing: prints each e-mail to the log, links for a new password too, so it is for development and trying out |
+| `WERFT_MAIL` | Sends | Also set |
+|---|---|---|
+| `log` | nothing: prints each e-mail to the log, links for a new password too, so it is for development and trying out | |
+| `cloudflare` | through [Cloudflare Email Service](https://developers.cloudflare.com/email-service/) (its REST API; Pages Functions cannot use the `send_email` binding) | `WERFT_MAIL_ACCOUNT` (the account ID), `WERFT_MAIL_KEY` (an API token with "Email Sending: Edit") |
+| `brevo` | through [Brevo](https://www.brevo.com/)'s transactional API | `WERFT_MAIL_KEY` (an API key) |
+| `resend` | through [Resend](https://resend.com/)'s API | `WERFT_MAIL_KEY` (an API key) |
+| `smtp` | through an SMTP server; `werft serve` and `werft dev` only, not on Cloudflare | `WERFT_MAIL_HOST`, `WERFT_MAIL_PORT` (default 587), `WERFT_MAIL_USER` and `WERFT_MAIL_KEY` (the password) when the server wants a login |
 
-A driver delivering through a mail provider is not built yet: which providers werft supports is
-an open question ([#36](https://github.com/frontierdsgn/werft/issues/36)). Every driver gets the
-same checked message (one to 20 recipients, plain addresses, subject and sender name on one line),
-so a value from a visitor cannot add a header. Tests use `memoryMail()`, which keeps the e-mails
-it gets in `sent` and fails while `failure` is set.
+A missing setting stops the gateway at start with a message naming it. Mark `WERFT_MAIL_KEY` as
+a secret. What each provider costs (as of October 2026; check its pricing page):
+
+- `cloudflare`: Email Sending is in beta. It is free only to the destination addresses verified in
+  the Cloudflare account (enough for notifications to the site's owner); any other recipient, such
+  as a visitor or a new password, needs the Workers Paid plan.
+- `brevo` and `resend`: a free plan with a daily limit (Brevo 300 e-mails a day, Resend 100 a day
+  and 3,000 a month), paid plans above it.
+- `smtp`: whatever the mail server's provider charges. werft always encrypts: port 465 speaks TLS
+  from the start, any other port must offer STARTTLS, and the server's certificate must be valid;
+  it never sends the password unencrypted.
+
+The sending domain (the one in `WERFT_MAIL_FROM`) has to prove it may send, or the e-mails land in
+spam: an SPF and a DKIM record, which the provider names when the domain is added there, and a
+DMARC record (`_dmarc.<domain>`, e.g. `v=DMARC1; p=none`). Cloudflare adds them itself when the
+domain's DNS is at Cloudflare (Email Service → Email Sending → Onboard Domain); for Brevo and
+Resend, add the domain in their dashboard and its records at the DNS host; for SMTP, the mail
+server's provider names them.
+
+A provider processes personal data (recipients, and what a visitor wrote): the site's operator
+needs a data processing agreement with the provider and names it in the privacy policy.
+
+Every driver gets the same checked message (one to 20 recipients, plain addresses, subject and
+sender name on one line), so a value from a visitor cannot add a header. A driver for another
+provider is a small file next to [mail.js](gateway/mail.js) and an entry in its `DRIVERS`. Tests use
+`memoryMail()`, which keeps the e-mails it gets in `sent` and fails while `failure` is set; the
+provider drivers are tested against fakes of their APIs ([fake-mail.js](test/fake-mail.js)).
 
 ### Form submissions
 
