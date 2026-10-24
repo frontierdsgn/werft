@@ -71,7 +71,7 @@ Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 | Pages and posts | Pages built from sections (the theme's blocks), plus one post type per theme (e.g. events). Add, delete, reorder sections. "Seite duplizieren" (in a page's settings and at the end of its form) copies a page in the language being edited as a draft under a new title and address, without its publishing date and SEO title. "Adresse" in a page's settings changes its address (administrators, since it adds a redirect): in one save the page and its translations are renamed, links in the content follow, a published page's old address redirects to the new one, and what still names the old address (a full URL) is listed. |
 | Draft, pending review, publish, schedule | Status per entry; a publish date in the future schedules it (see [Scheduling](#scheduling)). Contributors are offered only "Entwurf" and "Zur Prüfung"; when the gateway refuses a change for the editor's role, the admin says so instead of "try again later". |
 | Visual editing, preview | Two views of the same [editor](#editor), switched at the top of the sidebar: "Formular" shows the fields beside a live preview rendered by the site's own theme (a click on a section in the preview opens it in the form); "Auf der Seite" edits on the page itself. A post without a page of its own (no `renderPost` in the theme) is previewed marked on the page that lists it, else alone in the theme's listing section, else as a card of its fields. |
-| Media library, alt text | "Bilder": all images with where each is used; upload several at once, delete only unused ones (Administrator, Redakteur). Large photos are scaled down before they are saved (see [Images](#images)). Images are fields with file, alt text and caption. |
+| Media library, alt text | "Bilder": all images with where each is used, searchable by file name, alternative text and page, and filtered to unused images or images used without alternative text (marked "Ohne Alternativtext auf: …"); upload several at once, "Ersetzen" swaps an image for a new upload everywhere the editor may change (the old file stays while anything else still names it), delete only unused ones (replace and delete: Administrator, Redakteur). Large photos are scaled down before they are saved (see [Images](#images)). Images are fields with file, alt text, caption and focal point. |
 | Menus, site settings, SEO | Menu locations the theme declares; site settings; SEO title, description, share image and noindex per page, written into the page by [`ctx.head()`](#install). |
 | Revisions | Every save is a git commit. "Frühere Versionen" under each entry compares a version with the current one by content and brings it back as an unsaved change. "Gelöschte Inhalte" (under "Weitere Inhalte", administrators and editors) lists pages, posts, patterns and forms deleted in the last 30 (on request 100) commits that changed the content, and brings one back as it was last saved, a page or post as a draft, as an unsaved change. |
 | Reusable blocks | Patterns: sections shared by several pages. |
@@ -587,9 +587,17 @@ ctx.img(section.image, { sizes: '(min-width: 60em) 50vw, 100vw', class: 'hero' }
 //   class="hero"></picture>
 ```
 
-`ctx.image(src)` gives the same as data: `width`, `height`, `variants` (`{ src, width, height, type }`),
-`srcset` and `sources` (`{ type, srcset }`), with addresses that work from the page being rendered.
-The editor's preview shows the originals.
+A picture field (`fields.picture()`) has a focal point, "Wichtiger Bildteil": the editor clicks
+the part of the image that must stay visible when the theme crops it (or moves it with the arrow
+keys). It is stored as `"focus": "30% 70%"`, and `ctx.img()` writes it as `object-position`, ahead
+of the theme's own `style`, so `object-fit: cover` keeps that part in view. A theme that writes its
+own markup uses `ctx.image(section.image).focus`, which is set only for a valid point (anything else
+in the content could carry other CSS); `fields.picture(name, label, { focus: false })` leaves the
+field out. Picking another image for the field removes the point.
+
+`ctx.image(src)` (a path or a picture field) gives the same as data: `width`, `height`, `variants`
+(`{ src, width, height, type }`), `srcset` and `sources` (`{ type, srcset }`), with addresses that
+work from the page being rendered. The editor's preview shows the originals.
 
 ### Sign-in
 

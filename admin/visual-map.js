@@ -22,7 +22,7 @@ const mark = (id, value) => `${OPEN}${encode(id)}${CLOSE}${value}${END}`;
 export const unmark = (text) => text.replace(ALL, '');
 
 // Values that name things rather than show text.
-const STRUCTURE = new Set(['type', 'pattern', 'status', 'publish_date', 'form', 'id', 'slug']);
+const STRUCTURE = new Set(['type', 'pattern', 'status', 'publish_date', 'form', 'id', 'slug', 'focus']);
 const IMAGE = /\.(jpe?g|png|gif|webp|svg|avif)$/i;
 
 export function getAt(root, path) {

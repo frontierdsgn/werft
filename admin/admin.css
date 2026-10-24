@@ -181,6 +181,10 @@ button,input,select,textarea{font:inherit;color:inherit}
 .ve-library small{color:var(--ve-muted);font-size:12.5px}
 .ve-library .ve-badge{align-self:flex-start;color:var(--ve-warn);background:var(--ve-warn-soft)}
 .ve-library .ve-tool{align-self:flex-start;min-height:30px;padding:3px 10px;font-size:13px}
+.ve-library .ve-upload{margin:0}
+.ve-library .ve-alt-missing{color:var(--ve-warn);font-weight:600}
+.ve-library-tools input,.ve-library-tools select{font-size:15px;padding:7px 10px;border:1px solid var(--ve-field);border-radius:6px;min-height:38px;background:#fff}
+.ve-library-tools input{flex:1 1 260px}
 .ve-people{list-style:none;margin:0;padding:0}
 .ve-people li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-top:1px solid var(--ve-line)}
 .ve-people li>div:first-child{display:flex;flex-direction:column}
@@ -302,3 +306,9 @@ body:has(.werft-login){display:flex;align-items:flex-start;justify-content:cente
 .werft-login button{margin-top:20px;width:100%;font-size:15px;font-weight:700;min-height:42px;border:0;border-radius:8px;background:var(--ve-accent);color:#fff;cursor:pointer}
 .werft-login button:hover{background:var(--ve-accent-dark)}
 .werft-login .werft-error{color:var(--ve-danger);margin:12px 0 0;min-height:1.5em;font-weight:600}
+.ve-focus-field{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.ve-focus-field [hidden]{display:none!important}
+.ve-focus{position:relative;display:inline-block;cursor:crosshair;line-height:0;border-radius:6px}
+.ve-focus:focus-visible{outline:3px solid #d9a521;outline-offset:2px}
+.ve-focus img{display:block;max-width:100%;max-height:220px;border-radius:6px}
+.ve-focus-dot{position:absolute;width:18px;height:18px;margin:-12px 0 0 -12px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 2px rgba(0,0,0,.65);pointer-events:none}

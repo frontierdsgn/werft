@@ -6,7 +6,7 @@
 // until "Speichern", which stores every changed file in one commit through the gateway.
 import { schema as adminSchema } from 'werft/schema';
 import { createContext, mediaPaths, markdown, raw, escape, imageSize, isPublic } from 'werft';
-import { downscale, downscaleTarget, maxSize } from 'werft/images';
+import { downscale, downscaleTarget, maxSize, replaceEverywhere, picturesOf } from 'werft/images';
 import { siteLanguages, languageDir, localize, deepMerge, differences, pageFile, pageLinks } from 'werft/content';
 import { requireUser, loadSite, api, signOut } from './session.js';
 import { disarm, postPreview } from './preview.js';
@@ -1659,9 +1659,43 @@ function entryTitle(path, data) {
   const title = KIND[folder] ? data.title ?? slug : setting && describe(setting).title;
   return title ? (language ? `${title} (${languageName(language)})` : title) : undefined;
 }
-// The entries that name an image.
-function usesOf(path) {
-  return [...files].filter(([p, f]) => f.data && !unchangedCopy(p, f) && JSON.stringify(f.data).includes(path)).map(([p, f]) => entryTitle(p, f.data)).filter(Boolean);
+// The entries that name an image, by their title.
+const entriesWith = (path) => [...files].filter(([p, f]) => f.data && !unchangedCopy(p, f) && JSON.stringify(f.data).includes(path));
+const usesOf = (path) => entriesWith(path).map(([p, f]) => entryTitle(p, f.data)).filter(Boolean);
+// The image's alternative texts where it is shown as a picture, and the entries that show it
+// without one.
+function altsOf(path) {
+  const pictures = entriesWith(path).map(([p, f]) => [entryTitle(p, f.data), picturesOf(f.data, path, { root: base })]);
+  return {
+    alts: [...new Set(pictures.flatMap(([, list]) => list.map((pic) => String(pic.alt ?? '').trim()).filter(Boolean)))],
+    missing: [...new Set(pictures.filter(([title, list]) => title && list.some((pic) => !String(pic.alt ?? '').trim())).map(([title]) => title))],
+  };
+}
+// What a content file holds, as the gateway sees it (gateway/roles.js), for what the editor may change.
+function kindOf(path) {
+  let rest = path.slice(contentDir.length + 1);
+  const language = languages.slice(1).find((l) => rest.startsWith(`${l}/`));
+  if (language) rest = rest.slice(language.length + 1);
+  if (rest === 'settings/site.json') return 'settings';
+  if (rest.startsWith('settings/')) return 'structure';
+  if (postType && rest.startsWith(`${postType.name}/`)) return 'post';
+  return ['pages/', 'patterns/', 'forms/'].some((d) => rest.startsWith(d)) ? 'content' : 'code';
+}
+// Every use of an image in the entries the editor may change shows another one instead. The old file
+// is deleted with the next save once nothing names it any more (an unsaved upload stays in the
+// library, unused); else returns the entries that still show it.
+function replaceImage(from, to) {
+  let left = false;
+  change(() => {
+    views.clear();
+    // Untranslated copies are made again from their original when needed.
+    for (const [p, f] of [...files]) if (unchangedCopy(p, f)) files.delete(p);
+    const result = replaceEverywhere([...files].map(([p, f]) => [p, f.data]), from, to, { root: base, may: (p) => can(kindOf(p)) });
+    for (const [p, data] of result.changed) files.get(p).data = data;
+    left = result.left;
+    if (!left && (!uploads.get(from) || uploads.get(from).saved)) removed.add(from);
+  });
+  return left ? usesOf(from) : [];
 }
 function removeImage(path) {
   const u = uploads.get(path);
@@ -1690,7 +1724,7 @@ const app = {
     files.get(path).data = data;
     views.clear();
   },
-  images, mediaURL, upload, usesOf, removeImage, mayDeleteImages: ['administrator', 'editor'].includes(me.role),
+  images, mediaURL, upload, usesOf, altsOf, removeImage, replaceImage, mayDeleteImages: ['administrator', 'editor'].includes(me.role),
   isUnsaved: (path) => uploads.has(path) && !uploads.get(path).saved,
   // Ends this session ({ everywhere: true }: all of the user's) and leaves for the sign-in page; on
   // a failure it says so and stays.

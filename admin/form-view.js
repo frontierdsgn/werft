@@ -183,7 +183,11 @@ function version(app, source, path, commit, newest) {
   return row;
 }
 
-// All images of the site, with where they are used; new ones are uploaded here.
+// What the image library is narrowed to, kept while the editor is open.
+const library = { query: '', filter: 'all' };
+
+// All images of the site, with where they are used and whether an alternative text is missing
+// there; new ones are uploaded here, and one can be replaced everywhere at once.
 export function mediaView(app, root) {
   const draw = () => mediaView(app, root);
   const input = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/gif,image/webp', multiple: true });
@@ -194,25 +198,69 @@ export function mediaView(app, root) {
     draw();
   });
   const upload = el('label', { className: 've-primary ve-upload' }, 'Bilder hochladen …', input);
-  const images = app.images().sort((a, b) => a.split('/').pop().localeCompare(b.split('/').pop(), 'de'));
-  const grid = el('ul', { className: 've-library' }, ...images.map((path) => {
-    const used = app.usesOf(path);
-    const name = path.split('/').pop();
-    const item = el('li', {}, el('img', { src: app.mediaURL(path), alt: '', loading: 'lazy' }),
-      el('strong', {}, name),
-      el('small', {}, used.length ? `Verwendet auf: ${used.join(', ')}` : 'Wird nirgends verwendet.'));
-    if (app.isUnsaved(path)) item.append(el('span', { className: 've-badge' }, 'Noch nicht gespeichert'));
-    if (app.mayDeleteImages && !used.length) {
-      item.append(app.button('Löschen', `${name} löschen`, async () => {
-        if (await app.confirmDialog('Bild löschen?', `„${name}“ wird beim nächsten Speichern gelöscht.`, 'Löschen')) app.removeImage(path);
+  const fileName = (path) => path.split('/').pop();
+  const images = app.images().sort((a, b) => fileName(a).localeCompare(fileName(b), 'de'))
+    .map((path) => ({ path, name: fileName(path), used: app.usesOf(path), ...app.altsOf(path) }));
+  const filters = {
+    all: ['Alle Bilder', () => true],
+    unused: ['Nirgends verwendet', (image) => !image.used.length],
+    noalt: ['Ohne Alternativtext', (image) => image.missing.length > 0],
+  };
+  const matches = (image) => {
+    const text = [image.name, ...image.alts, ...image.used].join(' ').toLocaleLowerCase('de');
+    return filters[library.filter][1](image) && library.query.toLocaleLowerCase('de').split(/\s+/).every((word) => text.includes(word));
+  };
+  const replace = (image) => {
+    const file = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/gif,image/webp' });
+    file.addEventListener('change', async () => {
+      if (!file.files[0]) return;
+      let added;
+      try { added = await app.upload(file.files[0]); } catch (error) { app.toast(`Das Bild ließ sich nicht hochladen: ${error.message}`, true); return; }
+      const left = app.replaceImage(image.path, added.path);
+      const name = fileName(added.path);
+      const where = left.length
+        ? `„${name}“ steht jetzt überall, wo Sie es ändern dürfen. „${image.name}“ bleibt, weil es noch verwendet wird auf: ${left.join(', ')}.`
+        : image.used.length ? `Überall, wo „${image.name}“ war (${image.used.join(', ')}), steht jetzt „${name}“.` : `„${name}“ ersetzt „${image.name}“.`;
+      app.toast([where, 'Mit „Speichern“ kommt es auf die Website.', added.note].filter(Boolean).join(' '), false, true);
+      draw();
+    });
+    const label = el('label', { className: 've-tool ve-upload', title: `${image.name} durch ein anderes Bild ersetzen` }, 'Ersetzen …', file);
+    return label;
+  };
+  const item = (image) => {
+    const node = el('li', {}, el('img', { src: app.mediaURL(image.path), alt: '', loading: 'lazy' }),
+      el('strong', {}, image.name),
+      el('small', {}, image.used.length ? `Verwendet auf: ${image.used.join(', ')}` : 'Wird nirgends verwendet.'),
+      image.missing.length ? el('small', { className: 've-alt-missing' }, `Ohne Alternativtext auf: ${image.missing.join(', ')}`) : null);
+    if (app.isUnsaved(image.path)) node.append(el('span', { className: 've-badge' }, 'Noch nicht gespeichert'));
+    const tools = el('div', { className: 've-actions-row' });
+    if (app.mayDeleteImages) tools.append(replace(image));
+    if (app.mayDeleteImages && !image.used.length) {
+      tools.append(app.button('Löschen', `${image.name} löschen`, async () => {
+        if (await app.confirmDialog('Bild löschen?', `„${image.name}“ wird beim nächsten Speichern gelöscht.`, 'Löschen')) app.removeImage(image.path);
       }, 've-tool ve-danger'));
     }
-    return item;
-  }));
+    if (tools.childElementCount) node.append(tools);
+    return node;
+  };
+  const list = el('div');
+  const showList = () => {
+    const shown = images.filter(matches);
+    list.replaceChildren(shown.length ? el('ul', { className: 've-library' }, ...shown.map(item))
+      : card(null, images.length ? 'Kein Bild passt dazu.' : 'Noch keine Bilder.'));
+  };
+  const search = el('input', { type: 'search', value: library.query, placeholder: 'Suchen: Dateiname, Alternativtext, Seite' });
+  search.setAttribute('aria-label', 'Bilder durchsuchen');
+  search.addEventListener('input', () => { library.query = search.value; showList(); });
+  const filter = el('select', {}, ...Object.entries(filters).map(([value, [label, test]]) => el('option', { value, selected: value === library.filter }, `${label} (${images.filter(test).length})`)));
+  filter.setAttribute('aria-label', 'Welche Bilder');
+  filter.addEventListener('change', () => { library.filter = filter.value; showList(); });
+  showList();
   root.replaceChildren(el('div', { className: 've-form-page ve-wide-page' },
-    head(app, 'Website', 'Bilder', 'Alle Bilder der Website. Laden Sie neue Bilder hier hoch; auf einer Seite wählen Sie sie dann beim jeweiligen Bild aus. Löschen lässt sich nur ein Bild, das nirgends verwendet wird.'),
+    head(app, 'Website', 'Bilder', 'Alle Bilder der Website. Laden Sie neue Bilder hier hoch; auf einer Seite wählen Sie sie dann beim jeweiligen Bild aus. „Ersetzen“ tauscht ein Bild überall, wo es verwendet wird, gegen ein neues. Löschen lässt sich nur ein Bild, das nirgends verwendet wird.'),
     el('p', { className: 've-actions-row' }, upload),
-    images.length ? grid : card(null, 'Noch keine Bilder.')));
+    images.length ? el('p', { className: 've-actions-row ve-library-tools' }, search, filter) : null,
+    list));
   return { reveal() {} };
 }
 

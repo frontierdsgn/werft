@@ -2,6 +2,7 @@
 // page view and the form view use the same controls. A form edits a value object in place and
 // calls onChange after every change.
 import { markdown } from 'werft';
+import { focusOf } from 'werft/images';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
 
 const el = (tag, props = {}, ...children) => {
@@ -10,6 +11,16 @@ const el = (tag, props = {}, ...children) => {
   return node;
 };
 const uid = () => `ve-${Math.random().toString(36).slice(2)}`;
+// Controls that show another field of the same object (the focal point shows the image) follow
+// when that field changes, as long as they are on the page.
+const watchers = new WeakMap();
+const watch = (holder, node, follow) => {
+  if (!watchers.has(holder)) watchers.set(holder, new Map());
+  const all = watchers.get(holder);
+  for (const old of all.keys()) if (!old.isConnected) all.delete(old);
+  all.set(node, follow);
+};
+const changedIn = (holder) => watchers.get(holder)?.forEach((follow, node, all) => (node.isConnected ? follow() : all.delete(node)));
 
 const optionsOf = (field) => (field.options ?? []).map((o) => (typeof o === 'object' ? o : { label: String(o), value: o }));
 
@@ -125,9 +136,56 @@ function control(field, holder, ctx, path) {
       const button = el('button', { type: 'button', className: 've-button' }, holder[name] ? 'Bild ändern' : 'Bild wählen');
       button.addEventListener('click', async () => {
         const picked = await ctx.pickImage(holder[name]);
-        if (picked) { set(picked); show(); button.textContent = 'Bild ändern'; }
+        if (picked) { set(picked); show(); button.textContent = 'Bild ändern'; changedIn(holder); }
       });
       return labelled(field, el('div', { className: 've-image-field' }, preview, button));
+    }
+    case 'focus': {
+      // The point of the image that stays visible when the theme crops it: a click on the image
+      // or the arrow keys set it, stored as "x% y%" for object-position.
+      const image = el('img', { alt: '' });
+      const dot = el('span', { className: 've-focus-dot' });
+      const area = el('div', { className: 've-focus', tabIndex: 0, role: 'group' }, image, dot);
+      const none = el('small', { className: 've-hint' }, 'Erst ein Bild wählen.');
+      const reset = el('button', { type: 'button', className: 've-tool' }, 'Zurück zur Mitte');
+      const point = () => (focusOf(holder) ?? '50% 50%').split(' ').map((v) => parseFloat(v));
+      const draw = () => {
+        const src = holder[field.image ?? 'src'];
+        if (src) image.src = ctx.mediaURL(src);
+        area.hidden = !src;
+        none.hidden = !!src;
+        const [x, y] = point();
+        dot.style.left = `${x}%`;
+        dot.style.top = `${y}%`;
+        area.setAttribute('aria-label', `Wichtiger Bildteil: ${Math.round(x)} % von links, ${Math.round(y)} % von oben. Pfeiltasten verschieben ihn.`);
+        reset.hidden = !src || holder[name] === undefined;
+      };
+      const place = (x, y) => {
+        const clamp = (v) => Math.round(Math.min(100, Math.max(0, v)));
+        set(`${clamp(x)}% ${clamp(y)}%`);
+        draw();
+      };
+      area.addEventListener('click', (event) => {
+        const box = image.getBoundingClientRect();
+        place(((event.clientX - box.left) / box.width) * 100, ((event.clientY - box.top) / box.height) * 100);
+      });
+      area.addEventListener('keydown', (event) => {
+        const step = { ArrowLeft: [-5, 0], ArrowRight: [5, 0], ArrowUp: [0, -5], ArrowDown: [0, 5] }[event.key];
+        if (!step) return;
+        event.preventDefault();
+        const [x, y] = point();
+        place(x + step[0], y + step[1]);
+      });
+      reset.addEventListener('click', () => { set(undefined); draw(); });
+      // Another image has other important parts.
+      let shown = holder[field.image ?? 'src'];
+      watch(holder, area, () => {
+        if (holder[field.image ?? 'src'] !== shown && holder[name] !== undefined) set(undefined);
+        shown = holder[field.image ?? 'src'];
+        draw();
+      });
+      draw();
+      return labelled(field, el('div', { className: 've-focus-field' }, area, none, reset));
     }
     case 'object': {
       // A missing group joins the content on its first edit, so opening a form changes nothing.

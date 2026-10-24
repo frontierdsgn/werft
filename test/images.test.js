@@ -2,8 +2,8 @@
 // images themes write from the variants beside a media image.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { downscaleTarget, maxSize, MAX_SIZE } from '../lib/images.js';
-import { build, createContext, html, imageSize } from '../lib/index.js';
+import { downscaleTarget, maxSize, MAX_SIZE, replaceMedia, replaceEverywhere, picturesOf } from '../lib/images.js';
+import { build, createContext, html, imageSize, fields } from '../lib/index.js';
 
 const u32 = (n) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
 const chunk = (name, data = []) => [...u32(data.length), ...Buffer.from(name), ...data, 0, 0, 0, 0];
@@ -113,4 +113,65 @@ test('ctx.image offers srcset and sources for a theme that writes its own markup
   const shown = context(true);
   assert.equal(shown.image('assets/img/a.jpg').srcset, undefined);
   assert.equal(shown.img('assets/img/a.jpg').value, '<img src="assets/img/a.jpg" alt="" width="2560" height="1707" loading="lazy" decoding="async">');
+});
+
+test('a picture field has a focal point that ctx.img turns into object-position', () => {
+  const [, , , focus] = fields.picture('hero', 'Bild').fields;
+  assert.deepEqual([focus.name, focus.widget, focus.required], ['focus', 'focus', false]);
+  assert.deepEqual(fields.picture('hero', 'Bild', { focus: false, caption: false }).fields.map((f) => f.name), ['src', 'alt']);
+  const ctx = createContext({ site: {}, theme: { blocks: {} }, content: { pages: [], posts: [], patterns: [], forms: [], settings: {}, menus: {}, redirects: [] }, media });
+  const img = (picture, options) => ctx.img({ src: 'assets/img/b.png', alt: 'B', ...picture }, options).value;
+  assert.equal(img({ focus: '30% 70%' }), '<img src="assets/img/b.png" alt="B" width="800" height="600" loading="lazy" decoding="async" style="object-position:30% 70%">');
+  assert.match(img({ focus: '0% 100%' }, { style: 'aspect-ratio:1' }), / style="object-position:0% 100%;aspect-ratio:1">$/);
+  // Anything but a point is left out, so a value cannot carry other CSS.
+  assert.doesNotMatch(img({ focus: '30% 70%; background:url(x)' }), /style/);
+  assert.doesNotMatch(img({ focus: '130% 70%' }), /style/);
+});
+
+test('replacing an image changes every mention of it, and pictures without alt text are found', () => {
+  const page = {
+    title: 'Start',
+    sections: [
+      { type: 'hero', image: { src: 'assets/img/foto.jpg', alt: 'Fähre', focus: '20% 40%' } },
+      { type: 'team', people: [{ photo: { src: '/salon/assets/img/foto.jpg', alt: '' } }, { photo: { src: 'assets/img/foto.jpg.bak' } }] },
+      { type: 'text', body: 'Siehe ![Fähre](/assets/img/foto.jpg) und ![](assets/img/foto.960.jpg). Datei: assets/img/foto.jpg.' },
+      { type: 'other', links: ['xassets/img/foto.jpg', 'https://cdn.example.org/assets/img/foto.jpg', '/alt/assets/img/foto.jpg'] },
+    ],
+  };
+  const replaced = replaceMedia(page, 'assets/img/foto.jpg', 'assets/img/neu.png', { root: '/salon/' });
+  assert.deepEqual(replaced.sections[0].image, { src: 'assets/img/neu.png', alt: 'Fähre', focus: '20% 40%' });
+  assert.equal(replaced.sections[1].people[0].photo.src, '/salon/assets/img/neu.png');
+  assert.equal(replaced.sections[1].people[1].photo.src, 'assets/img/foto.jpg.bak', 'another file of a similar name stays');
+  assert.equal(replaced.sections[2].body, 'Siehe ![Fähre](/assets/img/neu.png) und ![](assets/img/foto.960.jpg). Datei: assets/img/neu.png.');
+  assert.deepEqual(replaced.sections[3].links, page.sections[3].links, 'other folders and hosts stay');
+  assert.equal(page.sections[0].image.src, 'assets/img/foto.jpg', 'the original is not changed');
+  assert.deepEqual(picturesOf(page, 'assets/img/foto.jpg', { root: '/salon/' }).map((p) => p.alt), ['Fähre', '']);
+});
+
+test('"Ersetzen" changes only what the editor may change and says whether the old file is still named', () => {
+  const entries = [
+    ['content/pages/index.json', { sections: [{ image: { src: 'assets/img/foto.jpg' } }] }],
+    ['content/settings/site.json', { share_image: 'assets/img/foto.jpg' }],
+    ['content/pages/leer.json', { title: 'Leer' }],
+  ];
+  const all = replaceEverywhere(entries, 'assets/img/foto.jpg', 'assets/img/neu.png');
+  assert.deepEqual(all.changed.map(([path]) => path), ['content/pages/index.json', 'content/settings/site.json']);
+  assert.equal(all.left, false);
+  // A Redakteur may not change the site settings: they keep the old file, which then stays.
+  const some = replaceEverywhere(entries, 'assets/img/foto.jpg', 'assets/img/neu.png', { may: (path) => !path.includes('/settings/') });
+  assert.deepEqual(some.changed, [['content/pages/index.json', { sections: [{ image: { src: 'assets/img/neu.png' } }] }]]);
+  assert.equal(some.left, true);
+  // The new file's name may contain the old one; a mention the rewrite does not recognise keeps the file.
+  assert.equal(replaceEverywhere(entries, 'assets/img/foto.jpg', 'assets/img/foto.jpg.png').left, false);
+  assert.equal(replaceEverywhere([['content/settings/site.json', { icon: 'assets/img/foto.jpg.webp' }]], 'assets/img/foto.jpg.webp', 'assets/img/foto.jpg', { may: () => false }).left, true);
+  assert.equal(replaceMedia('assets/img/foto.jpgä.png', 'assets/img/foto.jpg', 'x'), 'assets/img/foto.jpgä.png');
+  assert.equal(replaceEverywhere([['content/pages/a.json', { url: 'https://x.example/assets/img/foto.jpg' }]], 'assets/img/foto.jpg', 'assets/img/neu.png').left, true);
+});
+
+test('ctx.image of a picture field gives its focal point, only when it is a point', () => {
+  const ctx = createContext({ site: {}, theme: { blocks: {} }, content: { pages: [], posts: [], patterns: [], forms: [], settings: {}, menus: {}, redirects: [] }, media });
+  assert.equal(ctx.image({ src: 'assets/img/b.png', focus: '10% 90%' }).focus, '10% 90%');
+  assert.equal(ctx.image({ src: 'assets/img/b.png', focus: '0 0;background:url(x)' }).focus, undefined);
+  assert.equal(ctx.image({ src: 'assets/img/b.png', focus: '100.5% 0%' }).focus, undefined);
+  assert.equal(ctx.image('assets/img/b.png').width, 800);
 });
