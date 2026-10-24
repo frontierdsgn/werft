@@ -156,9 +156,9 @@ export function githubStorage({ owner, repo, token, auth = async () => ({ token 
       const reason = e.permission ? e.message
         : e.github === 403 ? 'Die Berechtigung „Actions: Read and write“ für das Repository fehlt.'
           : e.github === 404 ? `Den Workflow ${workflow} gibt es im Repository nicht.`
-            : e.github === 422 ? `Der Workflow ${workflow} lässt sich nicht von außen starten: ihm fehlt der Auslöser workflow_dispatch.`
+            : e.github === 422 ? `Der Workflow ${workflow} lässt sich auf ${ref} nicht starten: ihm fehlt der Auslöser workflow_dispatch, oder den Branch ${ref} gibt es nicht.`
               : null;
-      throw reason ? Object.assign(new Error(`Veröffentlichen nach Zeitplan: ${reason}`), { status: 409 }) : e;
+      throw reason ? Object.assign(new Error(`Veröffentlichen nach Zeitplan: ${reason}`), { plain: true }) : e;
     }
   }
 

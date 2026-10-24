@@ -14,7 +14,7 @@ const keys = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncodin
 const appEnv = { GITHUB_TOKEN: '', GITHUB_APP_ID: 'Iv23liwerft', GITHUB_APP_PRIVATE_KEY: keys.privateKey };
 
 async function setup(env = {}) {
-  const hub = fakeGitHub({ api: 'https://api.github.com', workflows: { 'gate.yml': true, 'build.yml': false }, ...(env.GITHUB_APP_ID && { app: { id: env.GITHUB_APP_ID, slug: 'werft', publicKey: keys.publicKey } }) });
+  const hub = fakeGitHub({ api: 'https://api.github.com', workflows: { 'gate.yml': true, 'build.yml': false, 'locked.yml': 'forbidden' }, ...(env.GITHUB_APP_ID && { app: { id: env.GITHUB_APP_ID, slug: 'werft', publicKey: keys.publicKey } }) });
   hub.seed({
     'web/.werft/users.json': serializeUsers([{ email: 'admin@test', name: 'Ada', role: 'administrator', password: await hashPassword('admin-password', 1000) }]),
     'web/content/events/due.json': JSON.stringify({ title: 'Due', status: 'published', publish_date: '2020-01-02T00:00:00Z' }),
@@ -110,7 +110,7 @@ test('says why the deploy workflow cannot be started', async () => {
   const error = console.error;
   console.error = () => {};
   try {
-    for (const [workflow, message] of [['build.yml', /ihm fehlt der Auslöser workflow_dispatch/], ['deploy.yml', /Den Workflow deploy\.yml gibt es im Repository nicht/]]) {
+    for (const [workflow, message] of [['build.yml', /ihm fehlt der Auslöser workflow_dispatch, oder den Branch main gibt es nicht/], ['deploy.yml', /Den Workflow deploy\.yml gibt es im Repository nicht/], ['locked.yml', /Die Berechtigung „Actions: Read and write“ für das Repository fehlt/]]) {
       const { call, hub } = await setup({ WERFT_DEPLOY_WORKFLOW: workflow, WERFT_TICK_KEY: 'k'.repeat(32) });
       const result = await (await call(`/api/werft/tick?key=${'k'.repeat(32)}`)).json();
       assert.match(result.error, message);
@@ -119,6 +119,11 @@ test('says why the deploy workflow cannot be started', async () => {
     const { call, hub } = await setup({ WERFT_DEPLOY_WORKFLOW: 'gate.yml', WERFT_TICK_KEY: 'k'.repeat(32) });
     assert.equal((await (await call(`/api/werft/tick?key=${'k'.repeat(32)}`)).json()).rebuilt, true, 'a token with the permission starts it');
     assert.deepEqual(hub.dispatches, [{ workflow: 'gate.yml', ref: 'main' }]);
+    // Its gate fails, so the entry stays due: the same commit is not started again.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 20 * 60 * 1000;
+    try { assert.equal((await (await call(`/api/werft/tick?key=${'k'.repeat(32)}`)).json()).rebuilt, true); } finally { Date.now = realNow; }
+    assert.equal(hub.dispatches.length, 1, 'one start per commit');
   } finally { console.error = error; }
 });
 

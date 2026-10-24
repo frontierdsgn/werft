@@ -3,8 +3,8 @@
 // queries it sends (files, a checked forced ref update). With `app`
 // ({ id, slug, publicKey }), it is a GitHub App installed on the repository: it checks the app's
 // JWTs, issues installation tokens for the permissions it was granted (`grant()` changes them) and
-// accepts only those on the repository. `workflows` (file → has a workflow_dispatch trigger) can be
-// started; `dispatches` lists the starts. `now` is its clock.
+// accepts only those on the repository. `workflows` (file → has a workflow_dispatch trigger, or
+// 'forbidden' for a token without the permission) can be started; `dispatches` lists the starts. `now` is its clock.
 import { createHash, verify } from 'node:crypto';
 
 export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.test', app = null, tokenTtl = 3600, now = Date.now, workflows = {} } = {}) {
@@ -119,6 +119,7 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
       if (app && tokens.get(bearer(init))?.permissions?.actions !== 'write') return json({ message: 'Resource not accessible by integration' }, 403);
       const file = decodeURIComponent(m[1]);
       if (!(file in workflows)) return json({ message: 'Not Found' }, 404);
+      if (workflows[file] === 'forbidden') return json({ message: 'Resource not accessible by personal access token' }, 403);
       if (!workflows[file]) return json({ message: "Workflow does not have 'workflow_dispatch' trigger" }, 422);
       dispatches.push({ workflow: file, ref: body.ref });
       return new Response(null, { status: 204 });

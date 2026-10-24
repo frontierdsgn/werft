@@ -324,7 +324,7 @@ each save is a commit to `main` that goes live once its `gate` passed.
    | `WERFT_SECRET` | output of `npx werft secret` |
    | `GITHUB_APP_ID` | the werft-cms GitHub App's client ID (its app ID works too), see [GitHub App](#github-app) |
    | `GITHUB_APP_PRIVATE_KEY` | the app's private key, converted to PKCS#8 |
-   | `GITHUB_TOKEN` | instead of the app: fine-grained token, repository access to this one repository, permission "Contents: Read and write" |
+   | `GITHUB_TOKEN` | instead of the app: fine-grained token, repository access to this one repository, permission "Contents: Read and write" (and "Actions: Read and write" with `WERFT_DEPLOY_WORKFLOW`) |
    | `WERFT_REPO` | `owner/repository` |
    | `WERFT_DIR` | the site's directory in the repository (e.g. `classic`), empty for the root |
    | `WERFT_BRANCH` | production branch, default `main` |
@@ -443,7 +443,8 @@ webhook; any account can install it.
 
 The gateway signs a JWT with the key, finds the installation on `WERFT_REPO` and gets a token
 that lasts an hour and is limited to that repository and contents. It keeps the token until five
-minutes before it expires; a new one costs three requests.
+minutes before it expires; a new one costs three requests. Starting the deploy workflow (see
+[Scheduling](#scheduling)) asks for a second token limited to actions each time: two requests.
 
 Limits of the free plan that apply: Pages Functions share the Workers free plan's daily request
 quota, with 50 outgoing requests and 10 ms CPU time per request. The gateway reads up to 100 content
@@ -798,7 +799,9 @@ nothing otherwise. It needs a signed-in user or the tick key.
   only after `gate` passed. This needs "Actions: Read and write" on the repository: the werft-cms
   app asks for it with a separate token (installations that have not accepted it yet keep saving
   as before), a token needs it besides "Contents". Until then, or when the workflow lacks the
-  trigger, the tick answers 502 with the reason, and the editor shows it to administrators.
+  trigger, the tick answers 502 with the reason, and the editor shows it to administrators. If the
+  started gate fails, the entry stays due; a Cloudflare isolate does not start the workflow again
+  for the same commit, but another isolate may, at most every 15 minutes, until a commit passes.
 - `WERFT_DEPLOY_HOOK` instead (a Cloudflare deploy hook) makes Cloudflare build and deploy
   production directly, which bypasses `gate`. With neither, a due entry goes live with the next
   deploy.

@@ -707,10 +707,10 @@ export function createGateway(options) {
     // (e.g. a missing permission), and the next call tries again.
     let rebuilt = false, problem = null;
     try {
-      rebuilt = due.length > 0 && !pending && !!onTick && (await onTick({ due: due.map((e) => e.slug) })) !== false;
+      rebuilt = due.length > 0 && !pending && !!onTick && (await onTick({ due: due.map((e) => e.slug), head: head.sha })) !== false;
     } catch (e) {
       console.error('werft gateway: tick:', e.message);
-      problem = e.message;
+      problem = e.plain ? e.message : 'Veröffentlichen nach Zeitplan hat nicht geklappt. Bitte später noch einmal versuchen.';
     }
     if (rebuilt) ticked = { key, at: now() };
     return json({ rebuilt, pending, due: due.map((e) => e.slug), next_publish: next, last_build: lastBuild ?? null, ...(problem && { error: problem, message: problem }) }, problem ? 502 : 200);
