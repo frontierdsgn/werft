@@ -32,13 +32,14 @@ function safe_path(string $path): bool {
   return !preg_match('/\.(php\d?|phtml|phar|pht|phps|cgi|pl|py|sh|user\.ini)$|(^|\/)\.user\.ini$/i', $path);
 }
 
-// .htaccess may only hold redirects (werft writes its redirects there); anything else could make
-// the server run uploaded files as code.
+// .htaccess may only hold redirects and werft's not-found pages (werft writes both there); anything
+// else could make the server run uploaded files as code.
 function safe_content(string $path, string $data): bool {
   if (basename($path) !== '.htaccess') return true;
   foreach (preg_split('/\r?\n/', $data) as $line) {
     $line = trim($line);
-    if ($line !== '' && $line[0] !== '#' && !preg_match('/^(Redirect|RedirectMatch|RedirectPermanent|RedirectTemp)\s/i', $line)) return false;
+    if ($line !== '' && $line[0] !== '#' && !preg_match('/^(Redirect|RedirectMatch|RedirectPermanent|RedirectTemp)\s/i', $line)
+      && !preg_match('#^ErrorDocument\s+404\s+/(?:[A-Za-z0-9._~-]+/)*404\.html$#', $line)) return false;
   }
   return true;
 }

@@ -185,6 +185,7 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
    `content/forms/` (see [Form submissions](#form-submissions)), `content/<post type>/`, `content/settings/{site,menus,redirects}.json`;
    other languages in `content/<lang>/` (see [Languages](#languages)).
    A page is `{ "title": "Start", "status": "published", "sections": [{ "type": "text", … }] }`.
+   The page `404` is the [not-found page](#not-found-page).
    Write the status into files you create by hand: the build publishes a file without one, but the
    admin shows it as "Entwurf" and saving it there would unpublish it.
 5. **First administrator**: `npx werft user add you@example.org`, then commit `.werft/users.json`.
@@ -411,7 +412,8 @@ and pushed there:
 
 `werft publish` sends only changed files, signed with HMAC-SHA256 (requests older than 5 minutes are
 refused). The receiver only writes and deletes files it published itself, refuses PHP and other
-code files, accepts `.htaccess` only with redirect lines and writes nothing through symbolic links.
+code files, accepts `.htaccess` only with redirect lines and a local `ErrorDocument 404 /….html`
+(see [Not-found page](#not-found-page)) and writes nothing through symbolic links.
 A file already in the web space with the same name and different content stops the publish:
 remove or rename it there first (identical files are taken over). The admin is not published: editors
 use the admin on the build host.
@@ -550,6 +552,28 @@ Where the counts live:
 Not covered: guesses spread over many addresses still get the per-account limit for each account,
 and a guessed or leaked password works on the first try. The limits do not replace a long password
 (the gateway takes no shorter than 10 characters).
+
+### Not-found page
+
+A page with the slug `404` (`content/pages/404.json`, per language in `content/<lang>/pages/`)
+builds to `404.html` (`en/404.html`), stays out of `sitemap.xml` and is noindex. Every host answers
+an address the site does not have with the nearest one and status 404:
+
+- Cloudflare Pages finds `404.html` on its own.
+- `werft dev` and `werft serve` answer with the nearest `404.html` above the address
+  (`en/404.html` for `/en/…`, else `404.html`), else with "Not found".
+- On PHP web space the build writes `ErrorDocument 404 /404.html` into `.htaccess` (and
+  `en/.htaccess` for a language with its own page); the receiver accepts these lines. The root
+  `.htaccess` then exists even without redirects and applies to the whole web space: a hand-made
+  `.htaccess` already there stops the publish (see [PHP web space](#php-web-space-ionos-and-similar));
+  move its lines elsewhere or remove it first.
+
+The page is shown at the address that was asked for, so its relative links would start from there;
+[`ctx.head()`](#install) writes `<base href>` for its folder, so the theme's `ctx.url()` addresses
+and the links in the content work. Call it before the theme's stylesheets and scripts, since an
+address before `<base>` still starts from the requested one. On this page an anchor alone (`#main`, a skip
+link) leads to the home page of its folder, so the page is best kept without one. A theme that writes
+its own head gives the page root-relative addresses instead.
 
 ### Scheduling
 

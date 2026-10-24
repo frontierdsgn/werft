@@ -15,6 +15,7 @@ before(async () => {
   write('werft.config.js', "export default { name: 'T', theme: './theme/index.js', output: '_site' };\n");
   write('theme/index.js', 'export default { blocks: {}, renderPage: (page, ctx) => ctx.html`<title>${page.title}</title>` };\n');
   write('content/pages/index.json', '{"title":"Start","status":"published"}\n');
+  write('content/pages/404.json', '{"title":"Nicht gefunden","status":"published"}\n');
   write('_site-secret/secret.txt', 'secret');
   execFileSync('git', ['init', '--quiet', '-b', 'main'], { cwd: root });
   execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@test', 'commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: root });
@@ -36,4 +37,16 @@ test('serves the site and nothing beside its output directory', async () => {
   assert.equal(sibling.status, 404);
   fs.symlinkSync(path.join(root, '_site-secret'), path.join(root, '_site/linked'));
   assert.equal((await fetch(`${base}/linked/secret.txt`)).status, 404, 'no way out through a symbolic link');
+});
+
+test('answers an unknown address with the nearest 404 page and status 404', async () => {
+  for (const address of ['/fehlt.html', '/tief/unten/fehlt']) {
+    const response = await fetch(`${base}${address}`);
+    assert.deepEqual([response.status, response.headers.get('content-type'), await response.text()], [404, 'text/html; charset=utf-8', '<title>Nicht gefunden</title>'], address);
+  }
+  fs.mkdirSync(path.join(root, '_site/en'), { recursive: true });
+  fs.writeFileSync(path.join(root, '_site/en/404.html'), 'Not found here');
+  const english = await fetch(`${base}/en/missing/page.html`);
+  assert.deepEqual([english.status, await english.text()], [404, 'Not found here']);
+  assert.equal((await fetch(`${base}/404.html`)).status, 200, 'the page itself is a page');
 });

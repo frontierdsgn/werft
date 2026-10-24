@@ -118,7 +118,7 @@ test('the script lists the results while the visitor types, linked from the page
   const requests = [];
   const index = { entries: [{ url: 'kontakt.html', title: 'Kontakt <b>', text: 'Café & Fähre' }, { url: 'javascript:alert(1).html', title: 'Fähre', text: '' }] };
   const run = new Function('document', 'location', 'fetch', files['_werft/search.js']);
-  const document = { querySelectorAll: () => [form], createElement: fakeElement };
+  const document = { baseURI: 'https://salon.example/en/index.html', querySelectorAll: () => [form], createElement: fakeElement };
   const fetch = async (url) => { requests.push(url.href); return { ok: true, json: async () => index }; };
   run(document, { href: 'https://salon.example/en/index.html' }, fetch);
   run(document, { href: 'https://salon.example/en/index.html' }, fetch); // a second box's script binds nothing twice
@@ -142,4 +142,12 @@ test('the script lists the results while the visitor types, linked from the page
   input.value = '';
   await input.dispatch('input');
   assert.deepEqual(list.children, []);
+
+  // The not-found page, shown at any address, finds the index through its <base>.
+  form.werftSearch = false;
+  requests.length = 0;
+  run({ ...document, baseURI: 'https://salon.example/en/' }, { href: 'https://salon.example/en/tief/unten/fehlt' }, fetch);
+  input.value = 'fahre';
+  await input.dispatch('input');
+  assert.deepEqual(requests, ['https://salon.example/_werft/search/de.json']);
 });
