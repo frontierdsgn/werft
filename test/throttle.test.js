@@ -135,6 +135,13 @@ test('a flood of new keys does not push out a count in a wait, nor the count bei
   assert.ok((await limiter.attempt([['account', 'eve@test']])).wait > 0);
 });
 
+test('overlapping successes leave no wait behind', async () => {
+  const { signIn } = await setup();
+  for (let i = 0; i < 18; i++) await signIn(`guess${i}@test`, 'wrong');
+  assert.deepEqual((await Promise.all([signIn('ada@test', 'right-password'), signIn('ada@test', 'right-password')])).map((r) => r.status), [200, 200]);
+  assert.equal((await signIn('bob@test', 'wrong')).status, 401);
+});
+
 test('signing in to an own account does not reset the guesses from that address', async () => {
   const { signIn } = await setup();
   for (let i = 0; i < 19; i++) await signIn(`guess${i}@test`, 'wrong');

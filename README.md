@@ -513,8 +513,8 @@ its size).
 
 The gateway slows down password guessing ([throttle.js](gateway/throttle.js)). Each attempt counts
 against the e-mail address entered and against the client's address. A successful sign-in clears
-the e-mail address's count and does not count against the client's address; that address keeps
-its failures.
+the e-mail address's count (or the device token's, see below) and does not count against the
+client's address; that address keeps its failures.
 
 - After 5 attempts for one e-mail address, or 20 from one client address (IPv6: its /64 network),
   the next attempt waits 1 minute, and each further failure doubles the wait up to 15 minutes. While
@@ -540,10 +540,10 @@ Where the counts live:
   them often, so a guesser gets more tries than above. With a KV namespace (create one in the
   Cloudflare dashboard, then add it to the Pages project's bindings as `WERFT_KV`) all isolates
   share the counts: a sign-in reads up to two keys, a failed one writes up to two, and a successful
-  one after failures deletes the e-mail address's key (a delete counts as a write). The free plan
-  has 100,000 reads and 1,000 writes a day for the whole Cloudflare account, shared by every site on
-  it, so after about 500 failed sign-ins in a day, on any of them, the gateway counts per isolate
-  again until the quota resets at 00:00 UTC; KV also takes up to 60 seconds to show a write in
+  one after failures deletes the key of the e-mail address or device token. The Workers Free plan,
+  which covers the whole Cloudflare account and so every site on it, has 100,000 reads, 1,000
+  writes and 1,000 deletes a day, so after about 500 failed sign-ins in a day, on any of them, the
+  gateway counts per isolate again until the quota resets at 00:00 UTC; KV also takes up to 60 seconds to show a write in
   other locations. A store that counts exactly (D1, a Durable Object) would need a database or a
   separate Worker per site; werft does not use one.
 

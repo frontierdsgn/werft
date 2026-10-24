@@ -84,16 +84,21 @@ export function throttle({ secret, now, store, maxKeys = MAX_KEYS }) {
     ids.forEach((id, i) => { local.delete(id); local.set(id, next[i]); });
     evict(t, ids);
     // Takes this attempt back: the record before it, or, when other attempts came since, one less
-    // with their time and wait.
+    // with their time and the wait for that count.
     const undo = (id, i) => {
       const current = local.get(id);
-      if (current === next[i]) { local.delete(id); if (records[i]) local.set(id, records[i]); } else if (current) local.set(id, { ...current, count: Math.max(0, current.count - 1) });
+      if (current === next[i]) { local.delete(id); if (records[i]) local.set(id, records[i]); return; }
+      if (current) local.set(id, { ...current, count: Math.max(0, current.count - 1), until: current.last + waitAfter(keys[i][0], Math.max(0, current.count - 1)) });
     };
     return {
       wait: 0,
       // The attempt was not decided (the users could not be read): it does not count.
       cancel: () => ids.forEach((id, i) => undo(id, i)),
-      failed: () => Promise.all(ids.map((id, i) => shared('put', id, next[i], Math.ceil((next[i].until - t + FORGET) / 1000)))),
+      // Writes the newest count of this process, which parallel attempts may have raised.
+      failed: () => Promise.all(ids.map((id, i) => {
+        const record = local.get(id) ?? next[i];
+        return shared('put', id, record, Math.ceil((record.until - now() + FORGET) / 1000));
+      })),
       succeeded: () => {
         // The address keeps its failures; the success itself does not count.
         ids.forEach((id, i) => (keys[i][0] === 'address' ? undo(id, i) : local.delete(id)));
