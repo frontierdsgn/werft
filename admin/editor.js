@@ -14,7 +14,7 @@ import { pageRenderer, mapDocument, getAt, setAt, textOf, unmark } from './visua
 import { buildForm, emptyValue } from './visual-form.js';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
 import { formView, mediaView, submissionsView, usersView, deletedView, accountView } from './form-view.js';
-import { retargetLink, retargetLinks, mentions, movedRedirects } from './rename.js';
+import { retargetLink, retargetLinks, mentions, movedRedirects, retargetParents } from './rename.js';
 import { draftKey, collectDraft, changedSince, applyDraft } from './drafts.js';
 import { duplicatePage } from './duplicate.js';
 import { entryOf, deletedEntries, restoredEntry } from './deleted.js';
@@ -552,7 +552,7 @@ function pageOfURL(href) {
   const rest = decodeURIComponent(url.pathname.slice(root.pathname.length));
   const addresses = siteAddresses({ site, theme, content: content(), preview: true });
   for (const l of languages.length ? languages : [lang]) {
-    const slug = slugsIn('pages', l).find((s) => { const at = addresses.page(s, l); return [at.url, at.file, `${langPrefix(l)}${pageFile(s)}`].includes(rest); });
+    const slug = slugsIn('pages', l).find((s) => { const at = addresses.page(s, l); return [at.url, at.url.replace(/\/$/, ''), at.file, `${langPrefix(l)}${pageFile(s)}`].includes(rest); });
     if (slug) return slug !== current || l !== lang ? { slug, lang: l } : null;
   }
   return null;
@@ -1519,6 +1519,8 @@ async function renamePage(slug) {
       files.set(fileOf(`page:${next}`, l), { sha: null, saved: null, data: f.data });
       if (f.saved === null) files.delete(path); else f.data = null;
     }
+    // The pages below it stay below it, in every language.
+    if (next !== slug) retargetParents(all.flatMap((l) => slugsIn('pages', l).map((s) => files.get(fileOf(`page:${s}`, l))?.data)), slug, next);
     const after = addressesNow();
     const moves = published.map(({ s, l, from }) => ({ from, to: pageAddress(s === slug ? next : s, l, after) })).filter((m) => m.from !== m.to);
     // Settings and menus of other languages are rewritten in their files; untouched copies of

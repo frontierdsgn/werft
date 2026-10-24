@@ -602,18 +602,21 @@ moves below another.
   that form; `index.html` is the home page), wherever the page sits; the build, the editor's preview
   and [preview links](#preview-links) lead them to the page's address from the page they are on
   (`../kontakt/#karte`). They are read from the language's folder, on a post's page from the
-  post's address as the theme gives it. A link to a page that does not exist stays as written.
+  post's address as the theme gives it. A link to a page that does not exist stays as written, and so
+  does an address without `.html` that leads to a page from where it is (`./`, `../kontakt/`).
 - Posts: `postType.url(post)` stays as it is (`termine/${post.slug}.html`); a post at
   `termine/fest.html` is built to `termine/fest/` (a theme may also return `termine/fest/`).
 - Redirects: every published page and post whose address is not its old one (`kontakt.html`)
   redirects from it with 301, in `_redirects` (Cloudflare Pages), `.htaccess` (PHP web space) and
   for `werft serve` and `werft dev`. A redirect in `redirects.json` to a page named as in the
   content (`/kontakt.html`) leads to its address, a redirect away from an old address `/alt/` also
-  takes `/alt.html` along, and a redirect in `redirects.json` with the same source comes first.
-  Cloudflare Pages takes at most 2,000 such static redirects per site.
+  takes `/alt.html` along, and a redirect in `redirects.json` with the same source comes first. A
+  redirect that would then lead to itself (`/kontakt/` to `/kontakt.html`, from werft 0.6) is left
+  out, since it would hide the page. Cloudflare Pages reads at most 2,000 plain redirects and 100
+  with `*` or a placeholder per site; `werft build` and `werft check` warn above that.
 - The build stops when two entries would get the same address (a page `fest` below `termine` and
   the post `termine/fest.html`) or a page's folder is one the site needs (`admin`, `_werft`, a
-  language's code).
+  media directory, a language's code). Renaming a page in the editor keeps the pages below it there.
 - `urls: 'html'` in `werft.config.js` keeps the addresses of werft 0.6 and earlier: `kontakt.html`,
   `tagen/preise.html` for a page below another, posts at `postType.url` as given, and redirects only
   for pages that moved below another.

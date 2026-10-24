@@ -134,3 +134,23 @@ test('a preview link renders a page below its parent from the page\'s folder', a
   const out = await renderPreview({ site: { base: 'salon' }, theme, target: { kind: 'page', slug: 'entwurf' }, files, read, now: new Date('2026-06-01') });
   assert.match(out, /^<base href="\/salon\/tagen\/entwurf\/"><meta name="robots" content="noindex"><link href="..\/..\/assets\/site.css"><nav><a href="..\/..\/">Start<\/a>/);
 });
+
+test('a redirect that would lead to itself is left out, so it cannot hide the page', async () => {
+  const { redirects, out } = await built({}, { ...content, 'content/settings/redirects.json': json({ redirects: [{ from: '/kontakt/', to: '/kontakt.html' }, { from: '/weg/', to: '/weg.html' }] }) });
+  assert.ok(!redirects.some((r) => r.from === r.to), JSON.stringify(redirects));
+  assert.doesNotMatch(out._redirects, /^\/kontakt\/ /m);
+  assert.match(out._redirects, /^\/weg\/ \/weg.html 301$/m, 'a redirect to a file that is not a page stays');
+});
+
+test('a link to the page itself stays, also in a language without its own home page', async () => {
+  const t = { ...theme, renderPage: (p, ctx) => html`<a href="${ctx.url('en/kontakt.html')}">self</a><a href="${ctx.url('en/')}">home</a><a href="./">here</a>` };
+  const { files } = await build({ site: { languages: ['de', 'en'] }, theme: t, store: memoryStore({ ...content, 'content/en/pages/kontakt.json': page('Contact') }), now: new Date('2026-06-01'), media: {} });
+  assert.equal(files.find((f) => f.path === 'en/kontakt/index.html').text, '<a href="./">self</a><a href="../../">home</a><a href="./">here</a>');
+});
+
+test('the build warns when Cloudflare Pages would drop redirects', async () => {
+  const many = Array.from({ length: 2000 }, (_, i) => ({ from: `/alt-${i}.html`, to: '/' }));
+  const { warnings } = await built({}, { ...content, 'content/settings/redirects.json': json({ redirects: many }) });
+  assert.deepEqual(warnings, ['2005 plain redirects: Cloudflare Pages reads only the first 2,000 of them.']);
+  assert.deepEqual((await built()).warnings, []);
+});
