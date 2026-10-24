@@ -9,6 +9,9 @@ while read -r _local_ref _local_sha remote_ref _remote_sha; do
     exit 1
   fi
 done
+# Git runs the hook with GIT_DIR set (and GIT_CONFIG_PARAMETERS after `git -c`); the tests' own git
+# calls in throwaway repositories would otherwise commit to this one.
+unset $(git rev-parse --local-env-vars)
 if ! out=$(npm test 2>&1); then
   printf '%s\n' "$out" >&2
   echo "pre-push: npm test failed; fix it before pushing." >&2
