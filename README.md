@@ -165,7 +165,8 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      language with posts of its own) with the 20 newest published posts by their publish date
      (else the date field), leaving out noindex posts: title, link to the post's page (to the home
      page without `renderPost`), date and the text `postType.feed.description(post, ctx)` returns
-     (default: the post's SEO description), shown as plain text. `postType.feed.title` (text, or
+     (with the post's `ctx` as in `renderPost`; default: the post's SEO description), shown as
+     plain text. `postType.feed.title` (text, or
      a function of the language) replaces the title "<site name>: <post type label>". A site set
      to "Nicht indexieren" or without public posts gets no feed. The build's `feed.xml` replaces a
      file of that name from the theme; a theme with its own feed sets `feed: false`, which also

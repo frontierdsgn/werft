@@ -194,7 +194,7 @@ test('the build writes an RSS feed of the newest posts per language, and ctx.hea
     'content/news/entwurf.json': json({ title: 'Entwurf', status: 'draft' }),
     'content/en/news/new.json': json({ title: 'New', publish_date: '2026-05-01T08:00:00.000Z' }),
   };
-  const feedTheme = { ...theme, postType: { ...theme.postType, label: 'Neuigkeiten', date: 'date', feed: { title: (lang) => (lang === 'en' ? 'Salon: News' : undefined), description: (post, ctx) => post.teaser && `${post.teaser} (${ctx.lang})` } } };
+  const feedTheme = { ...theme, postType: { ...theme.postType, label: 'Neuigkeiten', date: 'date', feed: { title: (lang) => (lang === 'en' ? 'Salon: News' : undefined), description: (post, ctx) => post.teaser && `${post.teaser} (${ctx.lang}, ${ctx.url('')})` } } };
   const out = await built({ languages: ['de', 'en', 'fr'] }, files, feedTheme);
   // Newest first by publish date (else the post type's date); drafts, scheduled and noindex posts
   // left out; descriptions are text inside HTML; characters XML does not allow are dropped.
@@ -202,7 +202,7 @@ test('the build writes an RSS feed of the newest posts per language, and ctx.hea
     + '<link>https://salon.example/</link><description>Salon: Neuigkeiten</description><language>de</language>'
     + '<atom:link href="https://salon.example/feed.xml" rel="self" type="application/rss+xml"/>'
     + '<item><title>Neu &amp; frisch</title><link>https://salon.example/news/neu.html</link><guid isPermaLink="true">https://salon.example/news/neu.html</guid>'
-    + '<pubDate>Fri, 01 May 2026 08:00:00 GMT</pubDate><description>Ab &amp;lt;Juni&amp;gt; &amp;amp; 10&amp;amp;euro; (de)</description></item>'
+    + '<pubDate>Fri, 01 May 2026 08:00:00 GMT</pubDate><description>Ab &amp;lt;Juni&amp;gt; &amp;amp; 10&amp;amp;euro; (de, ../)</description></item>'
     + '<item><title>Nur Datum</title><link>https://salon.example/news/datum.html</link><guid isPermaLink="true">https://salon.example/news/datum.html</guid>'
     + '<pubDate>Sun, 01 Mar 2026 00:00:00 GMT</pubDate></item>'
     + '<item><title>Alt</title><link>https://salon.example/news/alt.html</link><guid isPermaLink="true">https://salon.example/news/alt.html</guid>'
