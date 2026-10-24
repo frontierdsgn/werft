@@ -113,6 +113,21 @@ function control(field, holder, ctx, path) {
       return labelled(field, input);
     }
     case 'relation': {
+      // Several entries (a post's terms, fields.terms()): one box each, stored as a list of slugs.
+      if (field.multiple) {
+        const chosen = new Set(Array.isArray(current) ? current : []);
+        const group = el('div', { className: 've-radios', role: 'group' });
+        for (const o of ctx.choices(field.collection)) {
+          const box = el('input', { type: 'checkbox', checked: chosen.has(o.value) });
+          box.addEventListener('change', () => {
+            if (box.checked) chosen.add(o.value); else chosen.delete(o.value);
+            const order = ctx.choices(field.collection).map((c) => c.value);
+            set(chosen.size ? [...chosen].sort((a, b) => order.indexOf(a) - order.indexOf(b)) : undefined);
+          });
+          group.append(el('label', { className: 've-radio' }, box, el('span', {}, o.label)));
+        }
+        return labelled(field, group);
+      }
       const input = el('select');
       input.append(el('option', { value: '' }, t('field.choose')));
       for (const o of ctx.choices(field.collection)) input.append(el('option', { value: o.value, selected: o.value === current }, o.label));
@@ -222,7 +237,7 @@ function summaryOf(def, item, ctx) {
     for (const field of fields ?? []) {
       const v = value?.[field.name];
       if (v == null || v === '' || field.name === 'id') continue;
-      if (field.widget === 'relation') return ctx.choices(field.collection).find((o) => o.value === v)?.label ?? plain(v);
+      if (field.widget === 'relation') return [v].flat().map((one) => ctx.choices(field.collection).find((o) => o.value === one)?.label ?? plain(one)).join(', ');
       if (['string', 'text', 'richtext', undefined].includes(field.widget) && typeof v === 'string' && plain(v)) return plain(v);
       if (field.widget === 'object') { const f = first(field.fields, v); if (f) return f; }
       if (field.widget === 'list' && Array.isArray(v)) {

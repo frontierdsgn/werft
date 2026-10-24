@@ -34,7 +34,7 @@ import { submissions } from './submissions.js';
 import { previewTarget, renderPreview } from './preview.js';
 import { throttle, addressKey } from './throttle.js';
 import { newSecret, stepOf, otpauthURL, sealSecret, openSecret, newRecoveryCodes, recoveryHash } from './totp.js';
-import { loadContent, isScheduled, siteLanguages } from '../lib/content.js';
+import { loadContent, isScheduled, siteLanguages, postTypesOf, taxonomiesOf } from '../lib/content.js';
 import { MESSAGES, say, messages, localeOf } from './messages.js';
 
 const PREFIX = '/api/werft';
@@ -59,9 +59,9 @@ async function sha256(text) {
 }
 
 // The gateway's view of a site (werft.config.js and its theme).
-export const gatewaySite = (site, theme) => ({ twoFactor: site.twoFactor, name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [], languages: siteLanguages(site), base: site.base, admin: site.admin });
+export const gatewaySite = (site, theme) => ({ twoFactor: site.twoFactor, name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postTypes: postTypesOf(theme).map((t) => t.name), taxonomies: taxonomiesOf(theme).map((t) => t.name), mediaDirs: site.mediaDirs ?? [], languages: siteLanguages(site), base: site.base, admin: site.admin });
 
-// options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs, languages? },
+// options: { storage, secret, branch, site: { name, contentDir, postTypes (or one postType), taxonomies?, mediaDirs, languages? },
 //   onCommit?(commit), onTick?({ due, head }) (due: the slugs, head: the branch's commit), tickKey?, maxFiles? (per save), now?(),
 //   turnstileSecret? (forms need Cloudflare Turnstile), fetch? (for Turnstile),
 //   mail? (an e-mail driver from mail.js; without it the gateway sends no e-mail),
@@ -715,8 +715,8 @@ export function createGateway(options) {
       list: async (dir) => files.filter((f) => f.path.startsWith(`${dir}/`)).map((f) => f.path.slice(dir.length + 1)),
       readText: async (p) => { if (texts.get(p) == null) throw Object.assign(new Error(p), { status: 404 }); return texts.get(p); },
     };
-    const content = await loadContent({ site: { contentDir: site.contentDir, languages: site.languages }, theme: { postType: site.postType ? { name: site.postType } : undefined }, store });
-    const entries = [content, ...Object.values(content.languages ?? {})].flatMap((c) => [...c.pages, ...(c.posts ?? [])]);
+    const content = await loadContent({ site: { contentDir: site.contentDir, languages: site.languages }, theme: { postTypes: (site.postTypes ?? (site.postType ? [site.postType] : [])).map((name) => ({ name })) }, store });
+    const entries = [content, ...Object.values(content.languages ?? {})].flatMap((c) => [...c.pages, ...Object.values(c.types ?? {}).flat()]);
     const lastBuild = await options.lastBuild?.(url);
     const due = entries.filter((e) => e.publish_date && (e.status ?? 'published') === 'published'
       && Date.parse(e.publish_date) <= now() && (!lastBuild || Date.parse(e.publish_date) > Date.parse(lastBuild)));

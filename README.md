@@ -68,7 +68,7 @@ Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 | WordPress | werft |
 |---|---|
 | Login at /admin, users, roles | Own e-mail/password logins, no GitHub account needed. Roles Administrator, Redakteur, Autor, Mitarbeiter with WordPress's rules ([roles.js](gateway/roles.js)), enforced by the gateway. "Benutzer" in the editor for administrators; "Mein Konto" for everyone. |
-| Pages and posts | Pages built from sections (the theme's blocks), plus one post type per theme (e.g. events). Add, delete, reorder sections. "Seite duplizieren" (in a page's settings and at the end of its form) copies a page in the language being edited as a draft under a new title and address, without its publishing date and SEO title. "Adresse" in a page's settings changes its address and the page it sits below ("Unter der Seite", see [Addresses](#addresses)); administrators only, since it adds redirects: in one save the page and its translations are renamed, links in the content follow, every published page whose address changed (the page and those below it) redirects from its old address, and what still names the old address (a full URL) is listed. The sidebar shows pages below their parent page. |
+| Pages and posts | Pages built from sections (the theme's blocks), plus the theme's post types (e.g. news and events), each in the sidebar, and its taxonomies (categories, tags) under "Weitere Inhalte"; a post's terms are boxes to tick (see [Post types, taxonomies and pages of listings](#post-types-taxonomies-and-pages-of-listings)). Add, delete, reorder sections. "Seite duplizieren" (in a page's settings and at the end of its form) copies a page in the language being edited as a draft under a new title and address, without its publishing date and SEO title. "Adresse" in a page's settings changes its address and the page it sits below ("Unter der Seite", see [Addresses](#addresses)); administrators only, since it adds redirects: in one save the page and its translations are renamed, links in the content follow, every published page whose address changed (the page and those below it) redirects from its old address, and what still names the old address (a full URL) is listed. The sidebar shows pages below their parent page. |
 | Draft, pending review, publish, schedule | Status per entry; a publish date in the future schedules it (see [Scheduling](#scheduling)). Contributors are offered only "Entwurf" and "Zur Prüfung"; when the gateway refuses a change for the editor's role, the admin says so instead of "try again later". |
 | Visual editing, preview | Two views of the same [editor](#editor), switched at the top of the sidebar: "Formular" shows the fields beside a live preview rendered by the site's own theme (a click on a section in the preview opens it in the form); "Auf der Seite" edits on the page itself. A post without a page of its own (no `renderPost` in the theme) is previewed marked on the page that lists it, else alone in the theme's listing section, else as a card of its fields. |
 | Media library, alt text | "Bilder": all images with where each is used, searchable by file name, alternative text and page, and filtered to unused images or images used without alternative text (marked "Ohne Alternativtext auf: …"); upload several at once, "Ersetzen" swaps an image for a new upload everywhere the editor may change (the old file stays while anything else still names it), delete only unused ones (replace and delete: Administrator, Redakteur). Large photos are scaled down before they are saved (see [Images](#images)). Images are fields with file, alt text, caption and focal point. |
@@ -79,7 +79,7 @@ Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 
 ### Editor
 
-`/admin` is one app. The sidebar lists everything that can be edited (pages, the theme's post type,
+`/admin` is one app. The sidebar lists everything that can be edited (pages, the theme's post types,
 site settings, menus, images, form submissions, users; patterns, forms and redirects folded under "Weitere Inhalte")
 and is the same in both views. Its search ("Suchen …") finds pages, posts, patterns and forms by
 their titles and texts in the language being edited, and images by name, ignoring case and accents;
@@ -198,12 +198,16 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      a function of the language) replaces the title "<site name>: <post type label>". A site set
      to "Nicht indexieren" or without public posts gets no feed. The build's `feed.xml` replaces a
      file of that name from the theme; a theme with its own feed sets `feed: false`, which also
-     leaves out the link.
+     leaves out the link. Several post types: `postTypes: [ … ]` instead, see
+     [Post types, taxonomies and pages of listings](#post-types-taxonomies-and-pages-of-listings);
+     the feed lists the first.
    - `ctx` offers `settings`, `menu(id)`, `image(src)` (with width and height), `img(image, options)`
      (a responsive `<img>`, see [Images](#images)), `posts()`, `form(slug)`,
      `md()`, `inline()`. `posts()` returns the published posts newest first by their date, posts
      without a date last by slug; `posts({ slugs })` returns the named posts in that order, and
-     `limit` cuts the list. The admin lists posts newest first too.
+     `limit` cuts the list. The admin lists posts newest first too. `posts({ type })` lists another
+     post type, `posts({ taxonomy, term })` only the posts with that term; `postUrl(post)` leads to a
+     post of any type, `terms(taxonomy, post)` and `paginate(items)` see below.
    - For [languages](#languages), `ctx` (inside `renderPage`, `renderPost` and block renders) also
      offers `lang` (the entry's language; without `languages` the site setting `lang`, else `'de'`),
      `languages` (the configured list, `[]` without the option), `url(path)`, `asset(path)` and
@@ -586,6 +590,43 @@ shows only its own. The gateway checks `content/<lang>/…` like
 the same path of the default language (roles and kinds), and a translated form's submissions go with
 its original's. The gateway's thank-you page, its messages and the confirmation e-mail are in the
 language of the page the form was on (see [Form submissions](#form-submissions)).
+
+### Post types, taxonomies and pages of listings
+
+A theme with more than one kind of post names them in `postTypes` (instead of `postType`, which
+stays the way for one), and their categories, tags or the like in `taxonomies`:
+
+```js
+postTypes: [
+  { name: 'news', label: 'Neuigkeiten', singular: 'Neuigkeit', date: 'date', url: (post) => `neuigkeiten/${post.slug}.html`,
+    fields: [fields.string('title', 'Titel'), fields.date('date', 'Datum'), fields.terms('kategorien', 'Kategorien')] },
+  { name: 'events', label: 'Termine', singular: 'Termin', fields: [ … ] }, // no url: no page of its own
+],
+taxonomies: [{ name: 'kategorien', label: 'Kategorien', singular: 'Kategorie', url: (term) => `kategorie/${term.slug}.html` }],
+renderTerm: (term, ctx) => ctx.html`<h1>${term.title}</h1>${term.posts.map((post) => … )}`,
+```
+
+- Each post type has its folder (`content/news/`, in another language `content/en/news/`), its
+  entry in the sidebar and its own rule for languages: a language shows the default language's
+  posts of a type until one of its own of that type is public. The first type is `posts` and
+  `ctx.posts()`; `renderPost(post, ctx)` renders every type, `ctx.postType` says which. Names are
+  lower-case and differ from each other, from `pages`, `patterns`, `forms`, `settings` and the
+  languages' codes.
+- A taxonomy's terms are entries in `content/<taxonomy>/<slug>.json` (`{ "title": "Konzerte",
+  "description": "…" }`, translated like patterns), edited under "Weitere Inhalte" by editors and
+  administrators. `fields.terms(taxonomy, label)` gives a post type the field where the post's
+  terms are ticked; it stores their slugs (`"kategorien": ["konzerte"]`). Authors and contributors
+  tick terms on their own posts but add no terms ([roles.js](gateway/roles.js)).
+- With `renderTerm`, every term with public posts gets a listing page at the taxonomy's
+  `url(term)` (default `<taxonomy>/<slug>.html`, as clean address `kategorien/konzerte/`), with the
+  term's public posts of every type in `term.posts` (and `ctx.term`). `ctx.terms(taxonomy)` lists a
+  taxonomy's terms, `ctx.terms(taxonomy, post)` a post's, each with `url` to its listing page (when
+  it has one) and `count`. Listing pages are in the sitemap, not in the search index.
+- `ctx.paginate(items, { perPage: 10 })` in a page or a term's listing gives one page of `items`:
+  `{ items, number, count, prev, next, pages: [{ number, url, current }] }`. The build writes the
+  page once per page, the further ones at `<address>2/`, `<address>3/` (with `urls: 'html'`
+  `<file>/2.html`); each names itself as canonical address, only the first is in the sitemap and
+  the search index, and the editor's preview shows the first. Posts are not paginated.
 
 ### Addresses
 

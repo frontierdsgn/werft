@@ -40,6 +40,7 @@ export default {
   page: 'Seite',
   pages: 'Seiten',
   post: 'Beitrag',
+  term: 'Begriff',
   pattern: 'Muster',
   patterns: 'Muster',
   form: 'Formular',
@@ -109,6 +110,7 @@ export default {
   'pattern.new': '+ Neues Muster',
   'pattern.newTitle': 'Neues Muster',
   'form.untranslated': 'Formular · noch nicht übersetzt',
+  'term.untranslated': '{kind} · noch nicht übersetzt',
   'form.new': '+ Neues Formular',
   'form.newTitle': 'Neues Formular',
 
@@ -174,6 +176,7 @@ export default {
   'shared.settings': 'Website-Einstellung: Änderungen wirken auf allen Seiten.',
   'shared.menus': 'Menü: Änderungen wirken auf allen Seiten.',
   'shared.form': 'Formular: Änderungen wirken überall, wo es erscheint.',
+  'shared.term': '{label}: Änderungen wirken bei allen Einträgen, die ihn haben.',
   'shared.settingsFrom': 'Was Sie hier nicht ändern, kommt aus der Fassung auf {language}.',
   'shared.menusFrom': 'Ein Menü, das Sie hier nicht ändern, kommt aus der Fassung auf {language}.',
   'shared.untranslated': 'Noch nicht übersetzt: Es zeigt den Inhalt aus der Fassung auf {language}, bis Sie es hier ändern.',
@@ -285,6 +288,7 @@ export default {
   // The form view
   'lead.page': 'Hier ändern Sie Titel, Texte und Bilder dieser Seite. Rechts sehen Sie, wie die Seite aussehen wird.',
   'lead.post': 'Hier ändern Sie diesen Eintrag. Rechts sehen Sie, wie er auf der Website erscheint.',
+  'lead.term': 'Einträge bekommen diesen Begriff in ihren Feldern; die Website listet sie auf einer eigenen Seite.',
   'lead.pattern': 'Ein Muster ist eine Gruppe von Abschnitten, die auf mehreren Seiten gleich erscheint, zum Beispiel eine Anfahrtsbeschreibung.',
   'lead.form': 'Ein Formular, das Besucher auf der Website ausfüllen. Hier legen Sie seine Felder und Texte fest.',
   'lead.settings': 'Angaben, die für die ganze Website gelten.',
