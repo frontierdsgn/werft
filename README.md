@@ -676,12 +676,16 @@ there (`git rm -r .werft/submissions`), they remain in that branch's history.
 - A plain form post gets a short thank-you page with a link back, or a redirect to `_redirect` (a
   path on the site the form was on). A request with `Accept: application/json` gets `{ "ok": true }`
   or `{ "message": … }` with the status.
-- The thank-you page and the messages are in the language of the page the form was on: a folder
-  named after one of the site's [languages](#languages) (`en/kontakt.html`), else the default
-  language; a site without `languages` takes `lang` from its settings. The text after sending is
+- The thank-you page and the messages are in the language of the page the form was on: the field
+  `_lang` if it names one of the site's [languages](#languages), else a folder of the page's address
+  named after one (`en/kontakt.html`), else the default language; a site without `languages` takes
+  `lang` from its settings. A form posted from another host (PHP web space) sends only that host as
+  referer, so there the theme writes the language into the form:
+  `<input name="_lang" type="hidden" value="${ctx.lang}">`. The text after sending is
   the form's `thanks` ("Text nach dem Absenden" in the editor) in that language, else werft's own
   (German and English), else the default language's `thanks`, else werft's German one, marked with
-  its language.
+  its language. A translation whose `thanks` is still the original's (the editor copies the whole
+  form) counts as having none.
 - A submission is not a content change: `werft serve` does not rebuild for it, and on Cloudflare
   Pages the excluded preview branch (step 3 above) keeps it from starting a build (the free plan has
   500 a month). `werft dev` and `werft serve` commit to the local `werft-submissions` branch and

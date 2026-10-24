@@ -11,7 +11,7 @@
 // Fields whose name starts with "_" are not stored. A filled-in "_gotcha" (a field hidden from
 // people) marks a bot: it gets the success reply and nothing is stored. "_redirect" sends a plain
 // form post on to that path of the page's site; without it the visitor gets a short thank-you page
-// in the language of the page the form was on (see TEXTS).
+// in the language of the page the form was on (see TEXTS), which "_lang" may name.
 // With a Turnstile secret, a submission needs a valid "cf-turnstile-response" (Cloudflare's widget
 // adds it to the form). Each form takes at most PER_HOUR submissions an hour.
 //
@@ -96,8 +96,12 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
   // translated form keeps its name, so its submissions are kept with the original's).
   const formDirs = [site.contentDir, ...(site.languages ?? []).slice(1).map((l) => `${site.contentDir}/${l}`)];
   const slugOfForm = (path) => formDirs.map((dir) => path.startsWith(`${dir}/forms/`) && /^([^/]+)\.json$/.exec(path.slice(dir.length + 7))?.[1]).find(Boolean);
+  // With the language it is in (null for a site without languages).
   const definitionOf = async (sha, slug) => {
-    for (const dir of formDirs) { const bytes = await storage.read(sha, `${dir}/forms/${slug}.json`); if (bytes) return bytes; }
+    for (const [i, dir] of formDirs.entries()) {
+      const bytes = await storage.read(sha, `${dir}/forms/${slug}.json`);
+      if (bytes) return { form: parse(bytes) ?? {}, lang: site.languages?.[i] ?? null };
+    }
     return null;
   };
   const readMany = (sha, paths) => (storage.readMany ? storage.readMany(sha, paths) : Promise.all(paths.map((p) => storage.read(sha, p))));
@@ -122,20 +126,40 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
 
   const refererOf = (request) => { try { return new URL(request.headers.get('referer')); } catch { return null; } };
 
-  // The language of the page the form was on: a folder named after one of the site's other
-  // languages, else the default language; a site without languages has its settings' `lang`.
-  async function languageOf(request) {
+  // The language of the page the form was on: the field _lang if it names one of the site's
+  // languages (a post from another host, such as PHP web space, carries only the origin as
+  // referer), else a folder of the referer named after one of them, else the default language. A
+  // site without languages has its settings' `lang`. main: the site branch's head, if known.
+  async function languageOf(request, fields = {}, main = null) {
     const languages = site.languages ?? [];
-    const path = refererOf(request)?.pathname.split('/') ?? [];
-    if (languages.length) return languages.slice(1).find((l) => path.includes(l)) ?? languages[0];
-    const settings = parse(await storage.read((await storage.head(branch)).sha, `${site.contentDir}/settings/site.json`));
-    return typeof settings?.lang === 'string' && /^[a-z]{2,3}(-[a-z0-9]+)*$/i.test(settings.lang) ? settings.lang : 'de';
+    if (languages.length) {
+      const named = [fields._lang].flat()[0];
+      if (languages.includes(named)) return named;
+      const path = refererOf(request)?.pathname.split('/') ?? [];
+      return languages.slice(1).find((l) => path.includes(l)) ?? languages[0];
+    }
+    try {
+      const settings = parse(await storage.read(main ?? (await storage.head(branch)).sha, `${site.contentDir}/settings/site.json`));
+      return typeof settings?.lang === 'string' && /^[a-z]{2,3}(-[a-z0-9]+)*$/i.test(settings.lang) ? settings.lang : 'de';
+    } catch (e) {
+      console.error('werft forms: site settings not read:', e.message);
+      return 'de';
+    }
   }
 
-  // A text for the visitor and its language (see TEXTS); own: [the form's text in the page's
-  // language, the form's text in the default language].
-  function pick(lang, key, own = []) {
-    const choices = [[own[0], lang], [builtIn(lang, key), lang], [own[1], site.languages?.[0] ?? lang], [TEXTS.de[key], 'de']];
+  // The form's own texts for pick(): [in the page's language, in the form's language]. A
+  // translation that still holds the original's text (the editor copies the whole form) has none
+  // of its own.
+  function ownTexts(local, form, get) {
+    const text = (f) => { const t = f && get(f); return typeof t === 'string' && t.trim() ? t : null; };
+    const [mine, base] = [text(local), text(form)];
+    return [local !== form && mine?.trim() === base?.trim() ? null : mine, base];
+  }
+
+  // A text for the visitor and its language (see TEXTS); own: from ownTexts, base: the language
+  // of the form's own definition.
+  function pick(lang, key, own = [], base = null) {
+    const choices = [[own[0], lang], [builtIn(lang, key), lang], [own[1], base ?? site.languages?.[0] ?? lang], [TEXTS.de[key], 'de']];
     const [value, language] = choices.find(([text]) => (typeof text === 'string' ? text.trim() : text));
     return { text: typeof value === 'function' ? value(site.name) : value.trim(), lang: language };
   }
@@ -159,7 +183,7 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     return hex(new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(`confirmation:${address.toLowerCase()}`))).subarray(0, 2));
   }
 
-  async function inform({ form, local, lang, title, fields, visitor, confirm }) {
+  async function inform({ form, local, lang, base, title, fields, visitor, confirm }) {
     const fromName = site.name;
     const to = String(form.notify?.to ?? '').split(/[\s,;]+/).filter(isAddress);
     const sending = [];
@@ -168,9 +192,9 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
       sending.push(mail.send({ to, subject: `Neue Einsendung: ${oneLine(title)}`, text, ...(visitor && { replyTo: visitor }), fromName }));
     }
     if (confirm) {
-      const own = (key) => [local?.notify?.[key], form.notify?.[key]].map((t) => (typeof t === 'string' ? t : null));
-      const subject = oneLine(pick(lang, 'confirmSubject', own('confirm_subject')).text);
-      const text = pick(lang, 'confirmText', own('confirm_text')).text;
+      const own = (key) => ownTexts(local, form, (f) => f.notify?.[key]);
+      const subject = oneLine(pick(lang, 'confirmSubject', own('confirm_subject'), base).text);
+      const text = pick(lang, 'confirmText', own('confirm_text'), base).text;
       sending.push(mail.send({ to: visitor, subject, text: `${text}\n`, fromName }));
     }
     for (const result of await Promise.allSettled(sending)) {
@@ -190,15 +214,17 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
   }
 
   async function receive(request, url, slug) {
-    let lang;
-    const say = async (status, key, { own, redirect } = {}) => {
-      lang ??= await languageOf(request);
-      return reply(request, url, status, lang, pick(lang, key, own), redirect);
+    let lang, fields = {}, main = null;
+    // A redirect and a script's { ok: true } show no text, so they need no language.
+    const silent = (status, redirect) => status < 300 && (!!redirect || (request.headers.get('accept') ?? '').includes('application/json'));
+    const say = async (status, key, { own, base, redirect } = {}) => {
+      if (silent(status, redirect)) return reply(request, url, status, null, {}, redirect);
+      lang ??= await languageOf(request, fields, main);
+      return reply(request, url, status, lang, pick(lang, key, own, base), redirect);
     };
     if (request.method !== 'POST') return say(405, 'post');
     if (!SLUG.test(slug)) return say(404, 'missing');
     if (Number(request.headers.get('content-length') ?? 0) > MAX_BYTES) return say(413, 'long');
-    let fields;
     try { fields = await readFields(request); } catch { return say(400, 'unreadable'); }
     const redirect = typeof fields._redirect === 'string' && /^\/(?![/\\])/.test(fields._redirect) ? fields._redirect : null;
     if (fields._gotcha) return say(200, 'thanks', { redirect });
@@ -207,17 +233,14 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     const chars = Object.entries(kept).flat(2).join('').length;
     if (Object.keys(kept).length > MAX_FIELDS || chars > MAX_CHARS) return say(413, 'long');
     if (!Object.values(kept).flat().some((v) => v.trim())) return say(422, 'empty');
-    const main = (await storage.head(branch)).sha;
+    main = (await storage.head(branch)).sha;
     const definition = await definitionOf(main, slug);
     if (!definition) return say(404, 'missing');
+    const { form, lang: base } = definition;
     const sent = await sentAt(await head());
     const hourAgo = stamp(now() - 3600 * 1000);
     const recent = sent.filter((p) => p.startsWith(`${SUBMISSIONS_DIR}/${slug}/`) && p.split('/').pop().slice(0, hourAgo.length) > hourAgo);
     if (recent.length >= PER_HOUR) return say(429, 'busy');
-    const form = parse(definition) ?? {};
-    // The form in the page's language, where it is translated.
-    lang ??= await languageOf(request);
-    const local = (site.languages ?? []).slice(1).includes(lang) ? parse(await storage.read(main, `${site.contentDir}/${lang}/forms/${slug}.json`)) : form;
     const title = form.title ?? slug;
     const visitor = visitorOf(kept);
     const tag = mail && form.notify?.confirm && visitor ? await tagOf(visitor) : null;
@@ -230,9 +253,13 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     const random = `${confirm ? tag : ''}${hex(crypto.getRandomValues(new Uint8Array(confirm ? 2 : 4)))}`;
     const data = encoder.encode(`${JSON.stringify({ form: slug, received_at: received, fields: kept }, null, 2)}\n`);
     await commit(`Einsendung: ${title}`, [{ path: `${SUBMISSIONS_DIR}/${slug}/${stamp(received)}-${random}.json`, data }]);
-    if (mail) await inform({ form, local, lang, title, fields: kept, visitor, confirm });
-    const own = [local?.thanks, form.thanks].map((t) => (typeof t === 'string' ? t : null));
-    return say(201, 'thanks', { own, redirect });
+    // The form in the page's language, where it is translated.
+    if (confirm || !silent(201, redirect)) lang ??= await languageOf(request, fields, main);
+    // (A form found in another language is missing in the default one.)
+    const local = !lang || !base || lang === base ? form
+      : lang === site.languages[0] ? null : parse(await storage.read(main, `${site.contentDir}/${lang}/forms/${slug}.json`));
+    if (mail) await inform({ form, local, lang, base, title, fields: kept, visitor, confirm });
+    return say(201, 'thanks', { own: ownTexts(local, form, (f) => f.thanks), base, redirect });
   }
 
   async function api(request, user) {

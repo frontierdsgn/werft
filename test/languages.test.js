@@ -297,6 +297,11 @@ test('the thank-you page and the confirmation are in the language of the form\'s
     'content/en/forms/anfrage.json': json({ title: 'Request', thanks: 'Thanks! We will call back.', notify: { confirm_text: 'We will be in touch.' } }),
     'content/forms/newsletter.json': json({ title: 'Newsletter' }),
     'content/forms/rueckruf.json': json({ title: 'Rückruf', notify: { confirm: true, confirm_text: 'Wir rufen an.' } }),
+    'content/forms/kurs.json': json({ title: 'Kurs', thanks: 'Danke <für> Ihre Anmeldung & bis bald.\nIhr Team' }),
+    'content/en/forms/kurs.json': json({ title: 'Course', thanks: 'Danke <für> Ihre Anmeldung & bis bald.\nIhr Team' }),
+    'content/forms/leer.json': json({ title: 'Leer', thanks: '  ' }),
+    'content/forms/kaputt.json': json({ title: 'Kaputt', thanks: { de: 'x' } }),
+    'content/en/forms/nur.json': json({ title: 'Only English', thanks: 'Only in English, thanks.' }),
   });
   const mail = memoryMail();
   const storage = githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch });
@@ -312,6 +317,17 @@ test('the thank-you page and the confirmation are in the language of the form\'s
   assert.deepEqual((await send('anfrage', 'fr/contact.html', { email: 'x@example.org' })).main, ['fr', '<main lang="de">', 'Danke! Wir rufen zurück.'], 'a language werft has no texts for: the default language\'s, marked');
   assert.deepEqual((await send('newsletter', 'fr/contact.html')).main, ['fr', '<main lang="de">', 'Vielen Dank, Ihre Nachricht ist angekommen.'], 'German is the last fallback');
   assert.equal(JSON.parse((await send('fehlt', 'en/contact.html', { email: 'v@example.org' }, 'application/json')).text).message, 'This form does not exist.', 'errors too');
+  assert.deepEqual((await send('kurs', 'kontakt.html', { name: 'A' })).main, ['de', '<main>', 'Danke &lt;für&gt; Ihre Anmeldung &amp; bis bald.<br>Ihr Team'], 'escaped, lines kept');
+  assert.deepEqual((await send('kurs', 'en/contact.html', { name: 'A' })).main, ['en', '<main>', 'Thank you, your message has arrived.'], 'a translation still holding the original\'s text has none of its own');
+  assert.deepEqual((await send('leer', 'kontakt.html', { name: 'A' })).main[2], 'Vielen Dank, Ihre Nachricht ist angekommen.', 'a blank text counts as none');
+  assert.deepEqual((await send('kaputt', 'kontakt.html', { name: 'A' })).main[2], 'Vielen Dank, Ihre Nachricht ist angekommen.', 'so does one that is no text');
+  assert.deepEqual((await send('nur', 'en/contact.html', { name: 'A' })).main, ['en', '<main>', 'Only in English, thanks.'], 'a form only in English has its own text');
+  assert.deepEqual((await send('nur', 'kontakt.html', { name: 'A' })).main, ['de', '<main>', 'Vielen Dank, Ihre Nachricht ist angekommen.'], 'a German page gets werft\'s German before an English text');
+  assert.deepEqual((await send('nur', 'fr/contact.html', { name: 'A' })).main, ['fr', '<main lang="en">', 'Only in English, thanks.'], 'a French one the form\'s own text, marked with its language');
+  assert.deepEqual((await send('anfrage', 'kontakt.html', { name: 'A', _lang: 'en' })).main, ['en', '<main>', 'Thanks! We will call back.'], '_lang names the language, for posts from another host');
+  assert.deepEqual((await send('anfrage', 'en/contact.html', { name: 'A', _lang: 'xx' })).main[0], 'en', 'a _lang the site does not have is ignored');
+  const bot = await gateway(new Request('https://site.test/api/werft/forms/anfrage', { method: 'POST', headers: { referer: 'https://site.test/en/contact.html' }, body: new URLSearchParams({ _gotcha: 'x', _redirect: '/en/thanks.html' }) }));
+  assert.deepEqual([bot.status, bot.headers.get('location')], [303, 'https://site.test/en/thanks.html'], 'a bot is redirected like a person');
   await send('rueckruf', 'en/contact.html', { email: 'y@example.org' });
   assert.deepEqual(mail.sent.map((m) => [m.to[0], m.subject, m.text]), [
     ['v@example.org', 'Ihre Nachricht an S', 'Wir melden uns.\n'],
@@ -322,9 +338,32 @@ test('the thank-you page and the confirmation are in the language of the form\'s
 });
 
 test('a site without languages answers in its settings\' language', async () => {
+  const answer = async (lang) => {
+    const hub = fakeGitHub();
+    hub.seed({ 'content/forms/contact.json': json({ title: 'Contact' }), 'content/settings/site.json': json({ title: 'S', lang }) });
+    const gateway = createGateway({ storage: githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch }), secret: 'x'.repeat(32), site: { name: 'S', contentDir: 'content' } });
+    return (await gateway(new Request('https://site.test/api/werft/forms/contact', { method: 'POST', body: new URLSearchParams({ text: 'Hi' }) }))).text();
+  };
+  assert.match(await answer('en'), /<html lang="en">.*<main><p>Thank you, your message has arrived\./s);
+  assert.match(await answer('en-GB'), /<html lang="en-GB">.*<main><p>Thank you, your message has arrived\./s, 'a regional code takes its language\'s texts');
+  assert.match(await answer('x"><script>'), /<html lang="de">.*<main><p>Vielen Dank/s, 'a code that is none falls back to German');
+});
+
+test('a failed read of the settings still keeps the submission', async () => {
   const hub = fakeGitHub();
-  hub.seed({ 'content/forms/contact.json': json({ title: 'Contact' }), 'content/settings/site.json': json({ title: 'S', lang: 'en' }) });
-  const gateway = createGateway({ storage: githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch }), secret: 'x'.repeat(32), site: { name: 'S', contentDir: 'content' } });
-  const page = await (await gateway(new Request('https://site.test/api/werft/forms/contact', { method: 'POST', body: new URLSearchParams({ text: 'Hi' }) }))).text();
-  assert.match(page, /<html lang="en">.*<main><p>Thank you, your message has arrived\./s);
+  hub.seed({ 'content/forms/contact.json': json({ title: 'Contact' }) });
+  const storage = githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch });
+  const read = storage.read;
+  const flaky = { ...storage, read: (sha, path) => (path.endsWith('settings/site.json') ? Promise.reject(new Error('GitHub down')) : read(sha, path)) };
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => errors.push(args.join(' '));
+  try {
+    const gateway = createGateway({ storage: flaky, secret: 'x'.repeat(32), site: { name: 'S', contentDir: 'content' } });
+    const response = await gateway(new Request('https://site.test/api/werft/forms/contact', { method: 'POST', body: new URLSearchParams({ text: 'Hi' }) }));
+    assert.equal(response.status, 201);
+    assert.match(await response.text(), /<html lang="de">.*Vielen Dank/s);
+  } finally { console.error = original; }
+  assert.ok([...hub.history('werft-submissions')].some((t) => t.includes('Hi')), 'the submission is kept');
+  assert.match(errors.join('\n'), /settings not read: GitHub down/);
 });
