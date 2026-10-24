@@ -5,7 +5,7 @@
 // content as large, plain forms beside a live preview (form-view.js). Changes stay in the browser
 // until "Speichern", which stores every changed file in one commit through the gateway.
 import { schema as adminSchema } from 'werft/schema';
-import { createContext, mediaPaths, markdown, raw, escape, imageSize } from 'werft';
+import { createContext, mediaPaths, markdown, raw, escape, imageSize, isPublic } from 'werft';
 import { siteLanguages, languageDir, localize, deepMerge, differences, pageFile, pageLinks } from 'werft/content';
 import { requireUser, loadSite, api, signOut } from './session.js';
 import { disarm, postPreview } from './preview.js';
@@ -145,7 +145,7 @@ function content(l = lang) {
     settings: one(`${dir}/settings/site.json`, {}), menus: one(`${dir}/settings/menus.json`, {}),
   });
   const all = { ...of(contentDir), redirects: one(`${contentDir}/settings/redirects.json`, { redirects: [] }).redirects ?? [] };
-  if (languages.length) all.languages = Object.fromEntries(languages.slice(1).map((l) => [l, { ...of(langDir(l)), posts: postType && postDir(l) !== `${contentDir}/${postType.name}` ? folder(postDir(l)) : null }]));
+  if (languages.length) all.languages = Object.fromEntries(languages.slice(1).map((l) => [l, of(langDir(l))]));
   return localize(all, { site, lang: l });
 }
 
@@ -351,11 +351,12 @@ function draw() {
   parsed.querySelectorAll('script, noscript, base, meta[http-equiv], iframe, object, embed').forEach((n) => n.remove());
   disarm(parsed);
   // Links to pages the language lacks lead to the default language's, as on the site.
-  if (folder && folder === langPrefix()) {
+  if (!isDefault() && folder.startsWith(langPrefix())) {
     const link = pageLinks({ site, content: data, preview: true });
     for (const a of parsed.querySelectorAll('a[href]')) {
       const href = unmark(a.getAttribute('href'));
-      if (link(href) !== href) a.setAttribute('href', link(href));
+      const next = link(href, `${folder}index.html`);
+      if (next !== href) a.setAttribute('href', next);
     }
   }
   // Files uploaded but not saved yet come from the browser's copy.
@@ -1226,10 +1227,15 @@ function drawPages() {
     const when = (data) => (data[date] ? new Date(data[date]).toLocaleDateString('de-DE') : '');
     // A language without posts of its own shows the default language's; its first own post ends that.
     const shared = !isDefault() && languageOf('post:') !== lang;
+    // Own posts of the language that are not public yet: the site still shows the default ones.
+    const waiting = !isDefault() && !shared && !posts.some(({ data }) => isPublic(data));
+    // Starting own posts changes what the public site shows, so it is for roles that may publish.
+    const mayPublish = (me.statuses ?? []).includes('published');
     sections.push(folded(`${postType.label} (${posts.length})`, postsOpen || shown.startsWith('post:'), (o) => { postsOpen = o; },
       shared && el('p', { className: 've-hint' }, `Auf ${languageName(lang)} zeigt die Website die ${postType.label} auf ${languageName(defaultLang)}. Was Sie hier anlegen oder ändern, gilt für alle Sprachen.`),
+      waiting && el('p', { className: 've-hint' }, `Bis einer dieser Einträge veröffentlicht ist, zeigt die Website auf ${languageName(lang)} weiter die ${postType.label} auf ${languageName(defaultLang)}.`),
       button(`+ ${postType.singular ?? 'Beitrag'} anlegen${shared ? ' (für alle Sprachen)' : ''}`, null, () => newPost(), 've-tool ve-wide'),
-      shared && button(`Eigene ${postType.label} auf ${languageName(lang)} beginnen …`, null, () => newPost({ own: true }), 've-tool ve-wide'),
+      shared && mayPublish && button(`Eigene ${postType.label} auf ${languageName(lang)} beginnen …`, null, () => newPost({ own: true }), 've-tool ve-wide'),
       el('ul', {}, ...posts.map(({ slug, data }) => item(`post:${slug}`, data.title ?? slug, note(when(data), unusual(data)))))));
   }
   const siteList = el('ul', {});
@@ -1353,7 +1359,7 @@ function openPost(slug) {
 // own: the first post of a language that has shown the default language's posts so far.
 async function newPost({ own = false } = {}) {
   if (own && !(await confirmDialog(`Eigene ${postType.label} auf ${languageName(lang)}?`,
-    `Sie legen den ersten Eintrag auf ${languageName(lang)} an. Sobald er gespeichert ist, zeigt die Website auf ${languageName(lang)} nur noch ${postType.label}, die Sie in dieser Sprache anlegen; die auf ${languageName(defaultLang)} erscheinen dort nicht mehr.`, 'Weiter'))) return;
+    `Sie legen den ersten Eintrag auf ${languageName(lang)} an. Sobald einer veröffentlicht ist, zeigt die Website auf ${languageName(lang)} nur noch ${postType.label}, die Sie in dieser Sprache anlegen; die auf ${languageName(defaultLang)} erscheinen dort nicht mehr.`, 'Weiter'))) return;
   const title = await promptDialog(`Neu: ${postType.singular ?? 'Beitrag'}`, 'Titel');
   if (!title) return;
   const slug = unique(postType.name, slugify(title));

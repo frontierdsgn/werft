@@ -162,6 +162,31 @@ test('links to pages a language lacks lead to the default language\'s page', asy
   assert.match(out['impressum.html'], /<a href="impressum.html#anbieter">/, 'the default language is left as it is');
 });
 
+test('post pages of a language lead to the default language\'s pages it lacks, too', async () => {
+  // A post page one folder down links to pages as "../<page>".
+  const posting = {
+    ...theme,
+    renderPost: (post, ctx) => html`<title>${post.title}</title><nav>${['main', 'footer'].flatMap((m) => ctx.menu(m).items).map((i) => html`<a href="../${i.url}">${i.label}</a>`)}</nav><a href="../nur-englisch.html#x">E</a>`,
+  };
+  const out = await built(site, {
+    ...english,
+    'content/pages/impressum.json': json({ title: 'Impressum', status: 'published', sections: [] }),
+    'content/en/events/concert.json': json({ title: 'Concert', status: 'published', date: '2026-07-01' }),
+  }, posting);
+  assert.equal(out['en/termine/concert.html'], '<title>Concert</title><nav><a href="../index.html">Home</a><a href="../../impressum.html">Impressum</a></nav><a href="../nur-englisch.html#x">E</a>');
+});
+
+test('a language\'s own posts count once one of them is public', async () => {
+  const draft = { ...english, 'content/en/events/concert.json': json({ title: 'Concert', status: 'draft', date: '2026-07-01' }) };
+  let out = await built(site, draft);
+  assert.match(out['en/index.html'], /<ul><li>Konzert<\/li><\/ul>/, 'a draft changes nothing on the public site');
+  assert.ok(!out['en/termine/concert.html'] && !out['en/termine/konzert.html']);
+  const scheduled = { ...english, 'content/en/events/concert.json': json({ title: 'Concert', status: 'published', publish_date: '2026-06-02T00:00:00Z' }) };
+  out = await built(site, scheduled);
+  assert.match(out['en/index.html'], /<ul><li>Konzert<\/li><\/ul>/, 'nor does a post that is not due');
+  assert.equal(JSON.parse(out['_werft/build.json']).next_publish, '2026-06-02T00:00:00.000Z', 'it is rebuilt when due');
+});
+
 test('a site below a base path keeps its languages below it', async () => {
   const out = await built({ ...site, base: 'salon' }, english, switching);
   assert.ok(out['salon/en/index.html'] && out['salon/index.html']);
