@@ -52,6 +52,8 @@ test('refuses bad signatures, paths outside the web space and code', { skip: !ha
   const put = (p, text) => signed(JSON.stringify({ action: 'put', files: [{ path: p, content: Buffer.from(text).toString('base64') }] }));
   for (const p of ['../escape.html', '/abs.html', 'a/../../x.html', 'shell.php', 'x.phtml', 'werft-publish.php', '.user.ini']) assert.equal((await put(p, 'x')).status, 422, p);
   assert.equal((await put('.htaccess', 'AddHandler application/x-httpd-php .html\n')).status, 422);
+  for (const line of ['ErrorDocument 404 https://elsewhere.example/', 'ErrorDocument 404 /x.php', 'ErrorDocument 500 /500.html', 'ErrorDocument 404 "/a.html" SetHandler']) assert.equal((await put('.htaccess', `${line}\n`)).status, 422, line);
+  assert.equal((await put('en/.htaccess', 'ErrorDocument 404 /en/404.html\n')).status, 200, 'a local not-found page is allowed');
   assert.equal(fs.existsSync(path.join(path.dirname(web), 'escape.html')), false);
   const deleteForeign = await signed(JSON.stringify({ action: 'delete', paths: ['foreign.html'] }));
   assert.equal((await deleteForeign.json()).deleted, 0);

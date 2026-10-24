@@ -26,7 +26,7 @@ async function send(res, response) {
 // Whether `file` lies inside `dir` (a prefix test would also accept a sibling such as _site-old).
 const inside = (dir, file) => { const rel = path.relative(dir, file); return !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`); };
 
-async function serveFile(res, outDir, pathname) {
+async function serveFile(res, outDir, pathname, status = 200) {
   let file = path.join(outDir, decodeURIComponent(pathname));
   if (!inside(outDir, file)) return false;
   try {
@@ -37,13 +37,23 @@ async function serveFile(res, outDir, pathname) {
       file = path.join(file, 'index.html');
     }
     const data = await fs.readFile(file);
-    res.writeHead(200, { 'content-type': TYPES[path.extname(file).slice(1).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
+    res.writeHead(status, { 'content-type': TYPES[path.extname(file).slice(1).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
     res.end(data);
     return true;
   } catch (error) {
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false;
     throw error;
   }
+}
+
+// For an address the site does not have: the nearest 404.html above it (en/404.html for /en/…, else
+// 404.html), with status 404, as Cloudflare Pages does.
+async function serveNotFound(res, outDir, pathname) {
+  const folders = pathname.split('/').slice(1, -1);
+  for (let i = folders.length; i >= 0; i--) {
+    if (await serveFile(res, outDir, `/${folders.slice(0, i).map((f) => `${f}/`).join('')}404.html`, 404)) return true;
+  }
+  return false;
 }
 
 // options: { dir, port, host, secret, branch, tickMinutes, mail (the e-mail driver when WERFT_MAIL
@@ -104,6 +114,7 @@ export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret
       const redirect = (await redirects()).find((r) => r.from === url.pathname);
       if (redirect) { res.writeHead(redirect.status ?? 301, { location: redirect.to }); return res.end(); }
       if (await serveFile(res, outDir, url.pathname)) return;
+      if (await serveNotFound(res, outDir, url.pathname)) return;
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end('Not found');
     } catch (error) {

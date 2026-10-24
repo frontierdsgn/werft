@@ -104,3 +104,30 @@ test('ctx.head() options replace what the entry gives', () => {
   assert.equal(ctx.head({ title: 'B', description: 'y', type: 'profile' }).value, '<title>B</title><meta name="description" content="y"><meta property="og:type" content="profile">'
     + '<meta property="og:site_name" content="S"><meta property="og:title" content="B"><meta property="og:description" content="y"><meta name="twitter:card" content="summary">');
 });
+
+test('a page with the slug 404 builds to 404.html, noindex, out of the sitemap, for every host', async () => {
+  const files = {
+    'content/settings/site.json': json({ title: 'Salon', url: 'https://salon.example/' }),
+    'content/settings/redirects.json': json({ redirects: [{ from: '/alt.html', to: '/neu.html' }] }),
+    'content/pages/index.json': json({ title: 'Start' }),
+    'content/pages/404.json': json({ title: 'Nicht gefunden' }),
+    'content/en/pages/404.json': json({ title: 'Not found' }),
+  };
+  const page = { ...theme, renderPage: (p, ctx) => html`<head>${ctx.head()}</head><a href="${ctx.url('')}">Start</a>` };
+  const out = await built({ languages: ['de', 'en'] }, files, page);
+  assert.match(out['404.html'], /^<head><base href="\/"><title>Nicht gefunden<\/title><meta name="robots" content="noindex">.*<a href=".\/">Start<\/a>$/);
+  assert.match(out['en/404.html'], /^<head><base href="\/en\/"><title>Not found<\/title><meta name="robots" content="noindex">.*<a href="..\/">Start<\/a>$/);
+  assert.doesNotMatch(out['sitemap.xml'], /404/);
+  const searched = await built({}, files, { ...page, search: true });
+  assert.ok(searched['_werft/search/de.json'] && !searched['_werft/search/de.json'].includes('Nicht gefunden'), 'nor in the site search');
+  assert.doesNotMatch(out['404.html'], /canonical|og:url|hreflang/);
+  assert.match(out['index.html'], /^<head><title>Start<\/title><link/, 'other pages get no <base>');
+  assert.equal(out['.htaccess'], 'Redirect 301 /alt.html /neu.html\nErrorDocument 404 /404.html\n');
+  assert.equal(out['en/.htaccess'], 'ErrorDocument 404 /en/404.html\n');
+  // Below a base path, without redirects.
+  delete files['content/settings/redirects.json'];
+  const below = await built({ base: 'salon' }, files, page);
+  assert.match(below['salon/404.html'], /^<head><base href="\/salon\/">/);
+  assert.equal(below['salon/.htaccess'], 'ErrorDocument 404 /salon/404.html\n');
+  assert.equal(below['.htaccess'], undefined);
+});
