@@ -24,7 +24,7 @@ test('a clean build has no findings', () => {
       + '<link rel="stylesheet" href="assets/site.css"><link rel="canonical" href="https://example.org/"><script src="assets/site.js"></script>'
       + '<form method="post" action="/api/werft/forms/anfrage"></form><a href="/api/werft/tick">Tick</a><div style="background:url(\'assets/img/a.jpg\')"></div>'
       + '<img src="assets/img/a.jpg" alt="x" srcset="data:image/gif;base64,R0lGODlh,AAAA 1x, https://cdn.example/w_400,h_300/a.jpg 400w">'
-      + '<a href="kontakt.html#:~:text=Telefon">Text</a><a href="kontakt.html#form:~:text=Telefon">Text</a><img src="assets/img/a.jpg" alt="x" srcset="assets/img/a.jpg 1x), assets/img/a.jpg 2x"><link rel="alternate" hreflang="de" href="./"><iframe src="team/"></iframe><map><area href="kontakt.html" alt="K"></map><a href="blog/eintrag.html">Blog</a>',
+      + '<a href="kontakt.html#:~:text=Telefon">Text</a><a href="kontakt.html#form:~:text=Telefon">Text</a><link rel="alternate" hreflang="de" href="./"><iframe src="team/"></iframe><map><area href="kontakt.html" alt="K"></map><a href="blog/eintrag.html">Blog</a>',
     'kontakt.html': '<section id="form"></section>',
     'team/index.html': '<p>Team</p>',
     'assets/site.css': '/* url(gone.png) */ body { background: url(img/a.jpg) } .x { mask: url("#m") }',
@@ -74,9 +74,9 @@ test('untranslated-link: a language page links to its version of a page it does 
   assert.match(result.findings[0].message, /leads to en\/impressum\.html, a page "en" does not have; the "de" page is impressum\.html\. Write the link relative to the page \("impressum\.html"\)/);
   const nested = run({ 'impressum.html': '', 'en/termine/a.html': '<a href="/en/impressum.html">Imprint</a>' }, { site });
   assert.match(nested.findings[0].message, /\("\.\.\/impressum\.html"\)/);
-  // Deeper pages and folders the build does not rewrite: the default language's address itself.
-  const deeper = run({ 'termine/x.html': '', 'team/index.html': '', 'en/index.html': '<a href="/en/termine/x.html">x</a><a href="/en/team/">Team</a>' }, { site });
-  assert.deepEqual(deeper.findings.map((f) => f.message.match(/\. (Link "[^"]*")/)?.[1]), ['Link "/termine/x.html"', 'Link "/team/"']);
+  // Deeper pages, folders and relative links the build does not rewrite: the default language's address itself.
+  const deeper = run({ 'termine/x.html': '', 'team/index.html': '', 'en/index.html': '<a href="/en/termine/x.html">x</a><a href="/en/team/">Team</a><iframe src="impressum.html"></iframe>', 'impressum.html': '' }, { site });
+  assert.deepEqual(deeper.findings.map((f) => f.message.match(/\. (Link "[^"]*")/)?.[1]), ['Link "/termine/x.html"', 'Link "/team/"', 'Link "/impressum.html"']);
   // Below a base path, too.
   const below = run({ 'salon/impressum.html': '', 'salon/en/index.html': '<a href="/salon/en/impressum.html">Imprint</a>' }, { site: { ...site, base: 'salon' } });
   assert.deepEqual(rules(below), ['salon/en/index.html:1:4 error untranslated-link']);
@@ -104,7 +104,7 @@ test('untranslated-link: links the build leads to the default language pass, oth
 
 test('missing-file: images, sources, stylesheets, scripts and CSS references that are not in the build', () => {
   const result = run({
-    'index.html': '<img src="assets/img/weg.jpg" alt="x"><picture><source srcset="assets/img/a.webp 1x, assets/img/b.webp 2x"></picture>'
+    'index.html': '<img src="assets/img/weg.jpg" alt="x"><picture><source srcset="assets/img/a.webp 1x), assets/img/b.webp 2x"></picture>'
       + '<link rel="stylesheet" href="assets/fehlt.css"><script src="assets/fehlt.js"></script><div style="background-image: url(assets/img/bg.jpg)"></div>'
       + '<style>\n.hero { background: url("assets/img/hero.jpg") }</style><video src="v.mp4" poster="assets/img/poster.jpg"></video>',
     'assets/site.css': '@import "fonts.css";\n@font-face { src: url(../fonts/inter.woff2) }',
