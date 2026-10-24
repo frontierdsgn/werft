@@ -9,7 +9,7 @@
 // given, also there: { get(key), put(key, value, ttlSeconds), delete(key) }, e.g. Cloudflare KV. A
 // failing shared store (a used-up quota) leaves the counts of this process.
 
-const FREE = { account: 5, device: 5, address: 20, session: 5, reset: 3 };
+const FREE = { account: 5, device: 5, address: 20, session: 5, reset: 3, totp: 5 };
 const MAX_WAIT = 15 * 60 * 1000;
 const FORGET = 60 * 60 * 1000;
 // Requests for new-password e-mails are forgotten after a day, so the hour-long wait holds.

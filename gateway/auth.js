@@ -48,8 +48,9 @@ async function hmac(secret, data) {
 
 // A token is base64url(JSON payload) "." base64url(HMAC). Each user's tokens carry a stamp derived
 // from the stored password hash, so changing a password or deleting a user revokes them.
+// Two-factor sign-in, once switched on or off, changes it too.
 export async function stampOf(user) {
-  return hex(await crypto.subtle.digest('SHA-256', encoder.encode(`${user.email}\n${user.password}\n${user.role}`))).slice(0, 16);
+  return hex(await crypto.subtle.digest('SHA-256', encoder.encode(`${user.email}\n${user.password}\n${user.role}${user.totp ? `\n${user.totp}` : ''}`))).slice(0, 16);
 }
 
 export async function signToken(secret, payload) {
@@ -74,4 +75,4 @@ export const serializeUsers = (users) => `${JSON.stringify({ users }, null, 2)}\
 export const findUser = (users, email) => users.find((u) => u.email.toLowerCase() === String(email ?? '').trim().toLowerCase());
 
 // The public view of a user, as the admin shows it.
-export const publicUser = ({ email, name, role }) => ({ email, name, role });
+export const publicUser = ({ email, name, role, totp }) => ({ email, name, role, two_factor: !!totp });
