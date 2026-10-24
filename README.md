@@ -68,7 +68,7 @@ Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 | Pages and posts | Pages built from sections (the theme's blocks), plus one post type per theme (e.g. events). Add, delete, reorder sections. "Adresse" in a page's settings changes its address (administrators, since it adds a redirect): in one save the page and its translations are renamed, links in the content follow, a published page's old address redirects to the new one, and what still names the old address (a full URL) is listed. |
 | Draft, pending review, publish, schedule | Status per entry; a publish date in the future schedules it (see [Scheduling](#scheduling)). Contributors are offered only "Entwurf" and "Zur Prüfung"; when the gateway refuses a change for the editor's role, the admin says so instead of "try again later". |
 | Visual editing, preview | Two views of the same [editor](#editor), switched at the top of the sidebar: "Formular" shows the fields beside a live preview rendered by the site's own theme (a click on a section in the preview opens it in the form); "Auf der Seite" edits on the page itself. A post without a page of its own (no `renderPost` in the theme) is previewed marked on the page that lists it, else alone in the theme's listing section, else as a card of its fields. |
-| Media library, alt text | "Bilder": all images with where each is used; upload several at once, delete only unused ones (Administrator, Redakteur). Images are fields with file, alt text and caption. |
+| Media library, alt text | "Bilder": all images with where each is used; upload several at once, delete only unused ones (Administrator, Redakteur). Large photos are scaled down before they are saved (see [Images](#images)). Images are fields with file, alt text and caption. |
 | Menus, site settings, SEO | Menu locations the theme declares; site settings; SEO title, description, share image and noindex per page, written into the page by [`ctx.head()`](#install). |
 | Revisions | Every save is a git commit. "Frühere Versionen" under each entry compares a version with the current one by content and brings it back as an unsaved change. |
 | Reusable blocks | Patterns: sections shared by several pages. |
@@ -134,6 +134,7 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      base: '',                      // set when the site is served below a path, e.g. 'salon'
      passthrough: [{ from: '.', paths: ['alt'] }], // copied unchanged into the output
      languages: ['de', 'en'],       // optional, the first is the default; see Languages
+     images: { maxSize: 2560 },     // optional; see Images
    };
    ```
 3. **Theme** (`theme/index.js`), a plain object:
@@ -448,6 +449,19 @@ the same path of the default language (roles and kinds), and a translated form's
 its original's. The gateway's thank-you page is German (it takes the `lang` of the page the form was
 on and marks its text `lang="de"`); for one in the visitor's language, send `_redirect` to a page
 of that language.
+
+### Images
+
+The editor scales an uploaded JPEG, PNG or WebP down before it is saved when its longer edge is
+larger than `images.maxSize` in `werft.config.js` (default 2560 pixels, as in WordPress; `0` keeps
+every upload as it is). It keeps the format and the proportions, so a PNG keeps its transparency,
+applies the orientation the camera recorded and drops other metadata such as the location, and
+tells the editor what it did. It never scales up, and keeps the original when scaling would not
+make the file smaller or the browser cannot write the format. GIFs, animated PNGs and WebPs,
+smaller images and other files are saved as they are, as are files added to the media directory
+without the editor. In Chrome, a
+6000 × 4000 JPEG of 24 MB became 2560 × 1707 and 1.8 MB in under a second (measured 24 October
+2026, Chromium 155, a photo-sized image of noise, the worst case for its size).
 
 ### Scheduling
 

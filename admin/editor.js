@@ -6,6 +6,7 @@
 // until "Speichern", which stores every changed file in one commit through the gateway.
 import { schema as adminSchema } from 'werft/schema';
 import { createContext, mediaPaths, markdown, raw, escape, imageSize, isPublic } from 'werft';
+import { downscale, downscaleTarget, maxSize } from 'werft/images';
 import { siteLanguages, languageDir, localize, deepMerge, differences, pageFile, pageLinks } from 'werft/content';
 import { requireUser, loadSite, api, signOut } from './session.js';
 import { disarm, postPreview } from './preview.js';
@@ -802,7 +803,10 @@ function pickImage(current) {
     input.value = '';
     input.onchange = async () => {
       const file = input.files[0];
-      if (file) choose(await upload(file));
+      if (!file) return;
+      const { path, note } = await upload(file);
+      if (note) toast(note);
+      choose(path);
     };
     dialog.querySelector('.ve-cancel').onclick = () => { dialog.close(); resolve(null); };
     dialog.showModal();
@@ -1070,7 +1074,7 @@ function toast(text, error = false) {
   node.className = error ? 've-error' : '';
   node.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { node.hidden = true; }, error ? 8000 : 3000);
+  toastTimer = setTimeout(() => { node.hidden = true; }, error || text.length > 100 ? 8000 : 3000);
 }
 
 function shortcuts(event, inField) {
@@ -1437,17 +1441,29 @@ async function newPost({ own = false } = {}) {
 }
 
 // ---- Images ----
-// Adds a file as an upload that is saved with the next save; returns its path on the site.
+// Adds a file as an upload that is saved with the next save, scaled down first when it is larger
+// than the site allows (images.js); returns its path on the site and, if it was scaled, a sentence
+// that says so.
 async function upload(file) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bytes = new Uint8Array(await file.arrayBuffer());
+  let note = '';
+  if (downscaleTarget(bytes, maxSize(site))) {
+    toast(`„${file.name}“ wird verkleinert …`);
+    const smaller = await downscale(bytes, maxSize(site)).catch(() => null);
+    if (smaller) {
+      const mb = (n) => `${(n / 1e6).toLocaleString('de', { maximumFractionDigits: 1 })} MB`;
+      note = `„${file.name}“ war sehr groß und wurde verkleinert: ${smaller.width} × ${smaller.height} statt ${smaller.from.width} × ${smaller.from.height} Pixel, ${mb(smaller.bytes.length)} statt ${mb(bytes.length)}.`;
+      bytes = smaller.bytes;
+    }
+  }
   const stem = file.name.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '');
   let path = `${mediaDir}/${stem}`;
   for (let n = 2; path in media || uploads.has(path); n++) path = `${mediaDir}/${stem.replace(/(\.[^.]+)?$/, `-${n}$1`)}`;
-  uploads.set(path, { base64: encodeBase64(bytes), url: URL.createObjectURL(file), saved: false });
+  uploads.set(path, { base64: encodeBase64(bytes), url: URL.createObjectURL(note ? new Blob([bytes], { type: file.type }) : file), saved: false });
   // The theme sees the new file as one of the site's images, with its size.
   media[path] = imageSize(bytes) ?? {};
   drawBar();
-  return path;
+  return { path, note };
 }
 const images = () => [...new Set([...uploads.keys(), ...Object.keys(media).filter((p) => p.startsWith(`${mediaDir}/`))])].filter((p) => !removed.has(p));
 // The name of a content file's entry for a list, with its language; undefined for other files.

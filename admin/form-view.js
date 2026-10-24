@@ -187,8 +187,9 @@ export function mediaView(app, root) {
   const draw = () => mediaView(app, root);
   const input = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/gif,image/webp', multiple: true });
   input.addEventListener('change', async () => {
-    for (const file of input.files) await app.upload(file);
-    app.toast(`${input.files.length === 1 ? 'Bild' : 'Bilder'} hinzugefügt. Mit „Speichern“ kommen sie auf die Website.`);
+    const notes = [];
+    for (const file of input.files) notes.push((await app.upload(file)).note);
+    app.toast([`${input.files.length === 1 ? 'Bild' : 'Bilder'} hinzugefügt. Mit „Speichern“ kommen sie auf die Website.`, ...notes.filter(Boolean)].join(' '));
     draw();
   });
   const upload = el('label', { className: 've-primary ve-upload' }, 'Bilder hochladen …', input);
