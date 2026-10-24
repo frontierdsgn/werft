@@ -544,7 +544,35 @@ there (`git rm -r .werft/submissions`), they remain in that branch's history.
   leave the working tree alone.
 - On PHP web space the form's `action` is the build host's gateway, e.g.
   `https://<project>.pages.dev/api/werft/forms/newsletter`.
-- No notification is sent; look at "Einsendungen".
+- With [e-mail](#e-mail) set up, a submission can also be sent by e-mail (see below).
+
+#### E-mail for a submission
+
+In the editor, each form has "E-Mail bei neuer Einsendung" (the field `notify` of
+`content/forms/<form>.json`):
+
+```json
+{ "title": "Anfrage", "notify": { "to": "team@example.org, chef@example.org", "confirm": true,
+  "confirm_subject": "Ihre Anfrage", "confirm_text": "Danke, wir melden uns bis morgen." } }
+```
+
+- `to`: the addresses that get each submission ("Neue Einsendung: <title>", one line per field),
+  separated by commas. The reply-to is the visitor's address: the field `email` (`e-mail`,
+  `mail`), else the first field that holds an address.
+- `confirm`: the visitor gets a confirmation to that address, with `confirm_subject` (default
+  "Ihre Nachricht an <site name>") and `confirm_text` (default "Vielen Dank, Ihre Nachricht ist
+  angekommen."). It holds nothing the visitor wrote, so nobody can send their own text to someone
+  else through the site, and each address gets at most one a day, from any form of the site. The
+  gateway finds the confirmations of the last day in the names of the submission files, which carry
+  a short keyed hash of the address; deleting a submission resets this for its address. Rarely
+  (about one in 65,000 submissions of that day) a visitor goes unconfirmed because another
+  submission's file name looks the same. With confirmations on, use [Turnstile](#spam) so bots
+  cannot send them to strangers.
+- The submission is stored first. An e-mail that fails is written to the log and the visitor still
+  gets the normal reply, so nothing is lost; it stays under "Einsendungen".
+- The recipients and texts are read from the form in the default language; the editor shows the
+  setting there only. They are part of the content: anyone who can read the repository, and the
+  theme through `ctx.form()`, sees the addresses.
 
 #### Spam
 

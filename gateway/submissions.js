@@ -13,7 +13,14 @@
 // form post on to that path of the page's site; without it the visitor gets a short thank-you page.
 // With a Turnstile secret, a submission needs a valid "cf-turnstile-response" (Cloudflare's widget
 // adds it to the form). Each form takes at most PER_HOUR submissions an hour.
+//
+// With an e-mail driver, a stored submission is sent to the addresses in the form's `notify.to`,
+// with the visitor's address as reply-to. With `notify.confirm`, the visitor gets a confirmation
+// holding only the form's own text (never what was sent, so nobody can mail others through the
+// site), at most one a day per address: a confirmed submission's id carries a keyed hash of the
+// address. A failed e-mail is logged; the submission is kept.
 import { editable } from './roles.js';
+import { isAddress } from './mail.js';
 
 export const SUBMISSIONS_BRANCH = 'werft-submissions';
 export const SUBMISSIONS_DIR = '.werft/submissions';
@@ -21,6 +28,7 @@ const MAX_FIELDS = 50;
 const MAX_CHARS = 20000;
 const MAX_BYTES = 64 * 1024;
 const PER_HOUR = 60;
+const DAY = 24 * 3600 * 1000;
 const SLUG = /^[a-z0-9][a-z0-9_-]*$/i;
 const ID = /^[0-9TZ]+-[0-9a-f]{8}$/;
 const TURNSTILE = 'cf-turnstile-response';
@@ -31,6 +39,17 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), { status
 const escapeHTML = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 // A submission's id starts with its time, so ids sort by time: 20260601T120000Z-1a2b3c4d.
 const stamp = (time) => new Date(time).toISOString().replace(/[-:]|\.\d+/g, '');
+const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
+
+// The visitor's address: a field named email (e-mail, mail), else the first field holding one.
+function visitorOf(fields) {
+  const values = Object.entries(fields).filter(([, v]) => typeof v === 'string').map(([name, v]) => [name, v.trim()]);
+  return (values.find(([name, v]) => /^(e-?)?mail$/i.test(name) && isAddress(v)) ?? values.find(([, v]) => isAddress(v)))?.[1] ?? null;
+}
+
+// The submission as plain text, one field per line; lines of a longer text are indented.
+const listing = (fields) => Object.entries(fields).map(([name, value]) => `${name}: ${[value].flat().join(', ').replace(/\r\n?/g, '\n').replace(/\n/g, '\n  ')}`).join('\n');
 
 // The fields of a submission: repeated names (checkboxes) become lists, files are left out.
 async function readFields(request) {
@@ -47,7 +66,7 @@ async function readFields(request) {
   return fields;
 }
 
-export function submissions({ storage, branch, site, now, turnstileSecret, fetch: request = (...args) => fetch(...args) }) {
+export function submissions({ storage, branch, site, now, secret, mail, turnstileSecret, fetch: request = (...args) => fetch(...args) }) {
   // A form's definition: in the default language, else in another language of the site (a
   // translated form keeps its name, so its submissions are kept with the original's).
   const formDirs = [site.contentDir, ...(site.languages ?? []).slice(1).map((l) => `${site.contentDir}/${l}`)];
@@ -92,6 +111,31 @@ export function submissions({ storage, branch, site, now, turnstileSecret, fetch
     return new Response(body, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
 
+  // Four hex digits of a keyed hash of the address: they start the random part of a confirmed
+  // submission's id, so the tree shows who was confirmed lately without storing the address again.
+  async function tagOf(address) {
+    const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return hex(new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(`confirmation:${address.toLowerCase()}`))).subarray(0, 2));
+  }
+
+  async function inform({ form, title, fields, visitor, confirm }) {
+    const fromName = site.name;
+    const to = String(form.notify?.to ?? '').split(/[\s,;]+/).filter(isAddress);
+    const sending = [];
+    if (to.length) {
+      const text = `Über das Formular „${title}“ kam eine neue Einsendung:\n\n${listing(fields)}\n\nAlle Einsendungen stehen im Editor unter „Einsendungen“.${visitor ? `\nEine Antwort auf diese E-Mail geht an ${visitor}.` : ''}\n`;
+      sending.push(mail.send({ to, subject: `Neue Einsendung: ${oneLine(title)}`, text, ...(visitor && { replyTo: visitor }), fromName }));
+    }
+    if (confirm) {
+      const subject = oneLine(form.notify.confirm_subject) || (site.name ? `Ihre Nachricht an ${oneLine(site.name)}` : 'Ihre Nachricht ist angekommen');
+      const text = String(form.notify.confirm_text ?? '').trim() || `Vielen Dank, Ihre Nachricht ist angekommen.${site.name ? `\n\n${site.name}` : ''}`;
+      sending.push(mail.send({ to: visitor, subject, text: `${text}\n`, fromName }));
+    }
+    for (const result of await Promise.allSettled(sending)) {
+      if (result.status === 'rejected') console.error('werft forms: e-mail not sent:', result.reason?.message ?? result.reason);
+    }
+  }
+
   // Cloudflare Turnstile's server-side check of the widget's token.
   async function human(fields, incoming) {
     const token = [fields[TURNSTILE]].flat()[0];
@@ -119,14 +163,24 @@ export function submissions({ storage, branch, site, now, turnstileSecret, fetch
     if (!Object.values(kept).flat().some((v) => v.trim())) return reply(request, url, 422, 'Das Formular ist leer.');
     const definition = await definitionOf((await storage.head(branch)).sha, slug);
     if (!definition) return reply(request, url, 404, 'Dieses Formular gibt es nicht.');
+    const sent = await sentAt(await head());
     const hourAgo = stamp(now() - 3600 * 1000);
-    const recent = (await sentAt(await head())).filter((p) => p.startsWith(`${SUBMISSIONS_DIR}/${slug}/`) && p.split('/').pop().slice(0, hourAgo.length) > hourAgo);
+    const recent = sent.filter((p) => p.startsWith(`${SUBMISSIONS_DIR}/${slug}/`) && p.split('/').pop().slice(0, hourAgo.length) > hourAgo);
     if (recent.length >= PER_HOUR) return reply(request, url, 429, 'Gerade kommen sehr viele Nachrichten an. Bitte in einer Stunde noch einmal versuchen.');
-    const title = (() => { try { return JSON.parse(decoder.decode(definition)).title; } catch { return null; } })() ?? slug;
+    const form = (() => { try { return JSON.parse(decoder.decode(definition)) ?? {}; } catch { return {}; } })();
+    const title = form.title ?? slug;
+    const visitor = visitorOf(kept);
+    const tag = mail && form.notify?.confirm && visitor ? await tagOf(visitor) : null;
+    const dayAgo = stamp(now() - DAY);
+    // Any form's confirmed submission of the last day with the same tag. Rarely another submission's
+    // random part starts the same and this one goes unconfirmed; two at the same moment from one
+    // address may both be confirmed (each reads the tree before either commits).
+    const confirm = !!tag && !sent.some((p) => { const [time, random] = p.split('/').pop().split('-'); return time > dayAgo && random.startsWith(tag); });
     const received = new Date(now()).toISOString();
-    const random = [...crypto.getRandomValues(new Uint8Array(4))].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const random = `${confirm ? tag : ''}${hex(crypto.getRandomValues(new Uint8Array(confirm ? 2 : 4)))}`;
     const data = encoder.encode(`${JSON.stringify({ form: slug, received_at: received, fields: kept }, null, 2)}\n`);
     await commit(`Einsendung: ${title}`, [{ path: `${SUBMISSIONS_DIR}/${slug}/${stamp(received)}-${random}.json`, data }]);
+    if (mail) await inform({ form, title, fields: kept, visitor, confirm });
     return reply(request, url, 201, thanks, redirect);
   }
 

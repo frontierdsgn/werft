@@ -279,7 +279,7 @@ export function createGateway(options) {
     return json({ rebuilt, pending, due: due.map((e) => e.slug), next_publish: next, last_build: lastBuild ?? null });
   }
 
-  const forms = submissions({ storage, branch, site, now, turnstileSecret: options.turnstileSecret, fetch: options.fetch });
+  const forms = submissions({ storage, branch, site, now, secret, mail, turnstileSecret: options.turnstileSecret, fetch: options.fetch });
 
   return async function handle(request) {
     const url = new URL(request.url);
