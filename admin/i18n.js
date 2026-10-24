@@ -21,8 +21,8 @@ export const locale = () => current;
 export const intlLocale = () => (globalThis.navigator?.languages ?? []).find((l) => l.toLowerCase().startsWith(`${current}-`)) ?? current;
 
 // A label, hint or choice of the schema in the locale: werft's own texts are translated, a theme's
-// stay as the theme wrote them.
-export const fieldText = (text) => (typeof text === 'string' && FIELD_TEXTS[current]?.[text]) || text;
+// stay as the theme wrote them unless they are one of werft's ("Titel").
+export const fieldText = (text) => (typeof text === 'string' && Object.hasOwn(FIELD_TEXTS[current] ?? {}, text) ? FIELD_TEXTS[current][text] : text);
 
 export function t(key, values = {}) {
   const text = LOCALES[current][key] ?? de[key];

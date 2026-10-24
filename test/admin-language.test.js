@@ -79,7 +79,7 @@ test('each user chooses the admin\'s language in "Mein Konto"; none means the br
   assert.equal(JSON.parse(hub.fileAt('main', '.werft/users.json')).users[0].locale, 'en');
   for (const locale of ['fr', 'EN', 7, '']) {
     const refused = await call('/me', { token, body: { locale }, language: 'en' });
-    assert.deepEqual([refused.status, refused.data.message], [422, 'The editor is not available in this language.'], JSON.stringify(locale));
+    assert.deepEqual([refused.status, refused.data.message], [422, 'The admin is not available in this language.'], JSON.stringify(locale));
   }
   assert.equal((await call('/me', { token, body: { locale: null } })).data.locale, null);
   assert.equal('locale' in JSON.parse(hub.fileAt('main', '.werft/users.json')).users[0], false, 'null removes the choice');
@@ -103,6 +103,45 @@ test('e-mail to editors is in their language', async () => {
   assert.equal((await send('termin')).status, 201);
   const [anfrage, termin] = [mail.sent.find((m) => m.subject.includes('Anfrage')), mail.sent.find((m) => m.subject.includes('Termin'))];
   assert.equal(anfrage.subject, 'New submission: Anfrage');
-  assert.match(anfrage.text, /^A new submission came in through the form “Anfrage”:\n\nname: Vera\n\nAll submissions are in the editor under “Submissions”\.\n$/);
+  assert.match(anfrage.text, /^A new submission came in through the form “Anfrage”:\n\nname: Vera\n\nAll submissions are in the admin under “Submissions”\.\n$/);
   assert.equal(termin.subject, 'Neue Einsendung: Termin');
+});
+
+test('a form\'s notice to someone else is in the site\'s first language, and a failed lookup keeps the submission', async () => {
+  const hub = fakeGitHub();
+  hub.seed({
+    '.werft/users.json': serializeUsers([]),
+    'content/forms/contact.json': JSON.stringify({ title: 'Contact', notify: { to: 'team@example.org' } }),
+  });
+  const mail = memoryMail({ from: 'site@example.org' });
+  const storage = githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch });
+  const make = (store) => createGateway({ storage: store, secret: 'x'.repeat(32), mail, site: { name: 'Shop', contentDir: 'content', languages: ['en', 'de'] } });
+  const send = (gateway) => gateway(new Request(`${ORIGIN}/api/werft/forms/contact`, { method: 'POST', headers: { accept: 'application/json' }, body: new URLSearchParams([['name', 'Vera']]) }));
+  assert.equal((await send(make(storage))).status, 201);
+  assert.equal(mail.sent.at(-1).subject, 'New submission: Contact');
+  // The users file cannot be read: the submission is kept and the notice still goes out.
+  const failing = { ...storage, read: (sha, path) => (path === '.werft/users.json' ? Promise.reject(Object.assign(new Error('GitHub 502'), { status: 502 })) : storage.read(sha, path)) };
+  const errors = [];
+  const log = console.error;
+  console.error = (...args) => errors.push(args.join(' '));
+  try { assert.equal((await send(make(failing))).status, 201); } finally { console.error = log; }
+  assert.equal(mail.sent.length, 2);
+  assert.match(errors.join('\n'), /users not read: GitHub 502/);
+});
+
+test('a refusal of scheduled publishing says why in the admin\'s language', async () => {
+  const hub = fakeGitHub();
+  hub.seed({ '.werft/users.json': serializeUsers([]), 'content/pages/a.json': '{"title":"A","status":"published","publish_date":"2026-05-01T00:00:00Z"}\n' });
+  const gateway = createGateway({
+    storage: githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch }),
+    secret: 'x'.repeat(32), tickKey: 'tick-key', site: { name: 'Shop', contentDir: 'content' }, now: () => Date.parse('2026-06-01T00:00:00Z'), lastBuild: () => '2026-01-01T00:00:00Z',
+    onTick: () => { throw Object.assign(new Error('Veröffentlichen nach Zeitplan: …'), { plain: true, reason: { key: 'tick.noWorkflow', values: { workflow: 'gate.yml' } } }); },
+  });
+  const tick = async (language) => (await gateway(new Request(`${ORIGIN}/api/werft/tick?key=tick-key`, { headers: language ? { 'accept-language': language } : {} }))).json();
+  const log = console.error;
+  console.error = () => {};
+  try {
+    assert.equal((await tick('en')).message, 'Scheduled publishing: The repository has no workflow gate.yml.');
+    assert.equal((await tick()).message, 'Veröffentlichen nach Zeitplan: Den Workflow gate.yml gibt es im Repository nicht.');
+  } finally { console.error = log; }
 });

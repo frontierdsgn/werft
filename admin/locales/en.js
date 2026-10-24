@@ -2,7 +2,7 @@
 // technical. A key missing here shows the German text.
 export default {
   // Shared words
-  'app.title': 'Editor',
+  'app.title': 'Admin',
   cancel: 'Cancel',
   change: 'Change',
   changed: 'changed',
@@ -70,8 +70,8 @@ export default {
   'status.pending': 'Pending review',
   'status.published': 'Published',
   'status.scheduled': 'Scheduled',
-  'status.draftHelp': 'Only visible here in the editor. Visitors to the website do not see it.',
-  'status.pendingHelp': 'Waiting for an editor to approve it.',
+  'status.draftHelp': 'Only visible here in the admin. Visitors to the website do not see it.',
+  'status.pendingHelp': 'Waiting for approval.',
   'status.publishedHelp': 'Visible to all visitors as soon as you save.',
 
   // The sidebar
@@ -113,7 +113,7 @@ export default {
   'form.newTitle': 'New form',
 
   // The top bar
-  'top.label': 'Editor',
+  'top.label': 'Toolbar',
   save: 'Save',
   'save.shortcut': 'Save (Ctrl+S)',
   saving: 'Saving …',
@@ -385,8 +385,8 @@ export default {
   'account.nameLead': 'This is how you appear with your changes.',
   'account.saveName': 'Save name',
   'account.nameSaved': 'Name saved.',
-  'account.locale': 'Language of the editor',
-  'account.localeLead': 'The editor shows you its texts in this language. The content of the website stays as it is.',
+  'account.locale': 'Language of the admin',
+  'account.localeLead': 'The admin shows you its texts in this language. The content of the website stays as it is.',
   'account.localeBrowser': 'As in the browser ({language})',
   'account.saveLocale': 'Save language',
   'account.localeSaved': 'Language saved.',
@@ -407,7 +407,7 @@ export default {
 
   // Signing in and two-factor sign-in
   signIn: 'Sign in',
-  'signIn.lead': '{site} · Editor',
+  'signIn.lead': '{site} · Admin',
   'signIn.forgot': 'Forgot your password?',
   'signIn.forgotLead': 'You will get an email with a link to set a new password.',
   'signIn.sendLink': 'Send link',

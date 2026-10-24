@@ -133,11 +133,12 @@ in German.
   [i18n.js](admin/i18n.js), and the page's static texts carry `data-t` attributes. werft's own field
   labels, hints and choices (from [lib/schema.js](lib/schema.js) and [lib/fields.js](lib/fields.js))
   are translated by their German text (`fields` in `en.js`). A theme's labels, blocks and post type
-  names are the theme's and show as the theme writes them.
+  names are the theme's and show as the theme writes them, unless a label is one of werft's own
+  ("Titel", "Bild").
 - The gateway's messages ([gateway/messages.js](gateway/messages.js)) follow the language the admin
   sends as `Accept-Language`. E-mail to an editor (a new password, a form's notice to a recipient who
-  is a user) goes out in that user's language; a notice to someone else in the site's first language
-  where werft has it, else German. What visitors see (form replies, confirmations) is the site's,
+  is a user) goes out in that user's language (one notice, in the first such recipient's); a notice
+  to others in the site's first language where werft has it, else German. What visitors see (form replies, confirmations) is the site's,
   see [Form submissions](#form-submissions). Commit messages stay German.
 - A new text gets a key in every locale; [test/locales.test.js](test/locales.test.js) fails on a key
   without a German text, a text no code uses, a locale or the gateway lacking a key, and a werft

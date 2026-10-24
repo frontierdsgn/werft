@@ -81,6 +81,9 @@ test('the gateway has messages in the admin\'s locales, with the same keys, and 
   const dir = new URL('../gateway/', import.meta.url);
   const files = [...(await readdir(dir)).filter((f) => f.endsWith('.js') && f !== 'messages.js'), ...(await readdir(new URL('storage/', dir))).map((f) => `storage/${f}`)];
   const code = (await Promise.all(files.map((f) => readFile(new URL(f, dir), 'utf8')))).join('\n');
+  // Keys are passed as t('…'), returned (denial(), mayChange()) or handed on (tooMany, a driver's reason).
+  const spaces = new Set(Object.keys(MESSAGES.de).filter((key) => key.includes('.')).map((key) => key.split('.')[0]));
+  for (const [, key, space] of code.matchAll(/'((\w+)\.\w+)'/g)) if (spaces.has(space)) assert.ok(Object.hasOwn(MESSAGES.de, key), `'${key}' has no German message`);
   for (const [, key] of code.matchAll(/\bt\('([^']+)'/g)) assert.ok(Object.hasOwn(MESSAGES.de, key), `t('${key}') has no German message`);
   assert.deepEqual(Object.keys(MESSAGES.de).filter((key) => !code.includes(`'${key}'`)), [], 'messages no code uses');
 });

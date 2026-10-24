@@ -158,7 +158,7 @@ export function githubStorage({ owner, repo, token, auth = async () => ({ token 
     try {
       await gh(`/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, { method: 'POST', body: { ref }, credentials: auth.actions ?? auth });
     } catch (e) {
-      const reason = e.permission ? e.reason
+      const reason = e.permission ? e.reason ?? { key: 'tick.actionsPermission' }
         : e.github === 403 ? { key: 'tick.actionsPermission' }
           : e.github === 404 ? { key: 'tick.noWorkflow', values: { workflow } }
             : e.github === 422 ? { key: 'tick.notStartable', values: { workflow, ref } }

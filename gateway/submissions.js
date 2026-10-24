@@ -22,7 +22,7 @@
 // address. A failed e-mail is logged; the submission is kept.
 import { editable } from './roles.js';
 import { isAddress } from './mail.js';
-import { say, messages } from './messages.js';
+import { say as messagesFor, messages } from './messages.js';
 
 export const SUBMISSIONS_BRANCH = 'werft-submissions';
 export const SUBMISSIONS_DIR = '.werft/submissions';
@@ -192,7 +192,8 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     if (to.length) {
       // For the site's editors: in a recipient's admin language, else the site's first language
       // where the gateway has it, else German.
-      const t = messages((await localeOf?.(to)) ?? site.languages?.[0]);
+      // The submission is stored already: a lookup that fails only costs the language.
+      const t = messages((await localeOf?.(to)?.catch((e) => { console.error('werft forms: users not read:', e.message); return null; })) ?? site.languages?.[0]);
       const text = t('submissions.text', { title, fields: listing(fields), visitor });
       sending.push(mail.send({ to, subject: t('submissions.subject', { title: oneLine(title) }), text, ...(visitor && { replyTo: visitor }), fromName }));
     }
@@ -272,7 +273,7 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
   }
 
   async function api(request, user) {
-    const t = say(request);
+    const t = messagesFor(request);
     if (!editable(user.role).includes('content')) return json({ message: t('submissions.notAllowed') }, 403);
     if (request.method === 'POST') {
       const wanted = (await request.json()).delete ?? [];

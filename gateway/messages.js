@@ -99,7 +99,7 @@ const en = {
   'account.onlyOwn': 'Here you change only your own name, your language and your password.',
   'account.nameMissing': 'Please enter a name.',
   'account.nameTooLong': 'The name may have at most 100 characters.',
-  'account.localeUnknown': 'The editor is not available in this language.',
+  'account.localeUnknown': 'The admin is not available in this language.',
   'reset.noMail': 'This website does not send emails. An administrator can give you a new password.',
   'reset.sent': 'If there is an account for this address, an email with a link is on its way. The link works for one hour.',
   'reset.expired': 'This link no longer works. Please request a new one.',
@@ -139,7 +139,7 @@ const en = {
   'submissions.noneChosen': 'No submission selected.',
   'submissions.notFound': 'Submission {ref} not found.',
   'submissions.subject': 'New submission: {title}',
-  'submissions.text': ({ title, fields, visitor }) => `A new submission came in through the form “${title}”:\n\n${fields}\n\nAll submissions are in the editor under “Submissions”.${visitor ? `\nA reply to this email goes to ${visitor}.` : ''}\n`,
+  'submissions.text': ({ title, fields, visitor }) => `A new submission came in through the form “${title}”:\n\n${fields}\n\nAll submissions are in the admin under “Submissions”.${visitor ? `\nA reply to this email goes to ${visitor}.` : ''}\n`,
   internal: 'Internal error in the gateway.',
 };
 
