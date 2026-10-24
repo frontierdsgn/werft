@@ -282,6 +282,9 @@ each save is a commit to `main` that goes live once its `gate` passed.
    | `TURNSTILE_SECRET_KEY` | optional, secret: forms then need [Cloudflare Turnstile](#spam) |
    | `WERFT_MAIL`, `WERFT_MAIL_FROM` | optional: the [e-mail](#e-mail) driver and the sender address |
 
+   Optional binding: a KV namespace bound as `WERFT_KV` makes the [sign-in limits](#sign-in)
+   count across Cloudflare's isolates.
+
 5. In the site: give its `package.json` a `gate` script (its own checks; at least `werft build`, better
    [`werft check`](#checking-a-site)),
    add Wrangler with `npm install --save-dev wrangler`, and add `.github/workflows/gate.yml`
@@ -505,6 +508,48 @@ smaller images and other files are saved as they are, as are files added to the 
 without the editor. In Chrome, a 6000 × 4000 JPEG of 24 MB became 2560 × 1707 and 1.8 MB in under
 a second (measured 24 October 2026, Chromium 155, a photo-sized image of noise, the worst case for
 its size).
+
+### Sign-in
+
+The gateway slows down password guessing ([throttle.js](gateway/throttle.js)). Each attempt counts
+against the e-mail address entered and against the client's address. A successful sign-in clears
+the e-mail address's count (or the device token's, see below) and does not count against the
+client's address; that address keeps its failures.
+
+- After 5 attempts for one e-mail address, or 20 from one client address (IPv6: its /64 network),
+  the next attempt waits 1 minute, and each further failure doubles the wait up to 15 minutes. While
+  it lasts, the gateway answers 429 "Zu viele Anmeldeversuche. Bitte in … Minuten noch einmal
+  versuchen." without checking the password. An hour without attempts forgets them. A guesser gets
+  about 100 tries a day per account.
+- An e-mail address without an account counts the same and is hashed as often as the first user's
+  password, so neither the replies nor their timing show which accounts exist.
+- A browser that signed in to an account keeps a device token for it, also after "Abmelden" (not
+  after its data is cleared). Its attempts count against that token only, so guessing from
+  elsewhere does not lock the owner out of their usual browser; on a shared computer the next
+  person gets the token's tries besides the account's. On a new browser the owner waits like the
+  guesser: as long as someone keeps guessing, that can be all the time.
+
+Where the counts live:
+
+- `werft serve` and `werft dev`: in the server's memory, at most 10,000 counts. Beyond that a flood
+  of new e-mails or addresses pushes out the oldest forgotten counts, then single attempts, then
+  counts not in a wait, and a count in a wait only when all 10,000 are in one; a restart forgets
+  them. Behind a reverse proxy all clients have the proxy's address and share the limit of
+  20.
+- Cloudflare Pages: in the memory of each Workers isolate. Cloudflare runs several and replaces
+  them often, so a guesser gets more tries than above. With a KV namespace (create one in the
+  Cloudflare dashboard, then add it to the Pages project's bindings as `WERFT_KV`) all isolates
+  share the counts: a sign-in reads up to two keys, a failed one writes up to two, and a successful
+  one after failures deletes the key of the e-mail address or device token. The Workers Free plan,
+  which covers the whole Cloudflare account and so every site on it, has 100,000 reads, 1,000
+  writes and 1,000 deletes a day, so after about 500 failed sign-ins in a day, on any of them, the
+  gateway counts per isolate again until the quota resets at 00:00 UTC; KV also takes up to 60 seconds to show a write in
+  other locations. A store that counts exactly (D1, a Durable Object) would need a database or a
+  separate Worker per site; werft does not use one.
+
+Not covered: guesses spread over many addresses still get the per-account limit for each account,
+and a guessed or leaked password works on the first try. The limits do not replace a long password
+(the gateway takes no shorter than 10 characters).
 
 ### Scheduling
 

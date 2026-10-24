@@ -1,5 +1,9 @@
 // Session of the werft admin: the gateway's access and refresh tokens, kept in the browser.
 const KEY = 'werft.session';
+// Device tokens by e-mail: they outlive a sign-out, so this browser's attempts keep their own count
+// of failed sign-ins (see gateway/throttle.js).
+const DEVICES = 'werft.devices';
+const devices = () => { try { return JSON.parse(localStorage.getItem(DEVICES)) ?? {}; } catch { return {}; } };
 
 export const stored = () => { try { return JSON.parse(localStorage.getItem(KEY)) ?? {}; } catch { return {}; } };
 export const store = (tokens) => localStorage.setItem(KEY, JSON.stringify({ token: tokens.access_token, refreshToken: tokens.refresh_token }));
@@ -46,13 +50,15 @@ export async function requireUser(siteName) {
       event.preventDefault();
       const error = form.querySelector('.werft-error');
       error.textContent = '';
+      const email = form.querySelector('#werft-email').value.trim().toLowerCase();
       const response = await fetch('/api/werft/session', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: form.querySelector('#werft-email').value, password: form.querySelector('#werft-password').value }),
+        body: JSON.stringify({ email, password: form.querySelector('#werft-password').value, device: devices()[email] }),
       });
       const data = await response.json();
       if (!response.ok) { error.textContent = data.message; return; }
       store(data);
+      if (data.device) localStorage.setItem(DEVICES, JSON.stringify({ ...devices(), [email]: data.device }));
       form.remove();
       resolve(await api('/me'));
     });
