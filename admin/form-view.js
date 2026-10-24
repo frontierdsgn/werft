@@ -110,6 +110,7 @@ export function formView(app, root) {
   if (named('seo').length) page.append(buildForm(named('seo'), data, ctx));
 
   page.append(versions(app, source));
+  if (type === 'page' || type === 'post') page.append(previewLinks(app, source));
   const actions = [
     type === 'page' && app.can('content') ? app.button('Seite duplizieren …', null, () => app.duplicate(slug), 've-tool') : null,
     ['post', 'pattern', 'form'].includes(type) || (type === 'page' && slug !== 'index') ? app.button(`${kind} löschen …`, null, () => app.removeEntry(source), 've-tool ve-danger') : null,
@@ -149,6 +150,34 @@ function versions(app, source) {
     }
   }, 've-tool');
   return card('Frühere Versionen', 'Jedes Speichern legt eine Version an. Eine frühere Version können Sie ansehen und zurückholen.', list, load);
+}
+
+// Links that show the saved entry, drafts too, to people without an account, until they expire or
+// are revoked (gateway/core.js). Loaded on request, since listing them reads the repository.
+function previewLinks(app, source) {
+  const path = app.fileOf(source);
+  const list = el('div', { className: 've-versions' });
+  const days = el('select', { ariaLabel: 'Gültig für' }, ...[[1, '1 Tag'], [7, '7 Tage'], [30, '30 Tage']].map(([value, label]) => el('option', { value, selected: value === 7 }, label)));
+  const draw = (previews) => list.replaceChildren(...(previews.length ? previews.map((link) => {
+    const url = new URL(link.url, location.origin).href;
+    const field = el('input', { type: 'text', readOnly: true, value: url, ariaLabel: 'Vorschau-Link' });
+    return el('div', { className: 've-version' },
+      el('div', { className: 've-control' }, field, el('small', {}, `Gültig bis ${dateTime(link.expires_at)} · erstellt von ${link.by}`)),
+      el('div', { className: 've-actions-row' },
+        app.button('Kopieren', null, async () => { await navigator.clipboard.writeText(url).then(() => app.toast('Link kopiert.'), () => { field.select(); }); }, 've-tool'),
+        app.button('Widerrufen', null, async () => {
+          if (!(await app.confirmDialog('Link widerrufen?', 'Wer den Link hat, sieht die Vorschau danach nicht mehr.', 'Widerrufen'))) return;
+          send({ path, revoke: link.id }, 'Link widerrufen.');
+        }, 've-tool ve-danger')));
+  }) : [el('p', { className: 've-hint' }, 'Es gibt keinen gültigen Vorschau-Link.')]));
+  const send = async (body, done) => {
+    try { draw((await app.api('/previews', body ? { method: 'POST', body } : undefined)).previews); if (done) app.toast(done); } catch (error) { app.toast(error.message, true); }
+  };
+  const load = app.button('Vorschau-Links anzeigen', null, async () => {
+    load.disabled = true;
+    try { draw((await app.api(`/previews?path=${encodeURIComponent(path)}`)).previews); load.replaceWith(el('div', { className: 've-actions-row' }, el('div', { className: 've-control' }, days), app.button('Link erstellen', null, () => send({ path, days: Number(days.value) }, 'Link erstellt.'), 've-tool'))); } catch (error) { load.disabled = false; app.toast(error.message, true); }
+  }, 've-tool');
+  return card('Vorschau-Link', 'Zeigt den gespeicherten Stand, auch einen Entwurf, Personen ohne Anmeldung, zum Beispiel zur Abstimmung. Suchmaschinen nehmen ihn nicht auf. Was Sie danach speichern, sieht man dort auch.', list, load);
 }
 
 function version(app, source, path, commit, newest) {
