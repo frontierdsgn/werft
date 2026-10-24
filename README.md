@@ -97,6 +97,11 @@ one, and unsaved changes, undo and "Speichern" carry over between them.
   sections and list items can be added, duplicated, moved and removed. Desktop and mobile width.
 - Both: undo and redo (Ctrl+Z, Ctrl+Y); "Speichern" (Ctrl+S) writes every changed file and upload in
   one commit. "Benutzer" (administrators only) changes users at once, without "Speichern".
+- Unsaved changes are also kept in the browser (its local storage, per user, site and branch), so
+  a closed tab or a crash does not lose them. When the admin opens again on that browser, it offers
+  "Wiederherstellen", "Verwerfen" or "Später" and names entries someone saved since; restoring
+  replaces those with the kept changes, as unsaved changes. New images too large for the browser's
+  storage are not kept, and the message says so.
 
 How "Auf der Seite" finds the content on the page ([visual-map.js](admin/visual-map.js)): it renders
 the page a second time with each text wrapped in invisible private-use markers and keeps a marker
