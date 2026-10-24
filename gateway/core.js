@@ -4,7 +4,8 @@
 // uses the Fetch API (Request/Response) and Web Crypto, so the same code runs on Node, Cloudflare
 // and Deno.
 //
-//   /api/werft/session                    sign-in with e-mail and password → tokens
+//   /api/werft/session                    sign-in with e-mail and password → tokens (throttled,
+//                                         see throttle.js)
 //   /api/werft/login/oauth/access_token   renews tokens (refresh-token grant)
 //   /api/werft/me, /api/werft/users       current user; user management (administrators)
 //   /api/werft/tick                       publish scheduled entries that are due
@@ -12,14 +13,16 @@
 //   /api/werft/submissions                read and delete them (administrators and editors)
 //   /api/werft/api/v1/repos/<o>/<r>/...   files, commits and saves (git/trees, file-contents, raw,
 //                                         contents, commits)
-import { USERS_FILE, base64url, hashPassword, verifyPassword, signToken, readToken, stampOf, parseUsers, serializeUsers, findUser, publicUser } from './auth.js';
+import { USERS_FILE, DEFAULT_ITERATIONS, base64url, hashPassword, verifyPassword, signToken, readToken, stampOf, parseUsers, serializeUsers, findUser, publicUser } from './auth.js';
 import { ROLES, denial, classify, editable, statuses } from './roles.js';
 import { submissions } from './submissions.js';
+import { throttle, addressKey } from './throttle.js';
 import { loadContent, isScheduled, siteLanguages } from '../lib/content.js';
 
 const PREFIX = '/api/werft';
 const ACCESS_TTL = 12 * 3600;
 const REFRESH_TTL = 30 * 24 * 3600;
+const DEVICE_TTL = 365 * 24 * 3600;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -39,7 +42,9 @@ export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site
 // options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs, languages? },
 //   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?(),
 //   turnstileSecret? (forms need Cloudflare Turnstile), fetch? (for Turnstile),
-//   mail? (an e-mail driver from mail.js; without it the gateway sends no e-mail) }
+//   mail? (an e-mail driver from mail.js; without it the gateway sends no e-mail),
+//   throttleStore? (failed sign-ins shared between processes, see throttle.js) }
+// The returned handler takes the request and { address? }, the client's address as the host knows it.
 export function createGateway(options) {
   const { storage, secret, branch = 'main', site, onCommit, onTick, mail = null } = options;
   const now = options.now ?? (() => Date.now());
@@ -80,10 +85,38 @@ export function createGateway(options) {
     return token ? userFromToken(token) : null;
   }
 
+  const attempts = throttle({ secret, now, store: options.throttleStore });
+
+  // A browser that signed in to an account gets a device token for it; its later attempts count
+  // against that token instead of the account and the address, so guesses from elsewhere do not
+  // lock the owner out.
+  async function session(body, address) {
+    const email = String(body.email ?? '').trim().toLowerCase();
+    const device = await readToken(secret, body.device, now()).catch(() => null);
+    const keys = device?.typ === 'device' && device.sub === email ? [['device', device.id]]
+      : [['account', email], ...(addressKey(address) ? [['address', addressKey(address)]] : [])];
+    const attempt = await attempts.attempt(keys);
+    if (attempt.wait) {
+      const minutes = Math.ceil(attempt.wait / 60000);
+      return json({ message: `Zu viele Anmeldeversuche. Bitte in ${minutes === 1 ? 'einer Minute' : `${minutes} Minuten`} noch einmal versuchen.` }, 429, { 'retry-after': String(Math.ceil(attempt.wait / 1000)) });
+    }
+    let user;
+    try { user = await signIn(email, body.password); } catch (e) { attempt.cancel(); throw e; }
+    if (!user) { await attempt.failed(); return error(401, 'E-Mail oder Passwort stimmt nicht.'); }
+    await attempt.succeeded();
+    const id = device?.typ === 'device' && device.sub === email ? device.id : base64url.encode(crypto.getRandomValues(new Uint8Array(12)));
+    const deviceToken = await signToken(secret, { typ: 'device', sub: email, id, exp: Math.floor(now() / 1000) + DEVICE_TTL });
+    return json({ ...(await issueTokens(user)), device: deviceToken, user: publicUser(user) });
+  }
+
   async function signIn(email, password) {
-    const user = findUser((await loadUsers()).users, email);
-    // Hash anyway when the user is unknown, so timing does not reveal which e-mails exist.
-    const ok = await verifyPassword(password ?? '', user?.password ?? 'pbkdf2-sha256$1000$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+    const { users } = await loadUsers();
+    const user = findUser(users, email);
+    // Hash anyway when the user is unknown, as often as the first user's hash, so timing does not
+    // reveal which e-mails exist.
+    const first = Number(String(users[0]?.password ?? '').split('$')[1]);
+    const iterations = first > 0 ? first : DEFAULT_ITERATIONS;
+    const ok = await verifyPassword(password ?? '', user?.password ?? `pbkdf2-sha256$${iterations}$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`);
     return ok && user ? user : null;
   }
 
@@ -281,17 +314,13 @@ export function createGateway(options) {
 
   const forms = submissions({ storage, branch, site, now, secret, mail, turnstileSecret: options.turnstileSecret, fetch: options.fetch });
 
-  return async function handle(request) {
+  return async function handle(request, { address } = {}) {
     const url = new URL(request.url);
     if (url.pathname !== PREFIX && !url.pathname.startsWith(`${PREFIX}/`)) return null;
     const path = url.pathname.slice(PREFIX.length);
     try {
       if (path === '/login/oauth/access_token' && request.method === 'POST') return await accessToken(request);
-      if (path === '/session' && request.method === 'POST') {
-        const { email, password } = await request.json();
-        const user = await signIn(email, password);
-        return user ? json({ ...(await issueTokens(user)), user: publicUser(user) }) : error(401, 'E-Mail oder Passwort stimmt nicht.');
-      }
+      if (path === '/session' && request.method === 'POST') return await session((await request.json()) ?? {}, address);
       if (path === '/tick' && options.tickKey && url.searchParams.get('key')
         && (await sha256(url.searchParams.get('key'))) === (await sha256(options.tickKey))) return await tick(url);
       if (path.startsWith('/forms/')) return await forms.receive(request, url, decodeURIComponent(path.slice(7)));

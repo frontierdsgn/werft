@@ -98,7 +98,7 @@ export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret
       const origin = `http://${req.headers.host ?? `${host}:${port}`}`;
       const url = new URL(req.url, origin);
       if (url.pathname.startsWith('/api/werft')) {
-        const response = await gateway(await toRequest(req, origin));
+        const response = await gateway(await toRequest(req, origin), { address: req.socket.remoteAddress });
         return send(res, response ?? new Response('Not found', { status: 404 }));
       }
       const redirect = (await redirects()).find((r) => r.from === url.pathname);

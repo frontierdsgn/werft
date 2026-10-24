@@ -23,6 +23,9 @@
 //   WERFT_GITHUB_API   optional, for GitHub Enterprise Server (default https://api.github.com)
 //   TURNSTILE_SECRET_KEY  optional, forms then need Cloudflare Turnstile (secret)
 //   WERFT_MAIL, WERFT_MAIL_FROM  optional, the e-mail driver and sender (see gateway/mail.js)
+//
+// Bindings (Pages project settings → Functions):
+//   WERFT_KV           optional KV namespace; failed sign-ins then count across all isolates
 import { createGateway, gatewaySite } from '../gateway/core.js';
 import { githubStorage } from '../gateway/storage/github.js';
 import { githubApp } from '../gateway/storage/github-app.js';
@@ -46,6 +49,12 @@ export function pagesFunction({ site, theme, fetch: request = (...args) => fetch
       tickKey: env.WERFT_TICK_KEY || undefined,
       turnstileSecret: env.TURNSTILE_SECRET_KEY || undefined,
       mail: mailFromEnv(env, { fetch: request }),
+      throttleStore: env.WERFT_KV && {
+        get: (key) => env.WERFT_KV.get(key, 'json'),
+        // KV keeps a key for at least 60 seconds.
+        put: (key, value, ttl) => env.WERFT_KV.put(key, JSON.stringify(value), { expirationTtl: Math.max(60, ttl) }),
+        delete: (key) => env.WERFT_KV.delete(key),
+      },
       fetch: request,
       // Each binary file is one GitHub request; with the gateway's own requests and the GitHub App's
       // three for a new token, 30 stay below the free plan's 50 per invocation.
@@ -69,6 +78,6 @@ export function pagesFunction({ site, theme, fetch: request = (...args) => fetch
     } catch (error) {
       return new Response(JSON.stringify({ message: error.message }), { status: 500, headers: { 'content-type': 'application/json; charset=utf-8' } });
     }
-    return (await gateway(incoming)) ?? new Response('Not found', { status: 404 });
+    return (await gateway(incoming, { address: incoming.headers.get('cf-connecting-ip') })) ?? new Response('Not found', { status: 404 });
   };
 }

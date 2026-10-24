@@ -48,6 +48,20 @@ test('calls the deploy hook when a scheduled entry is due, if there is one', asy
   assert.deepEqual([result.rebuilt, result.due], [false, ['due']]);
 });
 
+test('counts failed sign-ins in the WERFT_KV namespace, by the client address Cloudflare sends', async () => {
+  const kv = new Map();
+  const WERFT_KV = {
+    get: async (key, type) => (kv.has(key) ? (type === 'json' ? JSON.parse(kv.get(key).value) : kv.get(key).value) : null),
+    put: async (key, value, { expirationTtl }) => { assert.ok(expirationTtl >= 60); kv.set(key, { value }); },
+    delete: async (key) => { kv.delete(key); },
+  };
+  const { instance } = await setup({ WERFT_KV });
+  const signIn = (call, password, ip) => call('/api/werft/session', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip }, body: JSON.stringify({ email: `guess-${Math.random()}@test`, password }) });
+  for (let i = 0; i < 20; i++) assert.equal((await signIn(instance(), 'wrong', '198.51.100.7')).status, 401);
+  assert.equal((await signIn(instance(), 'wrong', '198.51.100.7')).status, 429, 'a new isolate knows the count');
+  assert.equal((await signIn(instance(), 'wrong', '203.0.113.9')).status, 401);
+});
+
 test('explains missing configuration', async () => {
   const { call } = await setup({ WERFT_REPO: '' });
   const response = await call('/api/werft/status');
