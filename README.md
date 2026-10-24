@@ -196,6 +196,8 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
 
 ```sh
 npx werft build [dir]          # build into the site's output directory
+npx werft check [dir] [--strict]
+                               # build elsewhere and check links, media and alt texts
 npx werft dev [dir] [--port 8787]
                                # site, /admin and gateway on this checkout; commits locally
 npx werft serve [dir]          # the same for production; needs WERFT_SECRET
@@ -204,6 +206,41 @@ npx werft user list|set|remove
 npx werft secret               # a random secret for WERFT_SECRET / WERFT_PUBLISH_SECRET
 npx werft publish [dir]        # send the build to werft-publish.php
 ```
+
+### Checking a site
+
+`werft check` builds the site into a temporary directory (the output directory stays as it is) and
+checks every page and stylesheet of the build, without network access. Each problem is printed once
+with its places (`file:line:column` in the build) and, where its address is written in the content
+or the theme, that file and line (`written in content/settings/menus.json:12`).
+
+| Rule | Default | Finds |
+|---|---|---|
+| `broken-link` | error | a link (`<a>`, `<area>`, `<iframe>`, `<link rel="alternate">` …) to a page or file that is not in the build, or a redirect to one; a link to a redirect's source passes |
+| `broken-anchor` | error | `page.html#name` or `#name` without an element with that `id` (or `<a name>`) on the page |
+| `untranslated-link` | error | on a page of a language other than the default, a link to that language's version of a page it does not have, which the build does not rewrite (e.g. `/en/impressum.html`; see [Languages](#languages)) |
+| `missing-file` | error | an image, `srcset` candidate, stylesheet, script, video, poster or CSS `url()`/`@import` that is not in the build |
+| `missing-alt` | error | `<img>` without an `alt` attribute |
+| `empty-alt` | warning | `<img alt="">` not marked as decoration (`role="presentation"` or `"none"`, `aria-hidden="true"`); an image without a source (filled in by a script) passes |
+| `large-file` | warning | a file above 1 MB (`check.maxFileSize`) |
+
+Addresses on other hosts, `mailto:`/`tel:` and the gateway (`/api/werft/…`) are not checked, nor
+are the admin and `_werft/`. A link must name a file or a folder with an `index.html`: `kontakt`
+for `kontakt.html` only works on some hosts and is reported. `werft check` exits with 1 when there
+is an error, with `--strict` also on a warning. A site changes the rules in `werft.config.js`:
+
+```js
+check: {
+  rules: { 'empty-alt': 'error', 'large-file': 'off' }, // 'error', 'warning' or 'off'
+  maxFileSize: 2_000_000,                               // bytes
+  ignore: ['alt/'],                                     // paths in the build that are not checked
+},
+```
+
+In a site's gate, `werft check` replaces `werft build` (it builds too, but does not write the output
+directory; a gate step that needs `_site` still runs `werft build`): `"gate": "werft check"`, or
+`npx --no-install werft check` as a step of a gate script. A finding then stops the deploy, also
+when an editor's save caused it; warnings do not.
 
 ## Configuration
 
@@ -245,7 +282,8 @@ each save is a commit to `main` that goes live once its `gate` passed.
    | `TURNSTILE_SECRET_KEY` | optional, secret: forms then need [Cloudflare Turnstile](#spam) |
    | `WERFT_MAIL`, `WERFT_MAIL_FROM` | optional: the [e-mail](#e-mail) driver and the sender address |
 
-5. In the site: give its `package.json` a `gate` script (its own checks; at least `werft build`),
+5. In the site: give its `package.json` a `gate` script (its own checks; at least `werft build`, better
+   [`werft check`](#checking-a-site)),
    add Wrangler with `npm install --save-dev wrangler`, and add `.github/workflows/gate.yml`
    (replace `<project>` with the Pages project's name):
 
