@@ -19,6 +19,7 @@ beforeEach(async () => {
     '.werft/users.json': serializeUsers([{ email: 'admin@example.org', name: 'Ada', role: 'administrator', password: await hashPassword('admin-password', 1000) }]),
     'content/forms/anfrage.json': JSON.stringify({ title: 'Anfrage', notify: { to: 'team@example.org, chef@example.org; kein-adresse', confirm: true, confirm_text: 'Danke, wir melden uns.' } }),
     'content/forms/newsletter.json': JSON.stringify({ title: 'Newsletter' }),
+    'content/forms/rueckruf.json': JSON.stringify({ title: 'Rückruf', notify: { confirm: true } }),
   });
   mail = memoryMail({ from: 'site@example.org' });
   clock = Date.parse('2026-06-01T10:00:00Z');
@@ -44,7 +45,9 @@ test('sends each submission to the form\'s recipients, replies going to the visi
   assert.deepEqual(notice.from, { email: 'site@example.org', name: 'Salon' });
   assert.match(notice.text, /^name: Vera\ne-mail: vera@example\.org\ntermin: Montag, Dienstag\nnachricht: Zeile 1\n {2}Zeile 2$/m);
   await send('newsletter', [['email', 'n@example.org']]);
-  assert.equal(mail.sent.filter((m) => m.subject === 'Neue Einsendung: Newsletter').length, 0, 'a form without recipients sends nothing');
+  assert.deepEqual(mail.sent.filter((m) => m.subject.includes('Newsletter') || m.to.includes('n@example.org')), [], 'a form without recipients or confirmation sends nothing');
+  await send('anfrage', [['name', 'Otto'], ['kontakt', 'otto@example.org']]);
+  assert.equal(mail.sent.find((m) => m.text.includes('name: Otto')).replyTo, 'otto@example.org', 'else the first field holding an address');
 });
 
 test('confirms to the visitor with the form\'s text only, once a day per address', async () => {
@@ -56,13 +59,15 @@ test('confirms to the visitor with the form\'s text only, once a day per address
   await send('anfrage', [['email', 'VERA@example.org'], ['nachricht', 'noch einmal']]);
   assert.equal(confirmations().length + mail.sent.filter((m) => m.to[0] === 'VERA@example.org').length, 1, 'not again within a day, whatever the case');
   assert.equal(mail.sent.filter((m) => m.subject === 'Neue Einsendung: Anfrage').length, 2, 'the team still hears of it');
+  await send('rueckruf', [['email', 'vera@example.org']]);
+  assert.equal(confirmations().length, 1, 'nor from another form of the site');
   await send('anfrage', [['email', 'otto@example.org']]);
   assert.equal(mail.sent.filter((m) => m.to[0] === 'otto@example.org').length, 1, 'another address is confirmed');
   clock += 24 * 3600 * 1000;
   await send('anfrage', [['email', 'vera@example.org']]);
   assert.equal(confirmations().length, 2, 'again the next day');
   const all = await stored();
-  assert.equal(all.length, 4, 'every submission is kept');
+  assert.equal(all.length, 5, 'every submission is kept');
   assert.deepEqual((await stored({ delete: all.map((s) => s.id) })), [], 'confirmed ones can be deleted like the others');
 });
 
@@ -88,4 +93,6 @@ test('the editor offers the e-mail settings with every form', () => {
   const forms = schema({ site: { name: 'S' }, theme: { blocks: {}, formFields: [{ name: 'title', label: 'Titel', widget: 'string' }] } }).collections.find((c) => c.name === 'forms');
   assert.deepEqual(forms.fields.map((f) => f.name), ['title', 'notify']);
   assert.deepEqual(forms.fields[1].fields.map((f) => f.name), ['to', 'confirm', 'confirm_subject', 'confirm_text']);
+  const translated = schema({ site: { name: 'S', languages: ['de', 'en'] }, theme: { blocks: {}, formFields: [{ name: 'title', label: 'Titel', widget: 'string' }] }, lang: 'en' }).collections.find((c) => c.name === 'forms');
+  assert.deepEqual(translated.fields.map((f) => f.name), ['title'], 'only the default language\'s form decides');
 });

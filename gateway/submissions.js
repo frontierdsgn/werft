@@ -172,7 +172,9 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     const visitor = visitorOf(kept);
     const tag = mail && form.notify?.confirm && visitor ? await tagOf(visitor) : null;
     const dayAgo = stamp(now() - DAY);
-    // Any form's confirmed submission of the last day with the same tag (rarely another address's).
+    // Any form's confirmed submission of the last day with the same tag. Rarely another submission's
+    // random part starts the same and this one goes unconfirmed; two at the same moment from one
+    // address may both be confirmed (each reads the tree before either commits).
     const confirm = !!tag && !sent.some((p) => { const [time, random] = p.split('/').pop().split('-'); return time > dayAgo && random.startsWith(tag); });
     const received = new Date(now()).toISOString();
     const random = `${confirm ? tag : ''}${hex(crypto.getRandomValues(new Uint8Array(confirm ? 2 : 4)))}`;
