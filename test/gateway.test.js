@@ -190,14 +190,85 @@ test('asks for a rebuild when a scheduled entry falls due', async () => {
   assert.deepEqual([data.rebuilt, data.pending, ticks.length], [false, true, 1], 'no second rebuild while the first runs');
 });
 
-test('renews a session with its refresh token only', async () => {
-  const { data: session } = await call(`${ORIGIN}/api/werft/session`, { method: 'POST', body: { email: 'admin@test', password: 'admin-password' } });
-  const renew = (body) => call(`${ORIGIN}/api/werft/login/oauth/access_token`, { method: 'POST', body: { client_id: 'werft', ...body } });
-  const renewed = await renew({ grant_type: 'refresh_token', refresh_token: session.refresh_token });
+// A session as the admin holds it: the access token, and the refresh cookie the browser sends back.
+async function session(email, password) {
+  const response = await gateway(new Request(`${ORIGIN}/api/werft/session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) }));
+  const setCookie = response.headers.get('set-cookie');
+  return { ...(await response.json()), setCookie, cookie: setCookie.split(';')[0] };
+}
+const renew = (cookie, body = {}, on = gateway) => on(new Request(`${ORIGIN}/api/werft/login/oauth/access_token`, { method: 'POST', headers: { 'content-type': 'application/json', ...(cookie && { cookie }) }, body: JSON.stringify({ grant_type: 'refresh_token', client_id: 'werft', ...body }) }));
+const endSession = (token, body = {}) => gateway(new Request(`${ORIGIN}/api/werft/session`, { method: 'DELETE', headers: { authorization: `token ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }));
+
+test('renews a session with its refresh cookie only', async () => {
+  const s = await session('admin@test', 'admin-password');
+  assert.equal(s.refresh_token, undefined, 'scripts never see the refresh token');
+  assert.match(s.setCookie, /^werft_refresh=[^;]+; Path=\/api\/werft\/; Max-Age=2592000; HttpOnly; SameSite=Strict; Secure$/);
+  const renewed = await renew(s.cookie);
   assert.equal(renewed.status, 200);
-  assert.equal((await call(`${ORIGIN}/api/werft/me`, { token: renewed.data.access_token })).data.email, 'admin@test');
-  assert.equal((await renew({ grant_type: 'refresh_token', refresh_token: session.access_token })).status, 400, 'an access token is no refresh token');
-  assert.equal((await renew({ grant_type: 'authorization_code', code: 'x' })).status, 400);
+  assert.match(renewed.headers.get('set-cookie'), /^werft_refresh=/);
+  assert.equal((await call(`${ORIGIN}/api/werft/me`, { token: (await renewed.json()).access_token })).data.email, 'admin@test');
+  assert.equal((await renew(null, { refresh_token: s.cookie.slice('werft_refresh='.length) })).status, 200, 'a werft 0.5 refresh token from the body still works');
+  assert.equal((await renew(`werft_refresh=${s.access_token}`)).status, 400, 'an access token is no refresh token');
+  assert.equal((await call(`${ORIGIN}/api/werft/login/oauth/access_token`, { method: 'POST', body: { grant_type: 'authorization_code', code: 'x' } })).status, 400);
+});
+
+test('sign-out ends the session on the server, without a commit to the site', async () => {
+  const before = commits.length;
+  const mainHead = (await store.storage.head('main')).sha;
+  const a = await session('author@test', 'author-password');
+  const b = await session('author@test', 'author-password');
+  const ended = await endSession(a.access_token);
+  assert.equal(ended.status, 200);
+  assert.match(ended.headers.get('set-cookie'), /^werft_refresh=; .*Max-Age=0/);
+  assert.equal((await renew(a.cookie)).status, 400, 'the signed-out refresh token is refused');
+  assert.equal((await call(`${ORIGIN}/api/werft/me`, { token: a.access_token })).status, 401, 'and its access token');
+  assert.equal((await renew(b.cookie)).status, 200, 'other sessions go on');
+  const fresh = createGateway({ storage: store.storage, secret: 'x'.repeat(32), site: { name: 'Test', contentDir: 'content' }, now: () => clock });
+  assert.equal((await renew(a.cookie, {}, fresh)).status, 400, 'another process reads the list');
+  assert.deepEqual([commits.length, (await store.storage.head('main')).sha], [before, mainHead], 'no commit on the site branch, no rebuild');
+  assert.ok(!store.working('.werft/sessions.json') && store.reachable('werft-sessions', '"ended"'), 'the list is on its own branch');
+});
+
+test('a renewal racing "everywhere" does not outlive it', async () => {
+  const s = await session('author@test', 'author-password');
+  const signedInAt = clock;
+  clock += 1000;
+  const raced = await renew(s.cookie);
+  const racedCookie = raced.headers.get('set-cookie').split(';')[0];
+  // "Everywhere" picked its time before that renewal and lands after it.
+  clock = signedInAt + 200;
+  const other = await session('author@test', 'author-password');
+  clock = signedInAt + 500;
+  assert.equal((await endSession(other.access_token, { everywhere: true })).status, 200);
+  clock = signedInAt + 2000;
+  assert.equal((await renew(racedCookie)).status, 400, 'the renewed session began before, so it ended too');
+});
+
+test('a sign-out that cannot be recorded says so and clears the cookie', async () => {
+  const failing = createGateway({ storage: { ...store.storage, commit: async () => { throw new Error('down'); } }, secret: 'x'.repeat(32), site: { name: 'Test', contentDir: 'content' }, now: () => clock });
+  const s = await session('admin@test', 'admin-password');
+  const response = await failing(new Request(`${ORIGIN}/api/werft/session`, { method: 'DELETE', headers: { authorization: `token ${s.access_token}` } }));
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).message, /Abmeldung hat nicht geklappt/);
+  assert.match(response.headers.get('set-cookie'), /Max-Age=0/);
+});
+
+test('signs a user out everywhere, by themselves or by an administrator', async () => {
+  const one = await session('contrib@test', 'a-new-password');
+  const two = await session('contrib@test', 'a-new-password');
+  assert.equal((await endSession(one.access_token, { everywhere: true })).status, 200);
+  assert.equal((await renew(two.cookie)).status, 400, 'the other session ended too');
+  assert.equal((await call(`${ORIGIN}/api/werft/me`, { token: two.access_token })).status, 401);
+  clock += 1000;
+  const again = await session('contrib@test', 'a-new-password');
+  assert.equal((await renew(again.cookie)).status, 200, 'signing in again works');
+
+  const admin = await signIn('admin@test', 'admin-password');
+  assert.equal((await call(`${ORIGIN}/api/werft/users`, { token: again.access_token, method: 'POST', body: { action: 'signout', email: 'admin@test' } })).status, 403, 'only administrators sign others out');
+  assert.equal((await call(`${ORIGIN}/api/werft/users`, { token: admin, method: 'POST', body: { action: 'signout', email: 'contrib@test' } })).status, 200);
+  assert.equal((await renew(again.cookie)).status, 400);
+  assert.equal((await call(`${ORIGIN}/api/werft/me`, { token: admin })).status, 200, 'the administrator stays signed in');
+  clock += 1000;
 });
 
 test('keeps form submissions where only administrators and editors read them', async () => {
