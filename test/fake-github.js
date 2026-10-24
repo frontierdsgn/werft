@@ -2,10 +2,14 @@
 // data API (blobs, trees, commits), the commit list with path filter and pagination, and the GraphQL
 // queries it sends (files, a checked forced ref update). With `app`
 // ({ id, slug, publicKey }), it is a GitHub App installed on the repository: it checks the app's
-// JWTs, issues installation tokens and accepts only those on the repository. `now` is its clock.
+// JWTs, issues installation tokens for the permissions it was granted (`grant()` changes them) and
+// accepts only those on the repository. `workflows` (file → has a workflow_dispatch trigger, or
+// 'forbidden' for a token without the permission) can be started; `dispatches` lists the starts. `now` is its clock.
 import { createHash, verify } from 'node:crypto';
 
-export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.test', app = null, tokenTtl = 3600, now = Date.now } = {}) {
+export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.test', app = null, tokenTtl = 3600, now = Date.now, workflows = {} } = {}) {
+  let granted = { contents: 'write' };
+  const dispatches = [];
   const objects = new Map();
   const refs = new Map();
   const put = (object) => { const sha = createHash('sha1').update(JSON.stringify(object)).digest('hex'); objects.set(sha, object); return sha; };
@@ -78,6 +82,7 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
       if (!validJwt(init)) return json({ message: 'Bad credentials' }, 401);
       if (Number(tokenFor) !== installation) return json({ message: 'Not Found' }, 404);
       const { repositories, permissions } = JSON.parse(init.body);
+      if (Object.entries(permissions ?? {}).some(([name, level]) => granted[name] !== level && !(level === 'read' && granted[name] === 'write'))) return json({ message: 'The permissions requested are not granted to this installation.' }, 422);
       const token = `ghs_${tokens.size + 1}`;
       const expires = now() + tokenTtl * 1000;
       tokens.set(token, { repositories, permissions, expires });
@@ -110,6 +115,15 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
     const path = u.pathname.slice(base.length);
     const body = init.body && JSON.parse(init.body);
     let m;
+    if ((m = path.match(/^\/actions\/workflows\/([^/]+)\/dispatches$/)) && method === 'POST') {
+      if (app && tokens.get(bearer(init))?.permissions?.actions !== 'write') return json({ message: 'Resource not accessible by integration' }, 403);
+      const file = decodeURIComponent(m[1]);
+      if (!(file in workflows)) return json({ message: 'Not Found' }, 404);
+      if (workflows[file] === 'forbidden') return json({ message: 'Resource not accessible by personal access token' }, 403);
+      if (!workflows[file]) return json({ message: "Workflow does not have 'workflow_dispatch' trigger" }, 422);
+      dispatches.push({ workflow: file, ref: body.ref });
+      return new Response(null, { status: 204 });
+    }
     if ((m = path.match(/^\/git\/ref\/heads\/(.+)$/)) && method === 'GET') {
       const sha = refs.get(decodeURIComponent(m[1]));
       return sha ? json({ object: { sha, type: 'commit' } }) : json({ message: 'Not Found' }, 404);
@@ -174,5 +188,6 @@ export function fakeGitHub({ owner = 'o', repo = 'r', api = 'https://api.github.
   const fileAt = (branch, path) => { const sha = flatten(objects.get(refs.get(branch)).tree).get(path); return sha && Buffer.from(objects.get(sha).data, 'base64').toString(); };
   // The app is uninstalled and installed again: a new installation id.
   const reinstall = () => { installation += 1; };
-  return { fetch, seed, fileAt, history, headCommit: (branch) => objects.get(refs.get(branch)), tokens, reinstall, requests, owner, repo, api };
+  const grant = (permissions) => { granted = permissions; };
+  return { fetch, seed, fileAt, history, headCommit: (branch) => objects.get(refs.get(branch)), tokens, reinstall, grant, dispatches, requests, owner, repo, api };
 }

@@ -14,7 +14,7 @@ const keys = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncodin
 const appEnv = { GITHUB_TOKEN: '', GITHUB_APP_ID: 'Iv23liwerft', GITHUB_APP_PRIVATE_KEY: keys.privateKey };
 
 async function setup(env = {}) {
-  const hub = fakeGitHub({ api: 'https://api.github.com', ...(env.GITHUB_APP_ID && { app: { id: env.GITHUB_APP_ID, slug: 'werft', publicKey: keys.publicKey } }) });
+  const hub = fakeGitHub({ api: 'https://api.github.com', workflows: { 'gate.yml': true, 'build.yml': false, 'locked.yml': 'forbidden' }, ...(env.GITHUB_APP_ID && { app: { id: env.GITHUB_APP_ID, slug: 'werft', publicKey: keys.publicKey } }) });
   hub.seed({
     'web/.werft/users.json': serializeUsers([{ email: 'admin@test', name: 'Ada', role: 'administrator', password: await hashPassword('admin-password', 1000) }]),
     'web/content/events/due.json': JSON.stringify({ title: 'Due', status: 'published', publish_date: '2020-01-02T00:00:00Z' }),
@@ -83,6 +83,60 @@ test('a reset link uses the address the request came to and is sent through wait
   }
   assert.match(logged.join('\n'), /https:\/\/x\.pages\.dev\/admin\/#passwort=/);
   assert.ok(!logged.join('\n').includes('evil.test'));
+});
+
+test('on a gated site, a due entry starts the deploy workflow, once the app may', async () => {
+  const env = { ...appEnv, WERFT_DEPLOY_WORKFLOW: 'gate.yml', WERFT_DEPLOY_HOOK: 'https://api.cloudflare.test/hook', WERFT_TICK_KEY: 'k'.repeat(32) };
+  const { call, hub, hooks } = await setup(env);
+  const tick = async () => { const r = await call(`/api/werft/tick?key=${'k'.repeat(32)}`); return { status: r.status, ...(await r.json()) }; };
+  const error = console.error;
+  console.error = () => {};
+  try {
+    const refused = await tick();
+    assert.deepEqual([refused.status, refused.rebuilt, refused.due], [502, false, ['due']]);
+    assert.match(refused.error, /^Veröffentlichen nach Zeitplan: Die GitHub App hat die Berechtigung „Actions: Read and write“ noch nicht/, 'says what is missing');
+    assert.deepEqual([hub.dispatches, hooks], [[], []], 'and neither starts the workflow nor falls back to the hook');
+  } finally { console.error = error; }
+  const { access_token: token } = await (await call('/api/werft/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'admin@test', password: 'admin-password' }) })).json();
+  assert.ok(token, 'signing in (through the contents token) keeps working meanwhile');
+
+  hub.grant({ contents: 'write', actions: 'write' });
+  const started = await tick();
+  assert.deepEqual([started.status, started.rebuilt, hub.dispatches], [200, true, [{ workflow: 'gate.yml', ref: 'main' }]]);
+  assert.deepEqual(hooks, [], 'the deploy hook, which bypasses the gate, is not used');
+});
+
+test('says why the deploy workflow cannot be started', async () => {
+  const error = console.error;
+  console.error = () => {};
+  try {
+    for (const [workflow, message] of [['build.yml', /ihm fehlt der Auslöser workflow_dispatch, oder den Branch main gibt es nicht/], ['deploy.yml', /Den Workflow deploy\.yml gibt es im Repository nicht/], ['locked.yml', /Die Berechtigung „Actions: Read and write“ für das Repository fehlt/]]) {
+      const { call, hub } = await setup({ WERFT_DEPLOY_WORKFLOW: workflow, WERFT_TICK_KEY: 'k'.repeat(32) });
+      const result = await (await call(`/api/werft/tick?key=${'k'.repeat(32)}`)).json();
+      assert.match(result.error, message);
+      assert.deepEqual(hub.dispatches, []);
+    }
+    const { call, hub } = await setup({ WERFT_DEPLOY_WORKFLOW: 'gate.yml', WERFT_TICK_KEY: 'k'.repeat(32) });
+    // One commit with an entry due now and one due in half an hour.
+    hub.seed({
+      'web/.werft/users.json': hub.fileAt('main', 'web/.werft/users.json'),
+      'web/content/events/due.json': hub.fileAt('main', 'web/content/events/due.json'),
+      'web/content/events/later.json': JSON.stringify({ title: 'Later', status: 'published', publish_date: new Date(Date.now() + 30 * 60 * 1000).toISOString() }),
+    });
+    const tickAt = async (minutes) => {
+      const realNow = Date.now;
+      Date.now = () => realNow() + minutes * 60 * 1000;
+      try { return await (await call(`/api/werft/tick?key=${'k'.repeat(32)}`)).json(); } finally { Date.now = realNow; }
+    };
+    assert.equal((await tickAt(0)).rebuilt, true, 'a token with the permission starts it');
+    assert.deepEqual(hub.dispatches, [{ workflow: 'gate.yml', ref: 'main' }]);
+    // Its gate fails, so the entry stays due: the same commit is not started again for it.
+    assert.equal((await tickAt(20)).rebuilt, true);
+    assert.equal(hub.dispatches.length, 1, 'one start per commit and due entries');
+    // Another entry falls due on the same commit: that starts it again.
+    assert.deepEqual((await tickAt(40)).due, ['due', 'later']);
+    assert.equal(hub.dispatches.length, 2);
+  } finally { console.error = error; }
 });
 
 test('explains missing configuration', async () => {

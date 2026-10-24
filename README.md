@@ -324,11 +324,12 @@ each save is a commit to `main` that goes live once its `gate` passed.
    | `WERFT_SECRET` | output of `npx werft secret` |
    | `GITHUB_APP_ID` | the werft-cms GitHub App's client ID (its app ID works too), see [GitHub App](#github-app) |
    | `GITHUB_APP_PRIVATE_KEY` | the app's private key, converted to PKCS#8 |
-   | `GITHUB_TOKEN` | instead of the app: fine-grained token, repository access to this one repository, permission "Contents: Read and write" |
+   | `GITHUB_TOKEN` | instead of the app: fine-grained token, repository access to this one repository, permission "Contents: Read and write" (and "Actions: Read and write" with `WERFT_DEPLOY_WORKFLOW`) |
    | `WERFT_REPO` | `owner/repository` |
    | `WERFT_DIR` | the site's directory in the repository (e.g. `classic`), empty for the root |
    | `WERFT_BRANCH` | production branch, default `main` |
-   | `WERFT_DEPLOY_HOOK` | optional: a deploy hook URL (Settings → Builds → Deploy hooks), for scheduled publishing; it bypasses `gate`, see [Scheduling](#scheduling) |
+   | `WERFT_DEPLOY_WORKFLOW` | optional: the deploy workflow's file, `gate.yml`; scheduled entries start it, so they pass `gate` (needs "Actions: Read and write"), see [Scheduling](#scheduling) |
+   | `WERFT_DEPLOY_HOOK` | optional, instead: a deploy hook URL (Settings → Builds → Deploy hooks), for scheduled publishing; it bypasses `gate` |
    | `WERFT_TICK_KEY` | optional, secret: lets a cron service publish scheduled entries (see [Scheduling](#scheduling)) |
    | `WERFT_GITHUB_API` | optional: GitHub Enterprise Server API URL |
    | `TURNSTILE_SECRET_KEY` | optional, secret: forms then need [Cloudflare Turnstile](#spam) |
@@ -344,12 +345,14 @@ each save is a commit to `main` that goes live once its `gate` passed.
    (replace `<project>` with the Pages project's name):
 
    ```yaml
-   # The gate on every push to main and every pull request; a push to main deploys once it passed.
+   # The gate on every push to main and every pull request; a push to main deploys once it passed,
+   # as does a start by scheduled publishing (WERFT_DEPLOY_WORKFLOW).
    name: gate
    on:
      push:
        branches: [main]
      pull_request:
+     workflow_dispatch:
    permissions:
      contents: read
    concurrency:
@@ -372,7 +375,7 @@ each save is a commit to `main` that goes live once its `gate` passed.
          - run: npm run gate
      deploy:
        needs: gate
-       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+       if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
        runs-on: ubuntu-24.04
        timeout-minutes: 10
        environment: production
@@ -425,7 +428,9 @@ or saving stops working.
 frontierdsgn owns one GitHub App for all sites,
 [werft-cms](https://github.com/apps/werft-cms) (the name "werft" is taken on GitHub). Commits made
 through it show `werft-cms[bot]` as committer and the editor as author; editors still need no
-GitHub account. The app has one permission, "Repository contents: Read and write", and no
+GitHub account. The app has the permissions "Repository contents: Read and write" and, for
+[scheduled publishing](#scheduling) through the site's workflow, "Actions: Read and write" (an
+installation accepts a new permission once; until then only that publishing waits). It has no
 webhook; any account can install it.
 
 1. `GITHUB_APP_ID` is the app's client ID (on its settings page).
@@ -438,7 +443,8 @@ webhook; any account can install it.
 
 The gateway signs a JWT with the key, finds the installation on `WERFT_REPO` and gets a token
 that lasts an hour and is limited to that repository and contents. It keeps the token until five
-minutes before it expires; a new one costs three requests.
+minutes before it expires; a new one costs three requests. Starting the deploy workflow (see
+[Scheduling](#scheduling)) asks for a second token limited to actions each time: two requests.
 
 Limits of the free plan that apply: Pages Functions share the Workers free plan's daily request
 quota, with 50 outgoing requests and 10 ms CPU time per request. The gateway reads up to 100 content
@@ -784,15 +790,21 @@ build, once per due entry (again after 15 minutes if that build did not publish 
 nothing otherwise. It needs a signed-in user or the tick key.
 
 - `werft serve` calls it every 5 minutes.
-- On Cloudflare Pages it needs `WERFT_DEPLOY_HOOK`, and something must call it: every admin page
-  load does. For an exact time, set `WERFT_TICK_KEY` (e.g. the output of `npx werft secret`) and
-  let an external cron service or a Cloudflare Worker with a cron trigger request
-  `https://<site>/api/werft/tick?key=<WERFT_TICK_KEY>`.
-- A deploy hook makes Cloudflare build and deploy production directly, so it bypasses `gate`. On
-  a site deployed by its `deploy` job (see [Cloudflare Pages](#cloudflare-pages-default)), scheduled
-  publishing should dispatch that workflow instead; that is not built yet
-  ([#21](https://github.com/frontierdsgn/werft/issues/21)). Without the hook, a due entry goes
-  live with the next deploy.
+- On Cloudflare Pages something must call it: every admin page load does. For an exact time, set
+  `WERFT_TICK_KEY` (e.g. the output of `npx werft secret`) and let an external cron service or a
+  Cloudflare Worker with a cron trigger request `https://<site>/api/werft/tick?key=<WERFT_TICK_KEY>`.
+- On a site deployed by its `deploy` job (see [Cloudflare Pages](#cloudflare-pages-default)), set
+  `WERFT_DEPLOY_WORKFLOW` to that workflow's file (`gate.yml`): the tick starts it on the
+  production branch (`workflow_dispatch`, which the template above has), so a due entry goes live
+  only after `gate` passed. This needs "Actions: Read and write" on the repository: the werft-cms
+  app asks for it with a separate token (installations that have not accepted it yet keep saving
+  as before), a token needs it besides "Contents". Until then, or when the workflow lacks the
+  trigger, the tick answers 502 with the reason, and the editor shows it to administrators. If the
+  started gate fails, the entry stays due; a Cloudflare isolate does not start the workflow again
+  for the same commit, but another isolate may, at most every 15 minutes, until a commit passes.
+- `WERFT_DEPLOY_HOOK` instead (a Cloudflare deploy hook) makes Cloudflare build and deploy
+  production directly, which bypasses `gate`. With neither, a due entry goes live with the next
+  deploy.
 
 Dates are entered in the editor's time zone and stored in UTC.
 

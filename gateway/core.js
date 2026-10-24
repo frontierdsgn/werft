@@ -61,7 +61,7 @@ async function sha256(text) {
 export const gatewaySite = (site, theme) => ({ twoFactor: site.twoFactor, name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [], languages: siteLanguages(site), base: site.base, admin: site.admin });
 
 // options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs, languages? },
-//   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?(),
+//   onCommit?(commit), onTick?({ due, head }) (due: the slugs, head: the branch's commit), tickKey?, maxFiles? (per save), now?(),
 //   turnstileSecret? (forms need Cloudflare Turnstile), fetch? (for Turnstile),
 //   mail? (an e-mail driver from mail.js; without it the gateway sends no e-mail),
 //   throttleStore? (failed sign-ins shared between processes, see throttle.js),
@@ -703,10 +703,17 @@ export function createGateway(options) {
     const next = entries.filter((e) => isScheduled(e, new Date(now()))).map((e) => e.publish_date).sort()[0] ?? null;
     const key = JSON.stringify([lastBuild, due.map((e) => e.slug)]);
     const pending = due.length > 0 && ticked.key === key && now() - ticked.at < RETRY_TICK;
-    // onTick returns false when the host cannot rebuild on request.
-    const rebuilt = due.length > 0 && !pending && !!onTick && (await onTick({ due: due.map((e) => e.slug) })) !== false;
+    // onTick returns false when the host cannot rebuild on request; when it fails, the answer says why
+    // (e.g. a missing permission), and the next call tries again.
+    let rebuilt = false, problem = null;
+    try {
+      rebuilt = due.length > 0 && !pending && !!onTick && (await onTick({ due: due.map((e) => e.slug), head: head.sha })) !== false;
+    } catch (e) {
+      console.error('werft gateway: tick:', e.message);
+      problem = e.plain ? e.message : 'Veröffentlichen nach Zeitplan hat nicht geklappt. Bitte später noch einmal versuchen.';
+    }
     if (rebuilt) ticked = { key, at: now() };
-    return json({ rebuilt, pending, due: due.map((e) => e.slug), next_publish: next, last_build: lastBuild ?? null });
+    return json({ rebuilt, pending, due: due.map((e) => e.slug), next_publish: next, last_build: lastBuild ?? null, ...(problem && { error: problem, message: problem }) }, problem ? 502 : 200);
   }
 
   const forms = submissions({ storage, branch, site, now, secret, mail, turnstileSecret: options.turnstileSecret, fetch: options.fetch });

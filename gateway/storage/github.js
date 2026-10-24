@@ -4,7 +4,8 @@
 //
 // The token needs "Contents: read and write" on that one repository: a fine-grained token, or
 // `auth`, a function resolving to { token, committer } such as githubApp (./github-app.js) returns.
-// The committer, if given, makes the commits; the editor is always the author.
+// The committer, if given, makes the commits; the editor is always the author. dispatch() starts a
+// workflow and needs "Actions: Read and write" as well (githubApp: auth.actions()).
 
 const decodeBase64 = (text) => Uint8Array.from(atob(text.replace(/\s/g, '')), (c) => c.charCodeAt(0));
 // Text goes into the tree request itself; only other files need a request each.
@@ -27,8 +28,8 @@ export function githubStorage({ owner, repo, token, auth = async () => ({ token 
   const trees = new Map();
   const blobs = new Map();
 
-  async function gh(path, { method = 'GET', body, root = `/repos/${owner}/${repo}` } = {}) {
-    const { token: bearer } = await auth();
+  async function gh(path, { method = 'GET', body, root = `/repos/${owner}/${repo}`, credentials = auth } = {}) {
+    const { token: bearer } = await credentials();
     const response = await request(`${api}${root}${path}`, {
       method,
       headers: { authorization: `Bearer ${bearer}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'werft', ...(body && { 'content-type': 'application/json' }) },
@@ -146,6 +147,21 @@ export function githubStorage({ owner, repo, token, auth = async () => ({ token 
     return { sha: created.sha, date: created.committer?.date ?? date, blobs: blobsByPath };
   }
 
+  // Starts a workflow of the repository on `ref` (its trigger workflow_dispatch). A refusal says in
+  // plain German what is missing, for the editor and the tick's answer.
+  async function dispatch(workflow, ref) {
+    try {
+      await gh(`/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, { method: 'POST', body: { ref }, credentials: auth.actions ?? auth });
+    } catch (e) {
+      const reason = e.permission ? e.message
+        : e.github === 403 ? 'Die Berechtigung „Actions: Read and write“ für das Repository fehlt.'
+          : e.github === 404 ? `Den Workflow ${workflow} gibt es im Repository nicht.`
+            : e.github === 422 ? `Der Workflow ${workflow} lässt sich auf ${ref} nicht starten: ihm fehlt der Auslöser workflow_dispatch, oder den Branch ${ref} gibt es nicht.`
+              : null;
+      throw reason ? Object.assign(new Error(`Veröffentlichen nach Zeitplan: ${reason}`), { plain: true }) : e;
+    }
+  }
+
   // Deletes a branch if its head is still `sha` (GitHub cannot make a commit without files).
   const removeBranch = (branch, sha) => replaceRef(branch, sha, '0'.repeat(sha.length));
 
@@ -165,5 +181,5 @@ export function githubStorage({ owner, repo, token, auth = async () => ({ token 
     return page.data.at(-1)?.commit.author.email ?? null;
   }
 
-  return { kind: 'github', head, tree, read, readMany, commit, removeBranch, log, creator };
+  return { kind: 'github', head, tree, read, readMany, commit, removeBranch, log, creator, dispatch };
 }
