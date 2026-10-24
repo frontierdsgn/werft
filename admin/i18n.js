@@ -10,7 +10,7 @@ let current = DEFAULT_LOCALE;
 
 // The first of the browser's languages the admin has texts in, else German.
 export function browserLocale(languages = globalThis.navigator?.languages ?? [globalThis.navigator?.language]) {
-  return languages.map((l) => String(l ?? '').slice(0, 2).toLowerCase()).find((l) => Object.hasOwn(LOCALES, l)) ?? DEFAULT_LOCALE;
+  return languages.map((l) => String(l ?? '').split('-')[0].toLowerCase()).find((l) => Object.hasOwn(LOCALES, l)) ?? DEFAULT_LOCALE;
 }
 
 export const locale = () => current;

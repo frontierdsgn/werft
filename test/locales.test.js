@@ -55,7 +55,12 @@ test('t() fills in values, runs text functions and falls back to German', () => 
 });
 
 test('the browser\'s first language the admin has texts in, else German', () => {
-  assert.equal(browserLocale(['fr-FR', 'de-AT']), 'de');
-  assert.equal(browserLocale(['fr-FR']), 'de');
-  assert.equal(browserLocale([]), 'de');
+  LOCALES.xx = {};
+  try {
+    assert.equal(browserLocale(['fr-FR', 'xx-YY', 'de-AT']), 'xx');
+    assert.equal(browserLocale(['fr-FR', 'de-AT', 'xx']), 'de');
+    assert.equal(browserLocale(['xxx-YY']), 'de', 'the whole language code counts');
+    assert.equal(browserLocale(['fr-FR']), 'de');
+    assert.equal(browserLocale([]), 'de');
+  } finally { delete LOCALES.xx; }
 });

@@ -28,12 +28,13 @@ const statusHelp = (status) => ({
   pending: t('status.pendingHelp'),
   published: t('status.publishedHelp'),
 })[status];
-const roleName = (role) => ({
+// A role's name; one the admin does not know by the gateway's label.
+const roleName = (role, roles = {}) => ({
   administrator: t('role.administrator'),
   editor: t('role.editor'),
   author: t('role.author'),
   contributor: t('role.contributor'),
-})[role] ?? role;
+})[role] ?? roles[role]?.label ?? role;
 const roleHelp = (role) => ({
   administrator: t('role.administratorHelp'),
   editor: t('role.editorHelp'),
@@ -372,7 +373,7 @@ export function usersView(app, root) {
   };
   const drawList = () => {
     listCard.replaceChildren(el('h2', {}, t('users.all')), el('ul', { className: 've-people' }, ...users.map((u) => el('li', {},
-      el('div', {}, el('strong', {}, u.name || u.email), el('small', {}, `${u.email} · ${roleName(u.role)}${u.two_factor ? ` · ${t('users.twoFactor')}` : ''}${u.email === app.me.email ? ` · ${t('users.you')}` : ''}`)),
+      el('div', {}, el('strong', {}, u.name || u.email), el('small', {}, `${u.email} · ${roleName(u.role, roles)}${u.two_factor ? ` · ${t('users.twoFactor')}` : ''}${u.email === app.me.email ? ` · ${t('users.you')}` : ''}`)),
       el('div', { className: 've-actions-row' },
         app.button(t('edit'), t('editThing', { name: u.name || u.email }), () => drawForm(u), 've-tool'),
         app.button(t('signOutEverywhere'), t('users.signOutTitle', { name: u.name || u.email }), async () => {
@@ -397,7 +398,7 @@ export function usersView(app, root) {
     const password = el('input', { id: 've-user-password', type: 'password', minLength: 10, required: !user, autocomplete: 'new-password' });
     const choices = el('div', { className: 've-choices', role: 'radiogroup', 'aria-label': t('users.role') }, ...Object.keys(roles).map((id) => el('label', { className: 've-choice' },
       el('input', { type: 'radio', name: 've-role', value: id, checked: (user?.role ?? 'editor') === id }),
-      el('span', {}, el('strong', {}, roleName(id)), el('small', {}, roleHelp(id) ?? '')))));
+      el('span', {}, el('strong', {}, roleName(id, roles)), el('small', {}, roleHelp(id) ?? '')))));
     form.append(field(t('name'), name), field(t('users.email'), email, user ? t('users.emailFixed') : t('users.emailNew')),
       el('div', { className: 've-control' }, el('span', { className: 've-label' }, t('users.mayDo')), choices),
       field(t('password'), password, user ? t('users.passwordKeep') : t('users.passwordNew')),

@@ -296,7 +296,7 @@ function listControl(field, holder, ctx, path) {
       return details;
     }));
   };
-  const add = el('button', { type: 'button', className: 've-button ve-add-item' }, field.name === 'sections' ? t('section.addPlus') : t('item.addPlus'));
+  const add = el('button', { type: 'button', className: 've-button ve-add-item' }, typed && field.name === 'sections' ? t('section.addPlus') : t('item.addPlus'));
   add.addEventListener('click', async () => {
     let item;
     if (typed) {
