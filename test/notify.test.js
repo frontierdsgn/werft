@@ -19,6 +19,7 @@ beforeEach(async () => {
     '.werft/users.json': serializeUsers([{ email: 'admin@example.org', name: 'Ada', role: 'administrator', password: await hashPassword('admin-password', 1000) }]),
     'content/forms/anfrage.json': JSON.stringify({ title: 'Anfrage', notify: { to: 'team@example.org, chef@example.org; kein-adresse', confirm: true, confirm_text: 'Danke, wir melden uns.' } }),
     'content/forms/newsletter.json': JSON.stringify({ title: 'Newsletter' }),
+    'content/forms/termin.json': JSON.stringify({ title: 'Termin', notify: { to: 'team@example.org' } }),
     'content/forms/rueckruf.json': JSON.stringify({ title: 'Rückruf', notify: { confirm: true } }),
   });
   mail = memoryMail({ from: 'site@example.org' });
@@ -46,6 +47,9 @@ test('sends each submission to the form\'s recipients, replies going to the visi
   assert.match(notice.text, /^name: Vera\ne-mail: vera@example\.org\ntermin: Montag, Dienstag\nnachricht: Zeile 1\n {2}Zeile 2$/m);
   await send('newsletter', [['email', 'n@example.org']]);
   assert.deepEqual(mail.sent.filter((m) => m.subject.includes('Newsletter') || m.to.includes('n@example.org')), [], 'a form without recipients or confirmation sends nothing');
+  assert.equal((await send('termin', [['email', 't@example.org']])).status, 201);
+  assert.deepEqual(mail.sent.filter((m) => m.to.includes('t@example.org')), [], 'no confirmation unless the form asks for it');
+  assert.equal(mail.sent.at(-1).subject, 'Neue Einsendung: Termin');
   await send('anfrage', [['name', 'Otto'], ['kontakt', 'otto@example.org']]);
   assert.equal(mail.sent.find((m) => m.text.includes('name: Otto')).replyTo, 'otto@example.org', 'else the first field holding an address');
 });
