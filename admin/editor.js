@@ -1690,12 +1690,20 @@ const app = {
   },
   images, mediaURL, upload, usesOf, removeImage, mayDeleteImages: ['administrator', 'editor'].includes(me.role),
   isUnsaved: (path) => uploads.has(path) && !uploads.get(path).saved,
+  // Ends this session ({ everywhere: true }: all of the user's) and leaves for the sign-in page; on
+  // a failure it says so and stays.
+  signOut: async (options) => {
+    try { await signOut(options); } catch (e) { toast(e.message, true); return; }
+    signingOut = true;
+    localStorage.removeItem(DRAFT);
+    location.href = './';
+  },
 };
 
 // ---- Start ----
 $('#ve-user').textContent = me.name ?? me.email;
 $('#ve-site').textContent = site.name;
-$('#ve-signout').addEventListener('click', () => { signingOut = true; localStorage.removeItem(DRAFT); signOut(); location.href = './'; });
+$('#ve-signout').addEventListener('click', () => app.signOut());
 for (const b of document.querySelectorAll('.ve-views button[data-view]')) b.addEventListener('click', () => { if (b.dataset.view !== view) setView(b.dataset.view); });
 $('#ve-app').hidden = false;
 if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'submissions', 'users', 'deleted'].includes(hashOpen)) {

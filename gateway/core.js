@@ -4,9 +4,17 @@
 // uses the Fetch API (Request/Response) and Web Crypto, so the same code runs on Node, Cloudflare
 // and Deno.
 //
-//   /api/werft/session                    sign-in with e-mail and password → tokens (throttled,
-//                                         see throttle.js)
+//   /api/werft/session                    POST: sign-in with e-mail and password → tokens (throttled,
+//                                         see throttle.js); DELETE: sign-out, { everywhere } for all
+//                                         of one's sessions
 //   /api/werft/login/oauth/access_token   renews tokens (refresh-token grant)
+//
+// A session is an access token (12 hours, sent as "Authorization: token …") and a refresh token
+// (30 days) in an HttpOnly cookie, so scripts on the site cannot read it. Both carry the session's
+// id. Ended sessions are listed in .werft/sessions.json on the branch werft-sessions, away from the
+// site's history: a sign-out adds its id, "everywhere" (by the user or an administrator) the time
+// before which a user's sessions count as ended. Renewing a session reads the list; other requests
+// use a copy at most SESSIONS_CHECK old.
 //   /api/werft/me, /api/werft/users       current user; user management (administrators)
 //   /api/werft/tick                       publish scheduled entries that are due
 //   /api/werft/forms/<form>               form submissions from visitors (see submissions.js)
@@ -23,6 +31,10 @@ const PREFIX = '/api/werft';
 const ACCESS_TTL = 12 * 3600;
 const REFRESH_TTL = 30 * 24 * 3600;
 const DEVICE_TTL = 365 * 24 * 3600;
+export const SESSIONS_BRANCH = 'werft-sessions';
+const SESSIONS_FILE = '.werft/sessions.json';
+const SESSIONS_CHECK = 60 * 1000;
+const COOKIE = 'werft_refresh';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -61,14 +73,57 @@ export function createGateway(options) {
     return usersCache;
   }
 
-  async function issueTokens(user) {
+  // ---- Sessions ----
+  let sessionsCache = { sha: undefined, at: -Infinity, ended: {}, users: {} };
+  async function loadSessions(fresh = false) {
+    if (!fresh && now() - sessionsCache.at < SESSIONS_CHECK) return sessionsCache;
+    const sha = await storage.head(SESSIONS_BRANCH).then((h) => h.sha, (e) => { if (e.status === 404) return null; throw e; });
+    if (sha === sessionsCache.sha) return Object.assign(sessionsCache, { at: now() });
+    const bytes = sha && await storage.read(sha, SESSIONS_FILE);
+    const data = bytes ? JSON.parse(decoder.decode(bytes)) : {};
+    sessionsCache = { sha, at: now(), ended: data.ended ?? {}, users: data.users ?? {} };
+    return sessionsCache;
+  }
+
+  // Records ended sessions on the newest list, again when another sign-out came first. Entries of
+  // tokens that have expired anyway are dropped.
+  async function endSessions(user, change, message) {
+    for (let attempt = 1; ; attempt++) {
+      const { sha, ended, users } = await loadSessions(true);
+      const t = now();
+      const next = {
+        ended: Object.fromEntries(Object.entries(ended).filter(([, exp]) => exp * 1000 > t)),
+        users: Object.fromEntries(Object.entries(users).filter(([, at]) => at > t - REFRESH_TTL * 1000)),
+      };
+      change(next);
+      try {
+        const result = await storage.commit({ branch: SESSIONS_BRANCH, parent: sha, message, author: { name: user.name ?? user.email, email: user.email }, changes: [{ path: SESSIONS_FILE, data: encoder.encode(`${JSON.stringify(next, null, 2)}\n`) }] });
+        sessionsCache = { sha: result.sha, at: now(), ...next };
+        return;
+      } catch (e) {
+        if (e.status !== 409 || attempt === 3) throw e;
+      }
+    }
+  }
+
+  const sessionEnded = (sessions, payload) => !!sessions.ended[payload.sid] || (payload.iat ?? 0) <= (sessions.users[payload.sub.toLowerCase()] ?? -1);
+
+  // The refresh token's cookie; Secure where the request came over HTTPS (not on `werft dev`), also
+  // through a reverse proxy that says so (a client that claims it only affects its own cookie).
+  const secure = (request) => new URL(request.url).protocol === 'https:' || request.headers.get('x-forwarded-proto') === 'https';
+  const cookie = (request, value, maxAge) => `${COOKIE}=${value}; Path=${PREFIX}/; Max-Age=${maxAge}; HttpOnly; SameSite=Strict${secure(request) ? '; Secure' : ''}`;
+  const cookieToken = (request) => (request.headers.get('cookie') ?? '').split(/;\s*/).find((c) => c.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
+
+  // The tokens of a new session, or of a renewed one: same sid, and iat stays the time the session
+  // began, so a renewal racing "everywhere" cannot carry a session past it.
+  async function issueTokens(request, user, sid = base64url.encode(crypto.getRandomValues(new Uint8Array(12))), iat = now()) {
     const stamp = await stampOf(user);
     const t = Math.floor(now() / 1000);
+    const common = { sub: user.email, stamp, sid, iat };
+    const refresh = await signToken(secret, { typ: 'refresh', ...common, exp: t + REFRESH_TTL });
     return {
-      access_token: await signToken(secret, { typ: 'access', sub: user.email, stamp, exp: t + ACCESS_TTL }),
-      refresh_token: await signToken(secret, { typ: 'refresh', sub: user.email, stamp, exp: t + REFRESH_TTL }),
-      token_type: 'bearer',
-      expires_in: ACCESS_TTL,
+      body: { access_token: await signToken(secret, { typ: 'access', ...common, exp: t + ACCESS_TTL }), token_type: 'bearer', expires_in: ACCESS_TTL },
+      headers: { 'set-cookie': cookie(request, refresh, REFRESH_TTL) },
     };
   }
 
@@ -76,7 +131,8 @@ export function createGateway(options) {
     const payload = await readToken(secret, token, now());
     if (payload?.typ !== typ) return null;
     const user = findUser((await loadUsers()).users, payload.sub);
-    return user && (await stampOf(user)) === payload.stamp ? { ...user, payload } : null;
+    if (!user || (await stampOf(user)) !== payload.stamp) return null;
+    return sessionEnded(await loadSessions(typ === 'refresh'), payload) ? null : { ...user, payload };
   }
 
   async function authenticate(request) {
@@ -90,7 +146,7 @@ export function createGateway(options) {
   // A browser that signed in to an account gets a device token for it; its later attempts count
   // against that token instead of the account and the address, so guesses from elsewhere do not
   // lock the owner out.
-  async function session(body, address) {
+  async function session(request, body, address) {
     const email = String(body.email ?? '').trim().toLowerCase();
     const device = await readToken(secret, body.device, now()).catch(() => null);
     const keys = device?.typ === 'device' && device.sub === email ? [['device', device.id]]
@@ -106,7 +162,8 @@ export function createGateway(options) {
     await attempt.succeeded();
     const id = device?.typ === 'device' && device.sub === email ? device.id : base64url.encode(crypto.getRandomValues(new Uint8Array(12)));
     const deviceToken = await signToken(secret, { typ: 'device', sub: email, id, exp: Math.floor(now() / 1000) + DEVICE_TTL });
-    return json({ ...(await issueTokens(user)), device: deviceToken, user: publicUser(user) });
+    const { body: tokens, headers } = await issueTokens(request, user);
+    return json({ ...tokens, device: deviceToken, user: publicUser(user) }, 200, headers);
   }
 
   async function signIn(email, password) {
@@ -120,13 +177,37 @@ export function createGateway(options) {
     return ok && user ? user : null;
   }
 
-  // Renews the tokens of a session (OAuth 2 refresh-token grant).
+  // Renews the tokens of a session (OAuth 2 refresh-token grant), with the token from the cookie or,
+  // as werft 0.5 kept it, from the body.
   async function accessToken(request) {
     const type = request.headers.get('content-type') ?? '';
-    const body = type.includes('json') ? await request.json() : Object.fromEntries(new URLSearchParams(await request.text()));
+    const body = type.includes('json') ? (await request.json()) ?? {} : Object.fromEntries(new URLSearchParams(await request.text()));
     if (body.grant_type !== 'refresh_token') return json({ error: 'unsupported_grant_type' }, 400);
-    const user = await userFromToken(body.refresh_token, 'refresh');
-    return user ? json(await issueTokens(user)) : json({ error: 'invalid_grant' }, 400);
+    const user = await userFromToken(cookieToken(request) ?? body.refresh_token, 'refresh');
+    if (!user) return json({ error: 'invalid_grant' }, 400, { 'set-cookie': cookie(request, '', 0) });
+    const { body: tokens, headers } = await issueTokens(request, user, user.payload.sid, user.payload.iat ?? 0);
+    return json(tokens, 200, headers);
+  }
+
+  // Ends the session of the access token or the refresh cookie, or all sessions of its user.
+  async function signOut(request) {
+    const user = (await authenticate(request)) ?? (await userFromToken(cookieToken(request), 'refresh'));
+    const everywhere = (await request.json().catch(() => null))?.everywhere === true;
+    // The cookie goes in any case; a failure says so, and the open page can try again with its
+    // access token.
+    const clear = { 'set-cookie': cookie(request, '', 0) };
+    if (user && (everywhere || user.payload.sid)) {
+      try {
+        await endSessions(user, (next) => {
+          if (everywhere) next.users[user.email.toLowerCase()] = now();
+          else next.ended[user.payload.sid] = Math.floor(now() / 1000) + REFRESH_TTL;
+        }, everywhere ? `Überall abgemeldet: ${user.email}` : `Abgemeldet: ${user.email}`);
+      } catch (e) {
+        console.error('werft gateway: sign-out:', e);
+        return json({ message: 'Die Abmeldung hat nicht geklappt. Bitte noch einmal versuchen.' }, 503, clear);
+      }
+    }
+    return json({ ok: true }, 200, clear);
   }
 
   // ---- Files ----
@@ -259,6 +340,16 @@ export function createGateway(options) {
     const email = String(body.email ?? '').trim();
     const existing = findUser(users, email);
     let next;
+    if (body.action === 'signout') {
+      if (!existing) return error(404, 'Unbekannter Benutzer.');
+      try {
+        await endSessions(user, (sessions) => { sessions.users[existing.email.toLowerCase()] = now(); }, `Überall abgemeldet: ${existing.email}`);
+      } catch (e) {
+        if (e.status === 409) return error(409, 'Gerade melden sich viele ab. Bitte noch einmal versuchen.');
+        throw e;
+      }
+      return json({ users: users.map(publicUser) });
+    }
     if (body.action === 'delete') {
       if (!existing) return error(404, 'Unbekannter Benutzer.');
       if (existing.email === user.email) return error(422, 'Sie können sich nicht selbst löschen.');
@@ -320,7 +411,8 @@ export function createGateway(options) {
     const path = url.pathname.slice(PREFIX.length);
     try {
       if (path === '/login/oauth/access_token' && request.method === 'POST') return await accessToken(request);
-      if (path === '/session' && request.method === 'POST') return await session((await request.json()) ?? {}, address);
+      if (path === '/session' && request.method === 'POST') return await session(request, (await request.json()) ?? {}, address);
+      if (path === '/session' && request.method === 'DELETE') return await signOut(request);
       if (path === '/tick' && options.tickKey && url.searchParams.get('key')
         && (await sha256(url.searchParams.get('key'))) === (await sha256(options.tickKey))) return await tick(url);
       if (path.startsWith('/forms/')) return await forms.receive(request, url, decodeURIComponent(path.slice(7)));

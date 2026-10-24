@@ -291,6 +291,12 @@ export function usersView(app, root) {
       el('div', {}, el('strong', {}, u.name || u.email), el('small', {}, `${u.email} · ${roles[u.role]?.label ?? u.role}${u.email === app.me.email ? ' · Sie selbst' : ''}`)),
       el('div', { className: 've-actions-row' },
         app.button('Bearbeiten', `${u.name || u.email} bearbeiten`, () => drawForm(u), 've-tool'),
+        app.button('Überall abmelden', `${u.name || u.email} auf allen Geräten abmelden`, async () => {
+          const self = u.email === app.me.email;
+          if (!(await app.confirmDialog('Überall abmelden?', self ? 'Sie werden auf allen Geräten abgemeldet, auch hier.' : `${u.name || u.email} wird auf allen Geräten abgemeldet und muss sich neu anmelden.`, 'Abmelden'))) return;
+          if (self) app.signOut({ everywhere: true });
+          else if (await send({ action: 'signout', email: u.email })) app.toast(`${u.name || u.email} ist überall abgemeldet.`);
+        }, 've-tool'),
         u.email === app.me.email ? null : app.button('Löschen', `${u.name || u.email} löschen`, async () => {
           if (await app.confirmDialog('Benutzer löschen?', `${u.name || u.email} kann die Website danach nicht mehr bearbeiten.`, 'Löschen')) send({ action: 'delete', email: u.email });
         }, 've-tool ve-danger'))))));

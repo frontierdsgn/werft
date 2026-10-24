@@ -276,9 +276,9 @@ each save is a commit to `main` that goes live once its `gate` passed.
 2. Build settings: root directory = the site's directory (e.g. `classic`), build command
    `npm run build`, output directory `_site`. Environment variable `NODE_VERSION` = `22`.
 3. Settings → Builds → Branch control: turn off "Enable automatic production branch deployments",
-   so only the `deploy` job puts a build live. If the site has forms, set Preview branches to
-   "Custom branches", include `*`, exclude `werft-submissions` (or "None"), so a
-   [form submission](#form-submissions) does not start a build.
+   so only the `deploy` job puts a build live. Set Preview branches to "Custom branches", include
+   `*`, exclude `werft-submissions` and `werft-sessions` (or "None"), so a
+   [form submission](#form-submissions) or a [sign-out](#sessions) does not start a build.
 4. Environment variables (Production; mark `WERFT_SECRET`, `GITHUB_APP_PRIVATE_KEY` and
    `GITHUB_TOKEN` as secrets):
 
@@ -566,6 +566,28 @@ Where the counts live:
 Not covered: guesses spread over many addresses still get the per-account limit for each account,
 and a guessed or leaked password works on the first try. The limits do not replace a long password
 (the gateway takes no shorter than 10 characters).
+
+### Sessions
+
+Signing in starts a session ([core.js](gateway/core.js)): an access token for 12 hours, which the
+admin keeps only in the open page, and a refresh token for 30 days in an HttpOnly cookie
+(`werft_refresh`, path `/api/werft/`, SameSite=Strict, Secure when the request came over HTTPS,
+also through a reverse proxy that sends `X-Forwarded-Proto: https`), which scripts on the site
+cannot read. A reload, or an access token that has expired, renews the session with the cookie.
+
+- "Abmelden" ends the session on the server: its refresh token is refused from then on, and so is
+  its access token (at once in the same process; on Cloudflare in other isolates within a minute).
+- "Überall abmelden" on "Benutzer" (administrators, for anyone including themselves) ends every
+  session of that person. Changing a user's password or role, or deleting the user, ends them too.
+- Ended sessions are listed in `.werft/sessions.json` on the branch `werft-sessions`, which the
+  gateway creates with the first sign-out: one small commit per sign-out, never on the site's
+  branch, so nothing is rebuilt. Entries are dropped once their tokens have expired. Renewing a
+  session reads the list (one GitHub request more while it is unchanged, about four after a
+  change); other requests use a copy at most a minute old. A sign-out costs about 8 to 12 requests.
+  If it cannot be recorded, the editor says so and stays open to try again.
+- werft 0.5 kept both tokens in `localStorage`. The admin moves such a session to the cookie on its
+  next renewal and deletes the stored tokens; a copy taken before then ends only with "Überall
+  abmelden" or after its 30 days.
 
 ### Not-found page
 
