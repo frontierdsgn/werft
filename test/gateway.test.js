@@ -299,14 +299,39 @@ test('every role changes its own name and password, and no one else\'s', async (
   assert.ok(await signIn('admin@test', 'admin-password'), 'the administrator\'s password is unchanged');
 });
 
-test('guessing the current password counts like a sign-in', async () => {
+test('guessing the current password counts against the session, not guesses elsewhere', async () => {
   const admin = await signIn('admin@test', 'admin-password');
   await call(`${ORIGIN}/api/werft/users`, { token: admin, method: 'POST', body: { email: 'guessed@test', name: 'G', password: 'first-password', role: 'author' } });
   const token = await signIn('guessed@test', 'first-password');
+  for (let i = 0; i < 5; i++) await call(`${ORIGIN}/api/werft/session`, { method: 'POST', body: { email: 'guessed@test', password: `elsewhere-${i}` } });
+  const me = (body) => call(`${ORIGIN}/api/werft/me`, { token, method: 'POST', body });
+  assert.equal((await me({ password: 'second-password', current_password: 'first-password' })).status, 200, 'the account is locked for sign-ins, not for its own session');
+  clock += 60 * 60 * 1000;
+  const session2 = await signIn('guessed@test', 'second-password');
   const statuses = [];
-  for (let i = 0; i < 6; i++) statuses.push((await call(`${ORIGIN}/api/werft/me`, { token, method: 'POST', body: { password: 'second-password', current_password: `guess-${i}` } })).status);
+  for (let i = 0; i < 6; i++) statuses.push((await call(`${ORIGIN}/api/werft/me`, { token: session2, method: 'POST', body: { password: 'third-password', current_password: `guess-${i}` } })).status);
   assert.deepEqual(statuses, [422, 422, 422, 422, 422, 429]);
   clock += 60 * 60 * 1000;
+});
+
+test('a change to the own account keeps a newer password and needs a valid session', async () => {
+  const admin = await signIn('admin@test', 'admin-password');
+  const users = `${ORIGIN}/api/werft/users`;
+  await call(users, { token: admin, method: 'POST', body: { email: 'raced@test', name: 'R', password: 'first-password', role: 'author' } });
+  const token = await signIn('raced@test', 'first-password');
+  const me = (body) => call(`${ORIGIN}/api/werft/me`, { token, method: 'POST', body });
+  assert.equal((await me({ name: 'R' })).status, 200, 'nothing to change, nothing committed');
+  for (const body of [{ name: '  ' }, { name: { x: 1 } }, { password: { length: 20 } }]) assert.equal((await me(body)).status, 422, JSON.stringify(body));
+  // The request is signed in, then waits for its body while an administrator sets a new password.
+  let send;
+  const body = new ReadableStream({ start: (c) => { send = () => { c.enqueue(new TextEncoder().encode(JSON.stringify({ name: 'Renamed' }))); c.close(); }; } });
+  const slow = gateway(new Request(`${ORIGIN}/api/werft/me`, { method: 'POST', headers: { authorization: `token ${token}`, 'content-type': 'application/json' }, body, duplex: 'half' }));
+  await new Promise((r) => setTimeout(r, 50));
+  await call(users, { token: admin, method: 'POST', body: { email: 'raced@test', password: 'admin-set-password' } });
+  send();
+  assert.equal((await slow).status, 401, 'the session ended with the new password');
+  assert.equal((await call(`${ORIGIN}/api/werft/session`, { method: 'POST', body: { email: 'raced@test', password: 'first-password' } })).status, 401);
+  assert.ok(await signIn('raced@test', 'admin-set-password'), 'the administrator\'s password stays');
 });
 
 test('keeps form submissions where only administrators and editors read them', async () => {
