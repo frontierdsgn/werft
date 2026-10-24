@@ -4,6 +4,7 @@
 import { markdown } from 'werft';
 import { focusOf } from 'werft/images';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
+import { t } from './i18n.js';
 
 const el = (tag, props = {}, ...children) => {
   const node = Object.assign(document.createElement(tag), props);
@@ -76,7 +77,7 @@ function control(field, holder, ctx, path) {
       }
       const input = el('textarea', { value: current ?? '', rows: 8 });
       input.addEventListener('input', () => set(input.value));
-      return labelled({ ...field, hint: field.hint ?? '**fett**, *kursiv*, [Link](adresse)' }, input);
+      return labelled({ ...field, hint: field.hint ?? t('field.markdownHint') }, input);
     }
     case 'text': {
       const input = el('textarea', { value: current ?? '', rows: 3 });
@@ -113,7 +114,7 @@ function control(field, holder, ctx, path) {
     }
     case 'relation': {
       const input = el('select');
-      input.append(el('option', { value: '' }, '– bitte wählen –'));
+      input.append(el('option', { value: '' }, t('field.choose')));
       for (const o of ctx.choices(field.collection)) input.append(el('option', { value: o.value, selected: o.value === current }, o.label));
       input.addEventListener('change', () => set(input.value || undefined));
       return labelled(field, input);
@@ -133,10 +134,10 @@ function control(field, holder, ctx, path) {
       const preview = el('img', { className: 've-thumb', alt: '' });
       const show = () => { preview.src = holder[name] ? ctx.mediaURL(holder[name]) : ''; preview.hidden = !holder[name]; };
       show();
-      const button = el('button', { type: 'button', className: 've-button' }, holder[name] ? 'Bild ändern' : 'Bild wählen');
+      const button = el('button', { type: 'button', className: 've-button' }, holder[name] ? t('image.change') : t('image.pick'));
       button.addEventListener('click', async () => {
         const picked = await ctx.pickImage(holder[name]);
-        if (picked) { set(picked); show(); button.textContent = 'Bild ändern'; changedIn(holder); }
+        if (picked) { set(picked); show(); button.textContent = t('image.change'); changedIn(holder); }
       });
       return labelled(field, el('div', { className: 've-image-field' }, preview, button));
     }
@@ -146,8 +147,8 @@ function control(field, holder, ctx, path) {
       const image = el('img', { alt: '' });
       const dot = el('span', { className: 've-focus-dot' });
       const area = el('div', { className: 've-focus', tabIndex: 0, role: 'group' }, image, dot);
-      const none = el('small', { className: 've-hint' }, 'Erst ein Bild wählen.');
-      const reset = el('button', { type: 'button', className: 've-tool' }, 'Zurück zur Mitte');
+      const none = el('small', { className: 've-hint' }, t('focus.noImage'));
+      const reset = el('button', { type: 'button', className: 've-tool' }, t('focus.reset'));
       const point = () => (focusOf(holder) ?? '50% 50%').split(' ').map((v) => parseFloat(v));
       const draw = () => {
         const src = holder[field.image ?? 'src'];
@@ -157,7 +158,7 @@ function control(field, holder, ctx, path) {
         const [x, y] = point();
         dot.style.left = `${x}%`;
         dot.style.top = `${y}%`;
-        area.setAttribute('aria-label', `Wichtiger Bildteil: ${Math.round(x)} % von links, ${Math.round(y)} % von oben. Pfeiltasten verschieben ihn.`);
+        area.setAttribute('aria-label', t('focus.label', { x: Math.round(x), y: Math.round(y) }));
         reset.hidden = !src || holder[name] === undefined;
       };
       const place = (x, y) => {
@@ -245,7 +246,7 @@ function listControl(field, holder, ctx, path) {
   const label = (item, i) => {
     const type = typeOf(item);
     const text = summaryOf(type ?? field, item, ctx).slice(0, 80);
-    return { kind: type?.label ?? (typed ? 'Abschnitt' : null), text: text || (typed ? '' : `Eintrag ${i + 1}`) };
+    return { kind: type?.label ?? (typed ? t('section') : null), text: text || (typed ? '' : t('item.numbered', { number: i + 1 })) };
   };
   // Moves the open state with an entry.
   const swapOpen = (i, j) => {
@@ -271,9 +272,9 @@ function listControl(field, holder, ctx, path) {
         return b;
       };
       const tools = el('span', { className: 've-list-tools' },
-        tool('↑', 'Nach oben', () => { swapOpen(i, i - 1); list.splice(i - 1, 0, ...list.splice(i, 1)); }, { disabled: i === 0 }),
-        tool('↓', 'Nach unten', () => { swapOpen(i, i + 1); list.splice(i + 1, 0, ...list.splice(i, 1)); }, { disabled: i === list.length - 1 }),
-        tool('✕', 'Entfernen', async () => {
+        tool('↑', t('moveUp'), () => { swapOpen(i, i - 1); list.splice(i - 1, 0, ...list.splice(i, 1)); }, { disabled: i === 0 }),
+        tool('↓', t('moveDown'), () => { swapOpen(i, i + 1); list.splice(i + 1, 0, ...list.splice(i, 1)); }, { disabled: i === list.length - 1 }),
+        tool('✕', t('remove'), async () => {
           if (ctx.confirmRemove && !(await ctx.confirmRemove(`${kind ? `${kind}: ` : ''}${text}`))) return false;
           for (let j = i; j < list.length - 1; j++) swapOpen(j, j + 1);
           openItems.delete(key(list.length - 1));
@@ -290,12 +291,12 @@ function listControl(field, holder, ctx, path) {
       } else {
         const fields = typed ? (type?.fields ?? []) : (field.fields ?? []);
         const inner = buildForm(fields, item, { ...ctx, onChange: () => { retitle(); ctx.onChange(); } }, [...path, i]);
-        details.append(fields.length ? inner : el('p', { className: 've-hint' }, 'Dieser Abschnitt hat nichts einzustellen.'));
+        details.append(fields.length ? inner : el('p', { className: 've-hint' }, t('section.nothingToSet')));
       }
       return details;
     }));
   };
-  const add = el('button', { type: 'button', className: 've-button ve-add-item' }, typed ? `+ ${field.label === 'Abschnitte' ? 'Abschnitt' : 'Eintrag'} hinzufügen` : '+ Eintrag hinzufügen');
+  const add = el('button', { type: 'button', className: 've-button ve-add-item' }, field.name === 'sections' ? t('section.addPlus') : t('item.addPlus'));
   add.addEventListener('click', async () => {
     let item;
     if (typed) {

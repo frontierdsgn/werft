@@ -1,4 +1,5 @@
 import { setupTwoFactor } from './two-factor.js';
+import { t, setLocale, browserLocale } from './i18n.js';
 
 // Session of the werft admin: the access token lives in this page only; the gateway keeps the
 // refresh token in an HttpOnly cookie, which renews it after a reload or once it has expired.
@@ -15,7 +16,7 @@ const devices = () => { try { return JSON.parse(localStorage.getItem(DEVICES)) ?
 export async function signOut({ everywhere = false } = {}) {
   const response = await fetch('/api/werft/session', { method: 'DELETE', headers: { authorization: `token ${token ?? ''}`, 'content-type': 'application/json' }, body: JSON.stringify({ everywhere }) })
     .catch(() => null);
-  if (!response?.ok) throw new Error((await response?.json().catch(() => null))?.message ?? 'Die Abmeldung hat nicht geklappt. Bitte noch einmal versuchen.');
+  if (!response?.ok) throw new Error((await response?.json().catch(() => null))?.message ?? t('signOut.failed'));
   token = null;
   localStorage.removeItem(LEGACY);
 }
@@ -50,6 +51,7 @@ export async function api(path, { method = 'GET', body, raw = false } = {}, retr
 // form for a new password, which signs in too. With two-factor sign-in a code follows the password;
 // where the site requires it and the user has none yet, setting it up comes first.
 export async function requireUser(siteName) {
+  setLocale(browserLocale());
   const resetToken = /^#passwort=([\w.-]+)$/.exec(location.hash)?.[1];
   let signedInAlready = null;
   if (!resetToken) {
@@ -70,9 +72,9 @@ export async function requireUser(siteName) {
     const setup = () => {
       form.onsubmit = (event) => event.preventDefault();
       const steps = document.createElement('div');
-      form.replaceChildren(Object.assign(document.createElement('h1'), { textContent: 'Zwei-Faktor-Anmeldung' }),
-        Object.assign(document.createElement('p'), { className: 'werft-lead', textContent: 'Diese Website verlangt sie für Ihre Rolle. Bitte richten Sie sie jetzt ein, danach geht es weiter.' }), steps);
-      const leave = Object.assign(document.createElement('button'), { type: 'button', className: 'werft-link', textContent: 'Abmelden' });
+      form.replaceChildren(Object.assign(document.createElement('h1'), { textContent: t('twoFactor') }),
+        Object.assign(document.createElement('p'), { className: 'werft-lead', textContent: t('signIn.twoFactorRequired') }), steps);
+      const leave = Object.assign(document.createElement('button'), { type: 'button', className: 'werft-link', textContent: t('signOut') });
       leave.addEventListener('click', async () => { await signOut().catch(() => {}); location.reload(); });
       form.append(leave);
       setupTwoFactor(steps, { api, siteName, onDone: async () => { form.remove(); resolve(await api('/me')); } });
@@ -85,23 +87,23 @@ export async function requireUser(siteName) {
       resolve(me);
     };
     const show = (mode) => {
-      const title = { signin: 'Anmelden', forgot: 'Passwort vergessen?', reset: 'Neues Passwort', code: 'Code eingeben' }[mode];
+      const title = { signin: t('signIn'), forgot: t('signIn.forgot'), reset: t('password.newTitle'), code: t('signIn.code') }[mode];
       form.innerHTML = `<h1>${title}</h1><p class="werft-lead"></p>${{
-        code: '<label for="werft-code">Code aus der Authenticator-App</label><input id="werft-code" inputmode="numeric" autocomplete="one-time-code" required>',
-        signin: field('werft-email', 'E-Mail', 'email', 'username') + field('werft-password', 'Passwort', 'password', 'current-password'),
-        forgot: field('werft-email', 'E-Mail', 'email', 'username'),
-        reset: field('werft-email', 'E-Mail', 'email', 'username') + field('werft-password', 'Neues Passwort (mindestens 10 Zeichen)', 'password', 'new-password') + field('werft-repeat', 'Neues Passwort wiederholen', 'password', 'new-password'),
-      }[mode]}<p class="werft-error" role="alert"></p><button type="submit">${{ signin: 'Anmelden', forgot: 'Link schicken', reset: 'Passwort festlegen', code: 'Anmelden' }[mode]}</button>`;
+        code: `<label for="werft-code">${t('signIn.codeLabel')}</label><input id="werft-code" inputmode="numeric" autocomplete="one-time-code" required>`,
+        signin: field('werft-email', t('email'), 'email', 'username') + field('werft-password', t('password'), 'password', 'current-password'),
+        forgot: field('werft-email', t('email'), 'email', 'username'),
+        reset: field('werft-email', t('email'), 'email', 'username') + field('werft-password', t('password.newMin'), 'password', 'new-password') + field('werft-repeat', t('password.repeat'), 'password', 'new-password'),
+      }[mode]}<p class="werft-error" role="alert"></p><button type="submit">${{ signin: t('signIn'), forgot: t('signIn.sendLink'), reset: t('password.set'), code: t('signIn') }[mode]}</button>`;
       $('.werft-lead').textContent = {
-        forgot: 'Sie bekommen eine E-Mail mit einem Link, mit dem Sie ein neues Passwort festlegen.',
-        code: 'Die App auf Ihrem Telefon zeigt ihn. Ohne Telefon geben Sie einen Ihrer Wiederherstellungscodes ein.',
-      }[mode] ?? `${siteName} · Redaktion`;
+        forgot: t('signIn.forgotLead'),
+        code: t('signIn.codeLead'),
+      }[mode] ?? t('signIn.lead', { site: siteName });
       const switchTo = (to, text) => {
         if ([...form.querySelectorAll('.werft-link')].some((b) => b.textContent === text)) return;
         const b = document.createElement('button'); b.type = 'button'; b.className = 'werft-link'; b.textContent = text; b.addEventListener('click', () => show(to)); form.append(b);
       };
-      if (mode === 'signin') mailing.then((yes) => { if (yes && form.isConnected && $('#werft-password')) switchTo('forgot', 'Passwort vergessen?'); });
-      if (mode !== 'signin') switchTo('signin', 'Zur Anmeldung');
+      if (mode === 'signin') mailing.then((yes) => { if (yes && form.isConnected && $('#werft-password')) switchTo('forgot', t('signIn.forgot')); });
+      if (mode !== 'signin') switchTo('signin', t('signIn.back'));
       if (mode === 'reset') {
         // The account the link is for (from the token), so a password manager saves the new password for it.
         const email = $('#werft-email');
@@ -139,11 +141,11 @@ export async function requireUser(siteName) {
           error.classList.toggle('werft-done', ok);
           return;
         }
-        if ($('#werft-password').value !== $('#werft-repeat').value) { error.textContent = 'Die beiden Passwörter sind nicht gleich.'; return; }
+        if ($('#werft-password').value !== $('#werft-repeat').value) { error.textContent = t('password.differ'); return; }
         const { ok, status, data } = await post('/password/reset', { token: resetToken, password: $('#werft-password').value });
         if (!ok) {
           error.textContent = data.message;
-          if (status === 410) switchTo('forgot', 'Neuen Link anfordern');
+          if (status === 410) switchTo('forgot', t('signIn.newLink'));
           return;
         }
         history.replaceState(null, '', location.pathname + location.search);

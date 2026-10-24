@@ -19,6 +19,7 @@ import { draftKey, collectDraft, changedSince, applyDraft } from './drafts.js';
 import { duplicatePage } from './duplicate.js';
 import { entryOf, deletedEntries, restoredEntry } from './deleted.js';
 import { textsOf, search } from './search.js';
+import { t, locale, intlLocale } from './i18n.js';
 
 const REPO = '/api/v1/repos/werft/site';
 const { site, theme, base } = await loadSite();
@@ -39,7 +40,7 @@ let lang = defaultLang;
 const isDefault = (l = lang) => !languages.length || l === defaultLang;
 const langDir = (l = lang) => languageDir(contentDir, languages, l);
 const langPrefix = (l = lang) => (isDefault(l) ? '' : `${l}/`);
-const languageName = (code) => { try { return new Intl.DisplayNames(['de'], { type: 'language' }).of(code); } catch { return code; } };
+const languageName = (code) => { try { return new Intl.DisplayNames([locale()], { type: 'language' }).of(code); } catch { return code; } };
 
 const $ = (selector) => document.querySelector(selector);
 const el = (tag, props = {}, ...children) => {
@@ -189,13 +190,13 @@ function schemaAt(source, path) {
 }
 function sourceLabel(source) {
   const [kind, slug] = source.split(':');
-  if (kind === 'pattern') return `Muster „${dataOf(source)?.title ?? slug}“`;
-  if (kind === 'settings') return 'Website';
-  if (kind === 'menus') return 'Menüs';
-  if (kind === 'redirects') return 'Weiterleitungen';
-  if (kind === 'form') return `Formular „${dataOf(source)?.title ?? slug}“`;
-  if (kind === 'post') return `${postType?.singular ?? 'Beitrag'} „${dataOf(source)?.title ?? slug}“`;
-  return 'Seite';
+  if (kind === 'pattern') return t('source.pattern', { title: dataOf(source)?.title ?? slug });
+  if (kind === 'settings') return t('site');
+  if (kind === 'menus') return t('menus');
+  if (kind === 'redirects') return t('redirects');
+  if (kind === 'form') return t('source.form', { title: dataOf(source)?.title ?? slug });
+  if (kind === 'post') return t('source.post', { kind: postType?.singular ?? t('post'), title: dataOf(source)?.title ?? slug });
+  return t('page');
 }
 // Whether a pattern or form is shown in the default language because the editor's language has
 // none of its own yet.
@@ -203,16 +204,16 @@ const untranslated = (source) => !isDefault() && (!files.get(fileOf(source))?.da
 function sharedNote(source) {
   const kind = source.split(':')[0];
   const note = {
-    pattern: 'Erscheint auf mehreren Seiten: Änderungen wirken überall.',
-    settings: 'Website-Einstellung: Änderungen wirken auf allen Seiten.',
-    menus: 'Menü: Änderungen wirken auf allen Seiten.',
-    form: 'Formular: Änderungen wirken überall, wo es erscheint.',
+    pattern: t('shared.pattern'),
+    settings: t('shared.settings'),
+    menus: t('shared.menus'),
+    form: t('shared.form'),
   }[kind];
   if (!note || isDefault()) return note;
-  const original = `der Fassung auf ${languageName(defaultLang)}`;
-  if (kind === 'settings') return `${note} Was Sie hier nicht ändern, kommt aus ${original}.`;
-  if (kind === 'menus') return `${note} Ein Menü, das Sie hier nicht ändern, kommt aus ${original}.`;
-  return untranslated(source) ? `${note} Noch nicht übersetzt: Es zeigt den Inhalt aus ${original}, bis Sie es hier ändern.` : note;
+  const language = languageName(defaultLang);
+  if (kind === 'settings') return `${note} ${t('shared.settingsFrom', { language })}`;
+  if (kind === 'menus') return `${note} ${t('shared.menusFrom', { language })}`;
+  return untranslated(source) ? `${note} ${t('shared.untranslated', { language })}` : note;
 }
 
 // ---- Editor state ----
@@ -347,7 +348,7 @@ function draw() {
   } else {
     const slug = view === 'form' ? previewPage(data) : current;
     result = slug === undefined
-      ? { html: '<!doctype html><html><head></head><body></body></html>', texts: [], images: [], note: `Auf ${languageName(lang)} gibt es noch keine Seite. Legen Sie links unter „Noch nicht übersetzt“ eine Übersetzung an.` }
+      ? { html: '<!doctype html><html><head></head><body></body></html>', texts: [], images: [], note: t('preview.noPage', { language: languageName(lang) }) }
       : renderer(data, slug);
   }
   baseEl.href = new URL(folder, siteURL).href;
@@ -496,11 +497,11 @@ doc.addEventListener('focusout', () => {
 });
 
 doc.addEventListener('mousemove', (event) => {
-  const t = event.target;
+  const node = event.target;
   const next = {
-    section: sectionOf(t), item: itemOf(t),
-    field: onPage() ? (fieldOf(t) ?? t.closest?.('[data-werft-part]')) : null,
-    image: onPage() ? t.closest?.('[data-werft-image]') : null,
+    section: sectionOf(node), item: itemOf(node),
+    field: onPage() ? (fieldOf(node) ?? node.closest?.('[data-werft-part]')) : null,
+    image: onPage() ? node.closest?.('[data-werft-image]') : null,
   };
   if (next.section !== hover.section || next.item !== hover.item || next.field !== hover.field || next.image !== hover.image) { hover = next; paint(); }
 });
@@ -508,12 +509,12 @@ win.addEventListener('scroll', () => paint(), { passive: true });
 win.addEventListener('resize', () => paint());
 doc.addEventListener('submit', (event) => event.preventDefault(), true);
 doc.addEventListener('click', (event) => {
-  const t = event.target;
-  const link = t.closest?.('a[href]');
+  const node = event.target;
+  const link = node.closest?.('a[href]');
   if (view === 'form') {
     // A click on a section of the previewed page opens it in the form.
     event.preventDefault();
-    const index = sectionOf(t);
+    const index = sectionOf(node);
     if (index != null && selection === `page:${current}`) formHandle?.reveal(['sections', index]);
     return;
   }
@@ -526,14 +527,14 @@ doc.addEventListener('click', (event) => {
     else if (link.hash && new URL(link.href).pathname === new URL(pageURL(current)).pathname) doc.querySelector(link.hash)?.scrollIntoView({ behavior: 'smooth' });
     return;
   }
-  if (t.closest?.('a, button, label, summary')) event.preventDefault();
-  const image = t.closest?.('[data-werft-image]');
-  const field = fieldOf(t);
-  const part = t.closest?.('[data-werft-part]');
+  if (node.closest?.('a, button, label, summary')) event.preventDefault();
+  const image = node.closest?.('[data-werft-image]');
+  const field = fieldOf(node);
+  const part = node.closest?.('[data-werft-part]');
   if (field?.isContentEditable) return;
   if (image && !field) { openImage(image); return; }
   if (field || part) { openTextDialog(textFor(field ?? part), field ?? part); return; }
-  const index = sectionOf(t);
+  const index = sectionOf(node);
   selected = index;
   paint();
 }, true);
@@ -588,7 +589,7 @@ function paintNow() {
     main.style.minHeight = '320px';
     const rect = rectOf([main]);
     const empty = box(rect, 've-empty');
-    empty.append(el('p', {}, 'Diese Seite hat noch keine Abschnitte.'), button('+ Abschnitt hinzufügen', null, () => addSection(0), 've-primary'));
+    empty.append(el('p', {}, t('page.noSections')), button(t('section.addPlus'), null, () => addSection(0), 've-primary'));
     overlay.append(empty);
   }
   if (!onPage()) return;
@@ -603,18 +604,18 @@ function paintNow() {
     overlay.append(chip);
     place(chip, sectionRect.left + 8, sectionRect.top + 8);
     const bar = el('div', { className: 've-bar ve-section-bar' });
-    bar.append(button('✎ Abschnitt bearbeiten', null, () => openSectionPanel(index), 've-tool ve-wide'));
+    bar.append(button(`✎ ${t('section.edit')}`, null, () => openSectionPanel(index), 've-tool ve-wide'));
     if (!locked) {
       const row = el('div', { className: 've-row' },
-        button('⧉', 'Duplizieren', () => sectionTo(index + 1, () => page.sections.splice(index + 1, 0, structuredClone(page.sections[index])))),
-        button('↑', 'Nach oben', () => sectionTo(index - 1, () => page.sections.splice(index - 1, 0, ...page.sections.splice(index, 1)))),
-        button('↓', 'Nach unten', () => sectionTo(index + 1, () => page.sections.splice(index + 1, 0, ...page.sections.splice(index, 1)))));
+        button('⧉', t('duplicate'), () => sectionTo(index + 1, () => page.sections.splice(index + 1, 0, structuredClone(page.sections[index])))),
+        button('↑', t('moveUp'), () => sectionTo(index - 1, () => page.sections.splice(index - 1, 0, ...page.sections.splice(index, 1)))),
+        button('↓', t('moveDown'), () => sectionTo(index + 1, () => page.sections.splice(index + 1, 0, ...page.sections.splice(index, 1)))));
       row.children[1].disabled = index === 0;
       row.children[2].disabled = index === page.sections.length - 1;
-      bar.append(row, button('Entfernen', null, () => confirmDialog('Abschnitt entfernen?', 'Der Abschnitt verschwindet von dieser Seite. Mit „Rückgängig“ oder ohne Speichern kommt er zurück.', 'Entfernen')
+      bar.append(row, button(t('remove'), null, () => confirmDialog(t('section.removeTitle'), t('section.removeText'), t('remove'))
         .then((ok) => ok && change(() => { page.sections.splice(index, 1); selected = null; })), 've-tool ve-wide ve-danger'));
       for (const [where, at] of [['top', index], ['bottom', index + 1]]) {
-        const add = button('+ Abschnitt hinzufügen', null, () => addSection(at), 've-add');
+        const add = button(t('section.addPlus'), null, () => addSection(at), 've-add');
         overlay.append(add);
         place(add, sectionRect.left + sectionRect.width / 2 - add.offsetWidth / 2, (where === 'top' ? sectionRect.top : sectionRect.top + sectionRect.height) - add.offsetHeight / 2);
       }
@@ -632,10 +633,10 @@ function paintNow() {
     if (rect && Array.isArray(list)) {
       overlay.append(box(rect, 've-item'));
       const bar = el('div', { className: 've-bar ve-item-bar' },
-        button('↑', 'Eintrag nach vorn', () => change(() => list.splice(i - 1, 0, ...list.splice(i, 1)))),
-        button('↓', 'Eintrag nach hinten', () => change(() => list.splice(i + 1, 0, ...list.splice(i, 1)))),
-        button('⧉', 'Eintrag duplizieren', () => change(() => list.splice(i + 1, 0, structuredClone(list[i])))),
-        button('✕', 'Eintrag entfernen', () => change(() => list.splice(i, 1)), 've-tool ve-danger'));
+        button('↑', t('item.moveUp'), () => change(() => list.splice(i - 1, 0, ...list.splice(i, 1)))),
+        button('↓', t('item.moveDown'), () => change(() => list.splice(i + 1, 0, ...list.splice(i, 1)))),
+        button('⧉', t('item.duplicate'), () => change(() => list.splice(i + 1, 0, structuredClone(list[i])))),
+        button('✕', t('item.remove'), () => change(() => list.splice(i, 1)), 've-tool ve-danger'));
       bar.children[0].disabled = i === 0;
       bar.children[1].disabled = i === list.length - 1;
       overlay.append(bar);
@@ -647,7 +648,7 @@ function paintNow() {
     const rect = rectOf([hover.image]);
     if (rect) {
       overlay.append(box(rect, 've-image'));
-      const tag = el('div', { className: 've-chip ve-image-chip' }, 'Klicken: Bild ändern');
+      const tag = el('div', { className: 've-chip ve-image-chip' }, t('image.clickToChange'));
       overlay.append(tag);
       place(tag, rect.left + 8, rect.top + rect.height - 34);
     }
@@ -665,9 +666,9 @@ function paintNow() {
       const owner = ownerOf(active.source, active.path);
       // A text of a part within a section (a link, an entry) is named with that part.
       const inPart = owner && owner.path.length > (/^(page|pattern):/.test(active.source) ? 2 : 0);
-      const bar = el('div', { className: 've-bar ve-field-bar' }, el('span', { className: 've-field-label' }, `${inPart ? `${owner.label} · ` : ''}${def?.label ?? 'Text'}`));
+      const bar = el('div', { className: 've-bar ve-field-bar' }, el('span', { className: 've-field-label' }, `${inPart ? `${owner.label} · ` : ''}${def?.label ?? t('text')}`));
       if (active.mode === 'rich') bar.append(formatBar(doc, () => active.el.dispatchEvent(new Event('input', { bubbles: true }))));
-      if (owner) bar.append(button('Optionen', `${owner.label} bearbeiten`, () => openPanel(owner.title, owner.source, owner.path)));
+      if (owner) bar.append(button(t('options'), t('editThing', { name: owner.label }), () => openPanel(owner.title, owner.source, owner.path)));
       const note = sharedNote(active.source);
       if (note) bar.append(el('span', { className: 've-note' }, note));
       overlay.append(bar);
@@ -682,7 +683,7 @@ function ownerOf(source, path) {
   while (at.length && typeof at.at(-1) === 'number' && typeof getAt(dataOf(source), at) !== 'object') at = at.slice(0, -1);
   const def = schemaAt(source, at);
   if (!def?.fields?.length) return null;
-  return { source, path: at, label: def.label ?? 'Abschnitt', title: def.label ?? sourceLabel(source) };
+  return { source, path: at, label: def.label ?? t('section'), title: def.label ?? sourceLabel(source) };
 }
 
 // What a form needs from the editor (see buildForm).
@@ -717,7 +718,7 @@ function openPanel(title, source, path, { fields, extra } = {}) {
   }));
   const note = sharedNote(source);
   panel.replaceChildren(
-    el('header', {}, el('h2', {}, title), button('Fertig', null, closePanel, 've-primary')),
+    el('header', {}, el('h2', {}, title), button(t('done'), null, closePanel, 've-primary')),
     ...(note ? [el('p', { className: 've-note' }, note)] : []),
     form, ...(extra ? [extra] : []));
   panel.hidden = false;
@@ -726,7 +727,7 @@ function openPanel(title, source, path, { fields, extra } = {}) {
 function openSectionPanel(index) {
   const section = pageData().sections[index];
   const def = schemaAt(`page:${current}`, ['sections', index]);
-  openPanel(def?.label ?? 'Abschnitt', `page:${current}`, ['sections', index]);
+  openPanel(def?.label ?? t('section'), `page:${current}`, ['sections', index]);
 }
 
 // A text that cannot be edited on the page (formatted parts, values the theme reworks).
@@ -755,11 +756,11 @@ function openTextDialog(text, node) {
   const owner = ownerOf(text.source, text.path);
   const note = sharedNote(text.source);
   panel.replaceChildren(
-    el('header', {}, el('h2', {}, def?.label ?? 'Text'), button('Fertig', null, closePanel, 've-primary')),
+    el('header', {}, el('h2', {}, def?.label ?? t('text')), button(t('done'), null, closePanel, 've-primary')),
     ...(note ? [el('p', { className: 've-note' }, note)] : []),
     ...(rich ? [formatBar(document, () => editor.dispatchEvent(new Event('input')))] : []),
     editor,
-    ...(owner ? [el('p', {}, button(`Weitere Angaben: ${owner.label}`, null, () => openPanel(owner.title, owner.source, owner.path), 've-link'))] : []));
+    ...(owner ? [el('p', {}, button(t('moreDetails', { name: owner.label }), null, () => openPanel(owner.title, owner.source, owner.path), 've-link'))] : []));
   panel.hidden = false;
   editor.focus();
 }
@@ -771,7 +772,7 @@ function openImage(node) {
   const holder = getAt(dataOf(image.source), holderPath);
   const key = image.path.at(-1);
   const preview = el('img', { className: 've-preview', src: mediaURL(holder[key]), alt: '' });
-  const extra = el('div', { className: 've-image-panel' }, preview, button('Bild ändern', null, async () => {
+  const extra = el('div', { className: 've-image-panel' }, preview, button(t('image.change'), null, async () => {
     const picked = await pickImage(holder[key]);
     if (!picked) return;
     change(() => { holder[key] = picked; });
@@ -779,9 +780,9 @@ function openImage(node) {
   }, 've-primary'));
   const def = schemaAt(image.source, holderPath);
   const fields = (def?.widget === 'object' ? def.fields : []).filter((f) => f.name !== key && f.widget !== 'image');
-  if (holder && !Array.isArray(holder) && fields.length) openPanel(def.label ?? 'Bild', image.source, holderPath, { fields, extra });
+  if (holder && !Array.isArray(holder) && fields.length) openPanel(def.label ?? t('image'), image.source, holderPath, { fields, extra });
   else {
-    panel.replaceChildren(el('header', {}, el('h2', {}, 'Bild'), button('Fertig', null, closePanel, 've-primary')), extra);
+    panel.replaceChildren(el('header', {}, el('h2', {}, t('image')), button(t('done'), null, closePanel, 've-primary')), extra);
     panel.hidden = false;
   }
   panel.querySelector('header').after(extra);
@@ -815,7 +816,7 @@ function pickImage(current) {
       if (!file) return;
       const text = label.textContent;
       busy = true;
-      label.textContent = 'Bild wird vorbereitet …';
+      label.textContent = t('image.preparing');
       controls.forEach((c) => { c.disabled = true; });
       try {
         const { path, note } = await upload(file);
@@ -887,16 +888,16 @@ function pickSection({ patterns: withPatterns = true } = {}) {
     let html = '';
     try { html = sectionHTML(section); } catch { /* a section without content cannot be shown */ }
     if (html) thumb.append(Object.assign(document.createElement('iframe'), { sandbox: '', srcdoc: html, tabIndex: -1, loading: 'lazy', title: '' }));
-    else thumb.append(el('span', {}, 'Leerer Abschnitt'));
+    else thumb.append(el('span', {}, t('section.empty')));
     b.append(thumb, el('strong', {}, label), note ? el('small', {}, note) : null);
     return b;
   };
   const cards = Object.entries(theme.blocks).map(([type, block]) => {
     const example = found.get(type);
     const fields = topFields('page:')?.find((f) => f.name === 'sections')?.types?.find((t) => t.name === type)?.fields ?? block.fields ?? [];
-    return card(block.label ?? type, example ?? { type, ...emptyValue({ widget: 'object', fields }) }, example ? 'mit Beispielinhalt' : null);
+    return card(block.label ?? type, example ?? { type, ...emptyValue({ widget: 'object', fields }) }, example ? t('section.withExample') : null);
   });
-  const patterns = withPatterns ? slugsIn('patterns').map((slug) => card(`Muster: ${titleOf('patterns', slug)}`, { type: 'pattern', pattern: slug }, 'auf mehreren Seiten gleich')) : [];
+  const patterns = withPatterns ? slugsIn('patterns').map((slug) => card(t('section.pattern', { title: titleOf('patterns', slug) }), { type: 'pattern', pattern: slug }, t('section.patternNote'))) : [];
   grid.replaceChildren(...cards, ...patterns);
   dialog.querySelector('.ve-cancel').onclick = () => dialog.close();
   dialog.showModal();
@@ -905,19 +906,19 @@ function pickSection({ patterns: withPatterns = true } = {}) {
 }
 
 // ---- Dialogs ----
-function confirmDialog(title, text, yes, { other, cancel = 'Abbrechen' } = {}) {
+function confirmDialog(title, text, yes, { other, cancel = t('cancel') } = {}) {
   const dialog = $('#ve-confirm');
   dialog.querySelector('h2').textContent = title;
   dialog.querySelector('p').textContent = text;
   const actions = dialog.querySelector('.ve-actions');
   actions.replaceChildren(
     ...(other ? [el('button', { value: 'other', className: 've-tool' }, other)] : []),
-    el('button', { value: 'yes', className: yes === 'Entfernen' || yes === 'Verwerfen' || yes === 'Löschen' ? 've-primary ve-danger' : 've-primary' }, yes),
+    el('button', { value: 'yes', className: [t('remove'), t('discard'), t('delete')].includes(yes) ? 've-primary ve-danger' : 've-primary' }, yes),
     el('button', { value: 'cancel', className: 've-tool', autofocus: true }, cancel));
   dialog.showModal();
   return new Promise((resolve) => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'yes' ? true : dialog.returnValue === 'other' ? 'other' : false), { once: true }));
 }
-function promptDialog(title, label, value = '', { yes = 'Anlegen', hint = '' } = {}) {
+function promptDialog(title, label, value = '', { yes = t('create'), hint = '' } = {}) {
   const dialog = $('#ve-prompt');
   dialog.querySelector('h2').textContent = title;
   Object.assign(dialog.querySelector('.ve-hint'), { textContent: hint, hidden: !hint });
@@ -938,10 +939,10 @@ function startEditing() {
 }
 
 // ---- Top bar ----
-const STATUS = { draft: 'Entwurf', pending: 'Zur Prüfung', published: 'Veröffentlicht' };
+const statusName = (status) => ({ draft: t('status.draft'), pending: t('status.pending'), published: t('status.published') })[status] ?? status;
 const statusOf = (entry) => {
   const status = entry?.status ?? 'published';
-  return status === 'published' && entry?.publish_date && Date.parse(entry.publish_date) > Date.now() ? 'Geplant' : STATUS[status] ?? status;
+  return status === 'published' && entry?.publish_date && Date.parse(entry.publish_date) > Date.now() ? t('status.scheduled') : statusName(status);
 };
 const pageURL = (slug) => `${siteURL}${langPrefix()}${slug === 'index' ? '' : pageFile(slug)}`;
 
@@ -952,18 +953,18 @@ function describe(source) {
   // A page not translated yet is named as in the language it exists in.
   const name = data?.title ?? (FOLDERS[kind] ? titleOf(FOLDERS[kind], slug) : slug);
   return {
-    page: { kind: 'Seite', title: name },
-    post: { kind: postType?.singular ?? 'Beitrag', title: name },
-    pattern: { kind: 'Muster', title: name },
-    form: { kind: 'Formular', title: name },
-    settings: { kind: 'Website', title: 'Website-Einstellungen' },
-    menus: { kind: 'Website', title: 'Menüs' },
-    redirects: { kind: 'Website', title: 'Weiterleitungen' },
-    media: { kind: 'Website', title: 'Bilder' },
-    submissions: { kind: 'Website', title: 'Einsendungen' },
-    users: { kind: 'Website', title: 'Benutzer' },
-    deleted: { kind: 'Website', title: 'Gelöschte Inhalte' },
-    account: { kind: 'Konto', title: 'Mein Konto' },
+    page: { kind: t('page'), title: name },
+    post: { kind: postType?.singular ?? t('post'), title: name },
+    pattern: { kind: t('pattern'), title: name },
+    form: { kind: t('form'), title: name },
+    settings: { kind: t('site'), title: t('settings') },
+    menus: { kind: t('site'), title: t('menus') },
+    redirects: { kind: t('site'), title: t('redirects') },
+    media: { kind: t('site'), title: t('images') },
+    submissions: { kind: t('site'), title: t('submissions') },
+    users: { kind: t('site'), title: t('users') },
+    deleted: { kind: t('site'), title: t('deleted') },
+    account: { kind: t('account.kind'), title: t('account') },
   }[kind];
 }
 
@@ -983,42 +984,42 @@ function drawBar() {
   const data = /^(page|post|pattern|form):/.test(shown) ? dataOf(shown) : null;
   const left = el('div', { className: 've-top-left' });
   if (editing || view === 'form') {
-    const saveButton = button('Speichern', 'Speichern (Strg+S)', save, 've-primary ve-save');
+    const saveButton = button(t('save'), t('save.shortcut'), save, 've-primary ve-save');
     saveButton.disabled = !isDirty();
-    const undoButton = button('', 'Rückgängig (Strg+Z)', undo);
-    const redoButton = button('', 'Wiederholen (Strg+Umschalt+Z)', redo);
-    undoButton.append(el('span', { ariaHidden: 'true' }, '↶'), el('span', { className: 've-btn-text' }, 'Rückgängig'));
-    redoButton.append(el('span', { ariaHidden: 'true' }, '↷'), el('span', { className: 've-btn-text' }, 'Wiederholen'));
+    const undoButton = button('', t('undo.shortcut'), undo);
+    const redoButton = button('', t('redo.shortcut'), redo);
+    undoButton.append(el('span', { ariaHidden: 'true' }, '↶'), el('span', { className: 've-btn-text' }, t('undo')));
+    redoButton.append(el('span', { ariaHidden: 'true' }, '↷'), el('span', { className: 've-btn-text' }, t('redo')));
     undoButton.disabled = !undoStack.length;
     redoButton.disabled = !redoStack.length;
-    left.append(saveButton, ...(view === 'visual' ? [button('Beenden', null, finish, 've-tool')] : []), undoButton, redoButton);
-  } else left.append(button('Bearbeiten', null, startEditing, 've-primary'));
-  const state = el('span', { className: isDirty() ? 've-state ve-unsaved' : 've-state' }, isDirty() ? 'Nicht gespeichert' : 'Alles gespeichert');
+    left.append(saveButton, ...(view === 'visual' ? [button(t('finish'), null, finish, 've-tool')] : []), undoButton, redoButton);
+  } else left.append(button(t('edit'), null, startEditing, 've-primary'));
+  const state = el('span', { className: isDirty() ? 've-state ve-unsaved' : 've-state' }, isDirty() ? t('state.unsaved') : t('state.saved'));
   const center = el('div', { className: 've-top-center' }, el('strong', {}, title ?? ''),
     el('span', {}, `${kind ?? ''}${language ? ` · ${languageName(language)}` : ''}${data && /^(page|post):/.test(shown) ? ` · ${statusOf(data)}` : ''} · `, state));
   const right = el('div', { className: 've-top-right' });
   if (view === 'form') {
     if (hasPreview()) {
-      const toggle = button(showPreview ? 'Vorschau ausblenden' : 'Vorschau zeigen', null, () => { showPreview = !showPreview; layout(); drawBar(); }, `ve-tool${showPreview ? ' ve-on' : ''}`);
+      const toggle = button(showPreview ? t('preview.hide') : t('preview.show'), null, () => { showPreview = !showPreview; layout(); drawBar(); }, `ve-tool${showPreview ? ' ve-on' : ''}`);
       toggle.setAttribute('aria-pressed', String(showPreview));
       right.append(toggle);
     }
-    if (shown.startsWith('page:') && data) right.append(el('a', { href: pageURL(shown.slice(5)), target: '_blank', rel: 'noopener', className: 've-tool', title: 'Veröffentlichte Seite in neuem Tab' }, 'Ansehen ↗'));
+    if (shown.startsWith('page:') && data) right.append(el('a', { href: pageURL(shown.slice(5)), target: '_blank', rel: 'noopener', className: 've-tool', title: t('page.viewTitle') }, t('page.view')));
     bar.replaceChildren(left, center, right);
     return;
   }
   if (editing) {
-    const lock = button(locked ? 'Layout gesperrt' : 'Layout entsperrt', locked ? 'Entsperren, um Abschnitte und Einträge hinzuzufügen, zu verschieben und zu entfernen' : 'Sperren: nur Texte und Bilder ändern', () => { locked = !locked; drawBar(); paint(); }, `ve-tool ve-lock${locked ? '' : ' ve-unlocked'}`);
+    const lock = button(locked ? t('layout.locked') : t('layout.unlocked'), locked ? t('layout.unlock') : t('layout.lock'), () => { locked = !locked; drawBar(); paint(); }, `ve-tool ve-lock${locked ? '' : ' ve-unlocked'}`);
     lock.setAttribute('aria-pressed', String(!locked));
     right.append(lock);
   }
   const devices = el('div', { className: 've-devices', role: 'group' });
-  for (const [name, icon, label] of [['desktop', 'Desktop', 'Desktop-Ansicht'], ['mobile', 'Mobil', 'Mobile Ansicht']]) {
+  for (const [name, icon, label] of [['desktop', t('device.desktop'), t('device.desktopTitle')], ['mobile', t('device.mobile'), t('device.mobileTitle')]]) {
     const b = button(icon, label, () => { device = name; $('#ve-stage').dataset.device = name; drawBar(); setTimeout(paint, 50); }, `ve-tool${device === name ? ' ve-on' : ''}`);
     b.setAttribute('aria-pressed', String(device === name));
     devices.append(b);
   }
-  right.append(devices, current ? el('a', { href: pageURL(current), target: '_blank', rel: 'noopener', className: 've-tool', title: 'Veröffentlichte Seite in neuem Tab' }, 'Ansehen ↗') : '');
+  right.append(devices, current ? el('a', { href: pageURL(current), target: '_blank', rel: 'noopener', className: 've-tool', title: t('page.viewTitle') }, t('page.view')) : '');
   bar.replaceChildren(left, center, right);
 }
 
@@ -1043,7 +1044,7 @@ async function save() {
     return data.title ?? describe(Object.keys(SETTINGS).find((k) => fileOf(k) === c.path) ?? '')?.title ?? c.path.split('/').pop().replace(/\.json$/, '');
   });
   const images = changes.filter((c) => !c.path.endsWith('.json')).map((c) => c.path.split('/').pop());
-  toast('Wird gespeichert …');
+  toast(t('saving'));
   const message = `Geändert: ${[...new Set(titles), ...images].join(', ')}`;
   const request = api(`${REPO}/contents`, { method: 'POST', body: { branch, message, files: changes } });
   saving = request.catch(() => {});
@@ -1059,9 +1060,9 @@ async function save() {
         else Object.assign(f, { saved: null, sha: undefined });
       } else Object.assign(f, { saved: sent.get(c.path), sha: result.files?.[i]?.sha ?? f.sha });
     }
-    toast('Gespeichert. Die Website wird neu erstellt.');
+    toast(t('saved'));
   } catch (error) {
-    toast(error.status === 403 ? `Nicht erlaubt: ${error.message}` : `Speichern fehlgeschlagen: ${error.message}`, true);
+    toast(error.status === 403 ? t('save.denied', { message: error.message }) : t('save.failed', { message: error.message }), true);
   } finally {
     saving = null;
   }
@@ -1072,7 +1073,7 @@ async function save() {
 
 async function finish() {
   if (isDirty()) {
-    const choice = await confirmDialog('Ohne Speichern beenden?', 'Alle nicht gespeicherten Änderungen werden verworfen.', 'Verwerfen', { other: 'Speichern' });
+    const choice = await confirmDialog(t('finish.title'), t('finish.text'), t('discard'), { other: t('save') });
     if (!choice) return;
     if (choice === 'other') { await save(); if (isDirty()) return; } else {
       for (const [path, f] of [...files]) { if (f.saved === null) files.delete(path); else f.data = JSON.parse(f.saved); }
@@ -1120,13 +1121,13 @@ async function offerDraft(draft) {
   const label = (path, data) => entryTitle(path, data ?? JSON.parse(files.get(path)?.saved ?? '{}')) ?? path.split('/').pop();
   const names = [...new Set([...(draft.files ?? []).map((f) => label(f.path, f.data)), ...(draft.uploads ?? []).map((u) => u.path.split('/').pop())])];
   const since = changedSince(draft, files).map((path) => label(path, files.get(path)?.data));
-  const when = new Date(draft.saved_at).toLocaleString('de-DE', { dateStyle: 'long', timeStyle: 'short' });
-  const choice = await confirmDialog('Nicht gespeicherte Änderungen', [
-    `Am ${when} blieben Änderungen ungespeichert: ${names.join(', ') || 'gelöschte Bilder'}.`,
-    since.length ? `Inzwischen wurde gespeichert: ${since.join(', ')}. Wiederherstellen ersetzt diese Fassung durch Ihre Änderungen.` : 'Seitdem hat niemand diese Inhalte gespeichert.',
-    draft.uploads_dropped ? 'Neue Bilder waren zu groß zum Aufbewahren und fehlen.' : '',
-    '„Später“ bewahrt sie auf, bis Sie hier etwas ändern.',
-  ].filter(Boolean).join(' '), 'Wiederherstellen', { other: 'Verwerfen', cancel: 'Später' });
+  const when = new Date(draft.saved_at).toLocaleString(intlLocale(), { dateStyle: 'long', timeStyle: 'short' });
+  const choice = await confirmDialog(t('draft.title'), [
+    t('draft.left', { when, names: names.join(', ') || t('draft.deletedImages') }),
+    since.length ? t('draft.since', { names: since.join(', ') }) : t('draft.noneSince'),
+    draft.uploads_dropped ? t('draft.uploadsDropped') : '',
+    t('draft.later'),
+  ].filter(Boolean).join(' '), t('restore'), { other: t('discard'), cancel: t('later') });
   if (choice === 'other') { draftOffered = null; localStorage.removeItem(DRAFT); return; }
   if (!choice) return;
   startEditing();
@@ -1143,7 +1144,7 @@ async function offerDraft(draft) {
   });
   draftOffered = null;
   keepNow();
-  toast('Änderungen wiederhergestellt. Prüfen Sie sie und klicken Sie dann auf „Speichern“.');
+  toast(t('draft.restored'));
 }
 
 let toastTimer;
@@ -1261,21 +1262,21 @@ function drawPages() {
   const list = $('#ve-pages');
   const shown = view === 'form' ? selection : `page:${current}`;
   const changed = new Set(changedPaths());
-  const order = (a, b) => (b.slug === 'index') - (a.slug === 'index') || String(a.data.title ?? a.slug).localeCompare(String(b.data.title ?? b.slug), 'de');
+  const order = (a, b) => (b.slug === 'index') - (a.slug === 'index') || String(a.data.title ?? a.slug).localeCompare(String(b.data.title ?? b.slug), locale());
   const pages = slugsIn('pages').map((slug) => ({ slug, data: files.get(fileOf(`page:${slug}`)).data })).sort(order);
   // The second line names only what is worth noticing: the home page, a status other than published.
   const note = (...parts) => parts.filter(Boolean).join(' · ');
-  const unusual = (data) => (statusOf(data) === STATUS.published ? '' : statusOf(data));
+  const unusual = (data) => (statusOf(data) === statusName('published') ? '' : statusOf(data));
   const item = (source, label, sub, onSettings) => {
     const isCurrent = source === shown;
     const row = el('li', { className: isCurrent ? 've-current' : '' });
     const openButton = button('', null, () => open(source), 've-page');
     const edited = /:/.test(source) && changed.has(fileOf(source));
     openButton.append(el('span', {}, label));
-    if (sub || edited) openButton.append(el('small', {}, sub, edited ? el('b', { className: 've-edited' }, `${sub ? ' · ' : ''}geändert`) : null));
+    if (sub || edited) openButton.append(el('small', {}, sub, edited ? el('b', { className: 've-edited' }, `${sub ? ' · ' : ''}${t('changed')}`) : null));
     if (isCurrent) openButton.setAttribute('aria-current', 'page');
     row.append(openButton);
-    if (onSettings && view === 'visual') row.append(button('⚙', `Einstellungen: ${label}`, onSettings, 've-icon'));
+    if (onSettings && view === 'visual') row.append(button('⚙', t('settingsOf', { name: label }), onSettings, 've-icon'));
     return row;
   };
   const group = (title, ...children) => el('section', { className: 've-group' }, el('h2', {}, title), ...children);
@@ -1287,9 +1288,9 @@ function drawPages() {
   // While something is typed into the search, the sidebar lists what matches.
   if (query) {
     found = search(searchable(), query);
-    list.replaceChildren(group(`Suchergebnisse (${found.length})`, found.length
+    list.replaceChildren(group(t('search.results', { count: found.length }), found.length
       ? el('ul', { className: 've-results' }, ...found.map((r) => item(r.source, r.title, `${r.kindName}${r.snippet ? ` · ${r.snippet}` : ''}`)))
-      : el('p', { className: 've-hint' }, 'Nichts gefunden. Gesucht wird in Titeln und Texten der Seiten, Einträge, Muster und Formulare und in den Namen der Bilder.')));
+      : el('p', { className: 've-hint' }, t('search.none'))));
     drawLanguages();
     return;
   }
@@ -1297,20 +1298,20 @@ function drawPages() {
   // The languages a page is missing in, worth noticing.
   const missing = (slug) => {
     const without = languages.filter((l) => l !== lang && !slugsIn('pages', l).includes(slug)).map(languageName);
-    return without.length ? `nicht auf ${without.join(', ')}` : '';
+    return without.length ? t('page.missingIn', { languages: without.join(', ') }) : '';
   };
   if (can('content')) {
-    sections.push(group('Seiten', el('ul', {}, ...pages.map(({ slug, data }) => item(`page:${slug}`, data.title ?? slug, note(slug === 'index' && 'Startseite', unusual(data), missing(slug)),
+    sections.push(group(t('pages'), el('ul', {}, ...pages.map(({ slug, data }) => item(`page:${slug}`, data.title ?? slug, note(slug === 'index' && t('page.home'), unusual(data), missing(slug)),
       () => { if (slug !== current) openPage(slug); pageSettings(); }))),
-    button('+ Neue Seite', null, newPage, 've-tool ve-wide')));
+    button(t('page.new'), null, newPage, 've-tool ve-wide')));
     // Pages of other languages this one lacks, offered as a copy to translate.
     const untranslatedPages = [...new Set(languages.filter((l) => l !== lang).flatMap((l) => slugsIn('pages', l)))].filter((slug) => !slugsIn('pages').includes(slug))
       .map((slug) => ({ slug, data: { title: titleOf('pages', slug) } })).sort(order);
     if (untranslatedPages.length) {
-      sections.push(group('Noch nicht übersetzt', el('p', { className: 've-hint' }, `Diese Seiten gibt es auf ${languageName(lang)} noch nicht. „Übersetzen“ legt eine Kopie an, die Sie hier übersetzen.`),
+      sections.push(group(t('untranslated'), el('p', { className: 've-hint' }, t('untranslated.hint', { language: languageName(lang) })),
         el('ul', {}, ...untranslatedPages.map(({ slug, data }) => {
-          const row = item(`page:${slug}`, data.title, slug === 'index' ? 'Startseite' : '');
-          row.append(button('Übersetzen', `„${data.title}“ auf ${languageName(lang)} anlegen`, () => translate(slug), 've-tool'));
+          const row = item(`page:${slug}`, data.title, slug === 'index' ? t('page.home') : '');
+          row.append(button(t('translate'), t('translate.title', { title: data.title, language: languageName(lang) }), () => translate(slug), 've-tool'));
           return row;
         }))));
     }
@@ -1319,7 +1320,7 @@ function drawPages() {
     const date = postType.date ?? 'publish_date';
     const posts = slugsIn(postType.name).map((slug) => ({ slug, data: files.get(fileOf(`post:${slug}`)).data }))
       .sort((a, b) => String(b.data[date] ?? '').localeCompare(String(a.data[date] ?? '')));
-    const when = (data) => (data[date] ? new Date(data[date]).toLocaleDateString('de-DE') : '');
+    const when = (data) => (data[date] ? new Date(data[date]).toLocaleDateString(intlLocale()) : '');
     // A language without posts of its own shows the default language's; its first own post ends that.
     const shared = !isDefault() && languageOf('post:') !== lang;
     // Own posts of the language that are not public yet: the site still shows the default ones.
@@ -1327,33 +1328,33 @@ function drawPages() {
     // Starting own posts changes what the public site shows, so it is for roles that may publish.
     const mayPublish = (me.statuses ?? []).includes('published');
     sections.push(folded(`${postType.label} (${posts.length})`, postsOpen || shown.startsWith('post:'), (o) => { postsOpen = o; },
-      shared && el('p', { className: 've-hint' }, `Auf ${languageName(lang)} zeigt die Website die ${postType.label} auf ${languageName(defaultLang)}. Was Sie hier anlegen oder ändern, gilt für alle Sprachen.`),
-      waiting && el('p', { className: 've-hint' }, `Bis einer dieser Einträge veröffentlicht ist, zeigt die Website auf ${languageName(lang)} weiter die ${postType.label} auf ${languageName(defaultLang)}.`),
-      button(`+ ${postType.singular ?? 'Beitrag'} anlegen${shared ? ' (für alle Sprachen)' : ''}`, null, () => newPost(), 've-tool ve-wide'),
-      shared && mayPublish && button(`Eigene ${postType.label} auf ${languageName(lang)} beginnen …`, null, () => newPost({ own: true }), 've-tool ve-wide'),
+      shared && el('p', { className: 've-hint' }, t('posts.shared', { label: postType.label, language: languageName(lang), defaultLanguage: languageName(defaultLang) })),
+      waiting && el('p', { className: 've-hint' }, t('posts.waiting', { label: postType.label, language: languageName(lang), defaultLanguage: languageName(defaultLang) })),
+      button(shared ? t('posts.newShared', { kind: postType.singular ?? t('post') }) : t('posts.new', { kind: postType.singular ?? t('post') }), null, () => newPost(), 've-tool ve-wide'),
+      shared && mayPublish && button(t('posts.startOwn', { label: postType.label, language: languageName(lang) }), null, () => newPost({ own: true }), 've-tool ve-wide'),
       el('ul', {}, ...posts.map(({ slug, data }) => item(`post:${slug}`, data.title ?? slug, note(when(data), unusual(data)))))));
   }
   const siteList = el('ul', {});
-  if (can('settings')) siteList.append(item('settings', 'Website-Einstellungen', 'Name, Kontakt, Kopf- und Fußzeile'));
-  if (can('structure') && settingsFile('menus')) siteList.append(item('menus', 'Menüs', 'Navigation'));
-  if (can('media')) siteList.append(item('media', 'Bilder', 'Alle Bilder, neue hochladen'));
-  if (can('content') && slugsIn('forms').length) siteList.append(item('submissions', 'Einsendungen', 'Was Besucher über Formulare gesendet haben'));
-  if (me.role === 'administrator') siteList.append(item('users', 'Benutzer', 'Wer die Website bearbeiten darf'));
-  siteList.append(item('account', 'Mein Konto', 'Ihr Name und Ihr Passwort'));
-  if (siteList.children.length) sections.push(group('Website', siteList));
+  if (can('settings')) siteList.append(item('settings', t('settings'), t('settings.sub')));
+  if (can('structure') && settingsFile('menus')) siteList.append(item('menus', t('menus'), t('menus.sub')));
+  if (can('media')) siteList.append(item('media', t('images'), t('images.sub')));
+  if (can('content') && slugsIn('forms').length) siteList.append(item('submissions', t('submissions'), t('submissions.sub')));
+  if (me.role === 'administrator') siteList.append(item('users', t('users'), t('users.sub')));
+  siteList.append(item('account', t('account'), t('account.sub')));
+  if (siteList.children.length) sections.push(group(t('site'), siteList));
   const more = [];
   if (can('content')) {
-    more.push(el('h3', {}, 'Muster'), el('p', { className: 've-hint' }, 'Abschnitte, die auf mehreren Seiten gleich erscheinen.'),
-      el('ul', {}, ...slugsIn('patterns').map((slug) => item(`pattern:${slug}`, titleOf('patterns', slug), untranslated(`pattern:${slug}`) ? 'Muster · noch nicht übersetzt' : 'Muster'))),
-      button('+ Neues Muster', null, () => newEntry('pattern'), 've-tool ve-wide'));
+    more.push(el('h3', {}, t('patterns')), el('p', { className: 've-hint' }, t('patterns.hint')),
+      el('ul', {}, ...slugsIn('patterns').map((slug) => item(`pattern:${slug}`, titleOf('patterns', slug), untranslated(`pattern:${slug}`) ? t('pattern.untranslated') : t('pattern')))),
+      button(t('pattern.new'), null, () => newEntry('pattern'), 've-tool ve-wide'));
     if (collection('forms')) {
-      more.push(el('h3', {}, 'Formulare'), el('ul', {}, ...slugsIn('forms').map((slug) => item(`form:${slug}`, titleOf('forms', slug), untranslated(`form:${slug}`) ? 'Formular · noch nicht übersetzt' : 'Formular'))),
-        button('+ Neues Formular', null, () => newEntry('form'), 've-tool ve-wide'));
+      more.push(el('h3', {}, t('forms')), el('ul', {}, ...slugsIn('forms').map((slug) => item(`form:${slug}`, titleOf('forms', slug), untranslated(`form:${slug}`) ? t('form.untranslated') : t('form')))),
+        button(t('form.new'), null, () => newEntry('form'), 've-tool ve-wide'));
     }
   }
-  if (can('structure')) more.push(el('h3', {}, 'Weiterleitungen'), el('ul', {}, item('redirects', 'Weiterleitungen', 'Alte Adressen auf neue umleiten')));
-  if (can('content')) more.push(el('h3', {}, 'Gelöschte Inhalte'), el('ul', {}, item('deleted', 'Gelöschte Inhalte', 'Gelöschte Seiten und Einträge zurückholen')));
-  if (more.length) sections.push(folded('Weitere Inhalte', moreOpen || /^(pattern|form:|redirects|deleted)/.test(shown), (o) => { moreOpen = o; }, ...more));
+  if (can('structure')) more.push(el('h3', {}, t('redirects')), el('ul', {}, item('redirects', t('redirects'), t('redirects.sub'))));
+  if (can('content')) more.push(el('h3', {}, t('deleted')), el('ul', {}, item('deleted', t('deleted'), t('deleted.sub'))));
+  if (more.length) sections.push(folded(t('more'), moreOpen || /^(pattern|form:|redirects|deleted)/.test(shown), (o) => { moreOpen = o; }, ...more));
   list.replaceChildren(...sections);
   drawLanguages();
 }
@@ -1369,13 +1370,13 @@ function searchable() {
       const source = `${kind}:${slug}`;
       // A pattern or form not translated yet shows the default language's.
       const data = files.get(fileOf(source))?.data ?? files.get(fileOf(source, defaultLang))?.data;
-      if (data) out.push({ source, title: data.title ?? slug, kindName: KIND_NAME[kind], texts: textsOf(data) });
+      if (data) out.push({ source, title: data.title ?? slug, kindName: kindName(kind), texts: textsOf(data) });
     }
   };
   if (can('content')) add('page', 'pages');
   if (postType && can('post')) add('post', postType.name);
   if (can('content')) { add('pattern', 'patterns'); if (collection('forms')) add('form', 'forms'); }
-  if (can('media')) for (const path of images()) out.push({ source: 'media', title: path.split('/').pop(), kindName: 'Bild', texts: [] });
+  if (can('media')) for (const path of images()) out.push({ source: 'media', title: path.split('/').pop(), kindName: t('image'), texts: [] });
   return out;
 }
 const searchBox = $('#ve-search');
@@ -1423,15 +1424,15 @@ function translate(slug) {
   startEditing();
   change(() => { files.set(fileOf(`page:${slug}`), { sha: null, saved: null, data: { ...structuredClone(original), status: 'draft' } }); });
   openPage(slug);
-  toast(`Kopie angelegt. Übersetzen Sie die Texte, wählen Sie „Veröffentlicht“ und speichern Sie.`);
+  toast(t('translate.done'));
 }
 
 function pageSettings() {
   const fields = (collection('pages')?.fields ?? []).filter((f) => f.name !== 'sections');
   const extra = el('div', { className: 've-page-extra' }, addressCard(current),
-    el('div', { className: 've-actions-row' }, button('Seite duplizieren …', null, () => duplicate(current), 've-tool'),
-      current === 'index' ? null : button('Seite löschen', null, () => removeEntry(`page:${current}`), 've-tool ve-danger')));
-  openPanel('Seiteneinstellungen', `page:${current}`, [], { fields, extra });
+    el('div', { className: 've-actions-row' }, button(t('page.duplicateMore'), null, () => duplicate(current), 've-tool'),
+      current === 'index' ? null : button(t('page.delete'), null, () => removeEntry(`page:${current}`), 've-tool ve-danger')));
+  openPanel(t('page.settings'), `page:${current}`, [], { fields, extra });
 }
 
 // ---- A page's address ----
@@ -1440,26 +1441,24 @@ const pageAddress = (slug, l = lang) => `${base}${langPrefix(l)}${slug === 'inde
 // Changing an address adds a redirect, and redirects are for administrators (gateway/roles.js).
 const mayRename = (slug) => slug !== 'index' && can('content') && can('structure');
 function addressCard(slug) {
-  const why = slug === 'index' ? 'Die Startseite ist immer unter der Adresse der Website zu finden.'
-    : mayRename(slug) ? 'Ändern Sie die Adresse, leitet die alte zur neuen weiter, und Links auf der Website führen zur neuen.'
-      : 'Nur Administratoren ändern die Adresse einer Seite, weil dabei eine Weiterleitung entsteht.';
-  return el('div', { className: 've-address' }, el('span', { className: 've-label' }, 'Adresse'), el('code', {}, pageAddress(slug)), el('small', { className: 've-hint' }, why),
-    mayRename(slug) ? button('Adresse ändern …', null, () => renamePage(slug), 've-tool') : null);
+  const why = slug === 'index' ? t('address.home') : mayRename(slug) ? t('address.rename') : t('address.adminsOnly');
+  return el('div', { className: 've-address' }, el('span', { className: 've-label' }, t('address')), el('code', {}, pageAddress(slug)), el('small', { className: 've-hint' }, why),
+    mayRename(slug) ? button(t('address.changeMore'), null, () => renamePage(slug), 've-tool') : null);
 }
 
 // Moves a page (with its translations, which share its slug) to a new address as one unsaved
 // change: the files are renamed, links in the content lead to the new address, and a page that was
 // published gets a redirect from its old address.
 async function renamePage(slug) {
-  const answer = await promptDialog('Adresse ändern', 'Neue Adresse', slug, {
-    yes: 'Ändern',
-    hint: `Kleinbuchstaben, Ziffern und Bindestriche; „.html“ kommt dazu.${languages.length ? ' Die Adresse gilt für die Seite in allen Sprachen.' : ''}`,
+  const answer = await promptDialog(t('address.change'), t('address.new'), slug, {
+    yes: t('change'),
+    hint: `${t('address.hint')}${languages.length ? ` ${t('address.allLanguages')}` : ''}`,
   });
   if (!answer) return;
   const next = slugify(answer.replace(/^\/+|\.html$/gi, ''));
   if (next === slug) return;
   const all = languages.length ? languages : [lang];
-  if (all.some((l) => files.has(fileOf(`page:${next}`, l)))) { toast(`Unter „${pageFile(next)}“ gibt es schon eine Seite. Bitte eine andere Adresse wählen.`, true); return; }
+  if (all.some((l) => files.has(fileOf(`page:${next}`, l)))) { toast(t('address.taken', { file: pageFile(next) }), true); return; }
   startEditing();
   let unresolved = [];
   let redirected = false;
@@ -1495,15 +1494,15 @@ async function renamePage(slug) {
     if (selection === `page:${slug}`) selection = `page:${next}`;
   });
   unresolved = [...new Set(unresolved)];
-  toast(`Neue Adresse: ${pageAddress(next)}.${redirected ? ' Die alte leitet dorthin weiter.' : ''} Mit „Speichern“ wird sie übernommen.${unresolved.length ? ` Die alte Adresse steht noch in: ${unresolved.join(', ')}. Bitte dort prüfen.` : ''}`, unresolved.length > 0);
+  toast([t('address.moved', { address: pageAddress(next) }), redirected && t('address.redirected'), t('address.saveToApply'),
+    unresolved.length && t('address.unresolved', { entries: unresolved.join(', ') })].filter(Boolean).join(' '), unresolved.length > 0);
 }
 
 // Deletes a page, post, pattern or form with the next save, after asking.
 async function removeEntry(source) {
   const { kind, title } = describe(source);
   const language = languageOf(source);
-  const which = language ? ` (Fassung auf ${languageName(language)})` : '';
-  if (!(await confirmDialog(`${kind} löschen?`, `„${title}“${which} wird beim nächsten Speichern gelöscht. Bis dahin können Sie es mit „Rückgängig“ zurückholen.`, 'Löschen'))) return;
+  if (!(await confirmDialog(t('delete.title', { kind }), (language ? t('delete.textIn', { title, language: languageName(language) }) : t('delete.text', { title })), t('delete')))) return;
   // Leave the entry first: the preview cannot render a page that is gone.
   const home = slugsIn('pages').find((slug) => slug === 'index') ?? slugsIn('pages').find((slug) => `page:${slug}` !== source);
   if (source === `page:${current}`) open(`page:${home}`);
@@ -1520,7 +1519,7 @@ const taken = (folder, slug) => (folder === 'pages' && languages.length ? langua
 const unique = (folder, slug) => { let s = slug; for (let n = 2; taken(folder, s); n++) s = `${slug}-${n}`; return s; };
 
 async function newPage() {
-  const title = await promptDialog('Neue Seite', 'Titel der Seite');
+  const title = await promptDialog(t('page.newTitle'), t('page.titleLabel'));
   if (!title) return;
   const slug = unique('pages', slugify(title));
   startEditing();
@@ -1533,20 +1532,20 @@ async function newPage() {
 async function duplicate(slug) {
   const page = dataOf(`page:${slug}`);
   if (!page) return;
-  const title = await promptDialog('Seite duplizieren', 'Titel der Kopie', `${page.title ?? slug} (Kopie)`, {
-    yes: 'Duplizieren', hint: 'Die Kopie hat dieselben Abschnitte und ist ein Entwurf, bis Sie sie veröffentlichen.',
+  const title = await promptDialog(t('page.duplicate'), t('page.copyTitle'), t('page.copyOf', { title: page.title ?? slug }), {
+    yes: t('duplicate'), hint: t('page.duplicateHint'),
   });
   if (!title) return;
   const next = unique('pages', slugify(title));
   startEditing();
   change(() => { files.set(fileOf(`page:${next}`), { sha: null, saved: null, data: duplicatePage(page, title) }); });
   openPage(next);
-  toast(`Kopie „${title}“ angelegt (${pageFile(next)}). Mit „Speichern“ wird sie übernommen.`);
+  toast(t('page.duplicated', { title, file: pageFile(next) }));
 }
 
 // A new pattern or form, opened in the form view.
 async function newEntry(kind) {
-  const title = await promptDialog(kind === 'pattern' ? 'Neues Muster' : 'Neues Formular', 'Name');
+  const title = await promptDialog(kind === 'pattern' ? t('pattern.newTitle') : t('form.newTitle'), t('name'));
   if (!title) return;
   const slug = unique(FOLDERS[kind], slugify(title));
   change(() => { files.set(fileOf(`${kind}:${slug}`), { sha: null, saved: null, data: kind === 'pattern' ? { title, sections: [] } : { title } }); });
@@ -1558,15 +1557,15 @@ function openPost(slug) {
   // The page that lists the posts stays in view beside the post's details.
   const listing = postType.previewPage;
   if (listing && listing !== current && slugsIn('pages').includes(listing)) openPage(listing);
-  openPanel(`${postType.singular ?? 'Beitrag'}: ${titleOf(postType.name, slug)}`, `post:${slug}`, [], {
-    extra: button('Löschen', null, () => removeEntry(`post:${slug}`), 've-tool ve-danger'),
+  openPanel(t('post.panelTitle', { kind: postType.singular ?? t('post'), title: titleOf(postType.name, slug) }), `post:${slug}`, [], {
+    extra: button(t('delete'), null, () => removeEntry(`post:${slug}`), 've-tool ve-danger'),
   });
 }
 // own: the first post of a language that has shown the default language's posts so far.
 async function newPost({ own = false } = {}) {
-  if (own && !(await confirmDialog(`Eigene ${postType.label} auf ${languageName(lang)}?`,
-    `Sie legen den ersten Eintrag auf ${languageName(lang)} an. Sobald einer veröffentlicht ist, zeigt die Website auf ${languageName(lang)} nur noch ${postType.label}, die Sie in dieser Sprache anlegen; die auf ${languageName(defaultLang)} erscheinen dort nicht mehr.`, 'Weiter'))) return;
-  const title = await promptDialog(`Neu: ${postType.singular ?? 'Beitrag'}`, 'Titel');
+  const names = { label: postType.label, language: languageName(lang), defaultLanguage: languageName(defaultLang) };
+  if (own && !(await confirmDialog(t('posts.ownTitle', names), t('posts.ownText', names), t('continue')))) return;
+  const title = await promptDialog(t('post.newTitle', { kind: postType.singular ?? t('post') }), t('title'));
   if (!title) return;
   const slug = unique(postType.name, slugify(title));
   const path = own ? `${langDir()}/${postType.name}/${slug}.json` : fileOf(`post:${slug}`);
@@ -1579,7 +1578,7 @@ async function newPost({ own = false } = {}) {
 // compared in order (admin/deleted.js). Each commit's files are read once per visit.
 const historyTrees = new Map(); // commit sha → [{ path, sha }]
 const entryAt = (path) => entryOf(path, { contentDir, languages, folders: FOLDERS });
-const KIND_NAME = { page: 'Seite', post: postType?.singular ?? 'Beitrag', pattern: 'Muster', form: 'Formular' };
+const kindName = (kind) => ({ page: t('page'), post: postType?.singular ?? t('post'), pattern: t('pattern'), form: t('form') })[kind];
 // limit: how many of the latest commits that changed the content are searched (the gateway gives
 // at most 100). Returns { entries, searched, more }.
 async function findDeleted(limit) {
@@ -1606,21 +1605,19 @@ async function findDeleted(limit) {
   }
   const entries = found.filter((e) => e.data).map((e) => {
     const entry = { ...e, ...entryAt(e.path) };
-    return { ...entry, title: e.data.title ?? entry.slug, kindName: KIND_NAME[entry.kind], language: languages.length ? languageName(entry.lang ?? defaultLang) : null };
+    return { ...entry, title: e.data.title ?? entry.slug, kindName: kindName(entry.kind), language: languages.length ? languageName(entry.lang ?? defaultLang) : null };
   });
   return { entries, searched: commits.length, more: commits.length === limit && limit < 100 };
 }
 // Brings a deleted entry back as an unsaved change (a page or post as a draft) and opens it.
 function restoreDeleted(entry) {
-  if (files.get(entry.path)?.data) { toast(`„${entry.title}“ gibt es schon wieder.`, true); return; }
+  if (files.get(entry.path)?.data) { toast(t('restore.exists', { title: entry.title }), true); return; }
   startEditing();
   change(() => { files.set(entry.path, { sha: null, saved: null, data: restoredEntry(entry.data, entry.kind) }); });
   const source = `${entry.kind}:${entry.slug}`;
   const target = entry.lang ?? defaultLang;
   if (languages.length && target !== lang) switchLanguage(target, source); else open(source);
-  toast(entry.kind === 'page' || entry.kind === 'post'
-    ? `„${entry.title}“ ist als Entwurf zurück. Mit „Speichern“ wird es wieder angelegt; mit „Veröffentlicht“ kommt es wieder auf die Website.`
-    : `„${entry.title}“ ist zurück. Mit „Speichern“ wird es wieder angelegt.`);
+  toast(entry.kind === 'page' || entry.kind === 'post' ? t('restore.draft', { title: entry.title }) : t('restore.done', { title: entry.title }));
 }
 
 // ---- Images ----
@@ -1631,13 +1628,13 @@ async function upload(file) {
   let bytes = new Uint8Array(await file.arrayBuffer());
   let note = '';
   if (downscaleTarget(bytes, maxSize(site))) {
-    toast(`„${file.name}“ wird verkleinert …`);
+    toast(t('upload.scaling', { name: file.name }));
     const smaller = await downscale(bytes, maxSize(site)).catch(() => null);
     if (smaller) {
-      const mb = (n) => `${(n / 1e6).toLocaleString('de', { maximumFractionDigits: 1 })} MB`;
-      note = `„${file.name}“ war sehr groß und wurde verkleinert: ${smaller.width} × ${smaller.height} statt ${smaller.from.width} × ${smaller.from.height} Pixel, ${mb(smaller.bytes.length)} statt ${mb(bytes.length)}.`;
+      const mb = (n) => `${(n / 1e6).toLocaleString(intlLocale(), { maximumFractionDigits: 1 })} MB`;
+      note = t('upload.scaled', { name: file.name, size: `${smaller.width} × ${smaller.height}`, from: `${smaller.from.width} × ${smaller.from.height}`, bytes: mb(smaller.bytes.length), fromBytes: mb(bytes.length) });
       bytes = smaller.bytes;
-    } else note = `„${file.name}“ ließ sich hier nicht verkleinern und wird so gespeichert, wie es ist.`;
+    } else note = t('upload.notScaled', { name: file.name });
   }
   const stem = file.name.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '');
   let path = `${mediaDir}/${stem}`;
