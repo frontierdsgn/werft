@@ -17,9 +17,12 @@ export const ROLES = {
 // when opened, so only administrators may put it into a media folder.
 const MEDIA_TYPES = /\.(jpe?g|png|gif|webp|avif|pdf|mp4|webm|mp3|m4a|ogg)$/i;
 
-// What a repository path holds, relative to the site directory.
-export function classify(path, { contentDir = 'content', postType, mediaDirs = [] }) {
+// What a repository path holds, relative to the site directory. The content of a language other
+// than the default (content/<lang>/…) is what the same path in the default language holds.
+export function classify(path, { contentDir = 'content', postType, mediaDirs = [], languages = [] }) {
   if (path === '.werft' || path.startsWith('.werft/')) return 'private';
+  const lang = languages.slice(1).find((l) => path.startsWith(`${contentDir}/${l}/`));
+  if (lang) path = `${contentDir}/${path.slice(contentDir.length + lang.length + 2)}`;
   if (path === `${contentDir}/settings/site.json`) return 'settings';
   if (path.startsWith(`${contentDir}/settings/`)) return 'structure';
   if (postType && path.startsWith(`${contentDir}/${postType}/`)) return 'post';

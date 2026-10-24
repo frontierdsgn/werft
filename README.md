@@ -133,6 +133,7 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      output: '_site',
      base: '',                      // set when the site is served below a path, e.g. 'salon'
      passthrough: [{ from: '.', paths: ['alt'] }], // copied unchanged into the output
+     languages: ['de', 'en'],       // optional, the first is the default; see Languages
    };
    ```
 3. **Theme** (`theme/index.js`), a plain object:
@@ -149,8 +150,19 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      `md()`, `inline()`. `posts()` returns the published posts newest first by their date, posts
      without a date last by slug; `posts({ slugs })` returns the named posts in that order, and
      `limit` cuts the list. The admin lists posts newest first too.
+   - For [languages](#languages), `ctx` (inside `renderPage`, `renderPost` and block renders) also
+     offers `lang` (the entry's language; without `languages` the site setting `lang`, else `'de'`),
+     `languages` (the configured list, `[]` without the option), `url(path)` and `translations`.
+     `url(path)` turns a path relative to the site's root (`assets/css/site.css`, a media file
+     from the content, `en/kontakt.html`, `''` for the home page) into an address that works from
+     the page being rendered (`../assets/css/site.css` on `en/` pages, unchanged on pages at the
+     root); addresses with a scheme or starting with `/`, `#` or `?` stay as they are. Use it for the
+     theme's assets and for media files outside Markdown. `translations` is one item per language,
+     `{ lang, url, current, exists }`: `url` leads to the entry in that language if it is
+     published (`exists`), else to that language's home page, and is ready for an `href`.
 4. **Content**: `content/pages/<slug>.json` (`index` becomes `index.html`), `content/patterns/`,
-   `content/forms/` (see [Form submissions](#form-submissions)), `content/<post type>/`, `content/settings/{site,menus,redirects}.json`.
+   `content/forms/` (see [Form submissions](#form-submissions)), `content/<post type>/`, `content/settings/{site,menus,redirects}.json`;
+   other languages in `content/<lang>/` (see [Languages](#languages)).
    A page is `{ "title": "Start", "status": "published", "sections": [{ "type": "text", … }] }`.
    Write the status into files you create by hand: the build publishes a file without one, but the
    admin shows it as "Entwurf" and saving it there would unpublish it.
@@ -373,6 +385,44 @@ job running `git push` with a deploy key).
 
 `npm run dev` in the site directory: `http://127.0.0.1:8787/` and `/admin/`. Saves are commits in
 the local checkout. Without `WERFT_SECRET`, sessions end when the server stops.
+
+### Languages
+
+A site in several languages names them in `werft.config.js`, the default first:
+`languages: ['de', 'en']`. Without the option a site builds as before. The default language's
+content stays where it is; each other language has its own in `content/<lang>/`, laid out the same
+way:
+
+| File | In `content/en/` |
+|---|---|
+| `pages/<slug>.json` | The page in English. A translation has the slug of its original; that is how the two are found. A page may exist in one language only. |
+| `patterns/`, `forms/` | Translated patterns and forms; one that is missing comes from the default language (same slug). |
+| `<post type>/` | The language's own posts; without any, the language shows the default language's posts. |
+| `settings/site.json` | Only what differs: laid over the default settings key by key (lists are replaced as a whole, `null` removes a value), so the phone number and the like are kept once. `lang` is the language's code unless the file sets it. |
+| `settings/menus.json` | Replaces the default menu of each location it has. |
+
+Redirects (`content/settings/redirects.json`) and media are shared. The default language is built at
+the site's root as before; the others below their code (`en/index.html`, `en/<slug>.html`, posts at
+`en/<postType.url>`). Inside a language, links in the content (`kontakt.html`, `#anfrage`) lead to
+pages of the same language; Markdown images from the media folders are made relative to the page.
+`sitemap.xml` lists every language and names the versions of an entry with
+`<xhtml:link rel="alternate" hreflang="…">`. The theme writes the `lang` attribute, its assets and a
+language switch with `ctx.lang`, `ctx.url()` and `ctx.translations` (see [Install](#install)):
+
+```js
+html`<html lang="${ctx.lang}"><link rel="stylesheet" href="${ctx.url('assets/css/site.css')}">
+  ${ctx.translations.map((t) => html`<a href="${t.url}" hreflang="${t.lang}">${t.lang}</a>`)}`
+```
+
+In the editor, "Sprache" at the top of the sidebar picks the language; the sidebar, both views and
+the preview then show that language. A page that exists in another language is listed under "Noch
+nicht übersetzt"; "Übersetzen" copies it, as a draft with the same slug, for translating in place.
+Site settings and menus are edited complete and saved with only what differs from the default
+language. A pattern or form that is not translated shows the default language's until it is
+changed, which saves it in the language being edited. A language without posts of its own lists
+and edits the default language's posts. The gateway checks `content/<lang>/…` like the
+same path of the default language (roles and kinds), and a translated form's submissions go with its
+original's.
 
 ### Scheduling
 

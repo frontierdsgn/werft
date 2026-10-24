@@ -48,8 +48,14 @@ async function readFields(request) {
 }
 
 export function submissions({ storage, branch, site, now, turnstileSecret, fetch: request = (...args) => fetch(...args) }) {
-  const formFile = (slug) => `${site.contentDir}/forms/${slug}.json`;
-  const formPath = new RegExp(`^${site.contentDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/forms/([^/]+)\\.json$`);
+  // A form's definition: in the default language, else in another language of the site (a
+  // translated form keeps its name, so its submissions are kept with the original's).
+  const formDirs = [site.contentDir, ...(site.languages ?? []).slice(1).map((l) => `${site.contentDir}/${l}`)];
+  const slugOfForm = (path) => formDirs.map((dir) => path.startsWith(`${dir}/forms/`) && /^([^/]+)\.json$/.exec(path.slice(dir.length + 7))?.[1]).find(Boolean);
+  const definitionOf = async (sha, slug) => {
+    for (const dir of formDirs) { const bytes = await storage.read(sha, `${dir}/forms/${slug}.json`); if (bytes) return bytes; }
+    return null;
+  };
   const readMany = (sha, paths) => (storage.readMany ? storage.readMany(sha, paths) : Promise.all(paths.map((p) => storage.read(sha, p))));
   // The submissions branch's head, null before the first submission.
   const head = () => storage.head(SUBMISSIONS_BRANCH).then(({ sha }) => sha, (e) => { if (e.status === 404) return null; throw e; });
@@ -106,7 +112,7 @@ export function submissions({ storage, branch, site, now, turnstileSecret, fetch
     const chars = Object.entries(kept).flat(2).join('').length;
     if (Object.keys(kept).length > MAX_FIELDS || chars > MAX_CHARS) return reply(request, url, 413, 'Die Nachricht ist zu lang.');
     if (!Object.values(kept).flat().some((v) => v.trim())) return reply(request, url, 422, 'Das Formular ist leer.');
-    const definition = await storage.read((await storage.head(branch)).sha, formFile(slug));
+    const definition = await definitionOf((await storage.head(branch)).sha, slug);
     if (!definition) return reply(request, url, 404, 'Dieses Formular gibt es nicht.');
     const hourAgo = stamp(now() - 3600 * 1000);
     const recent = (await sentAt(await head())).filter((p) => p.startsWith(`${SUBMISSIONS_DIR}/${slug}/`) && p.split('/').pop().slice(0, hourAgo.length) > hourAgo);
@@ -133,10 +139,12 @@ export function submissions({ storage, branch, site, now, turnstileSecret, fetch
     }
     // After a deletion too, so the page shows what is left.
     const main = (await storage.head(branch)).sha;
-    const forms = (await storage.tree(main)).map((e) => formPath.exec(e.path)?.[1]).filter(Boolean);
+    const tree = (await storage.tree(main)).map((e) => e.path);
+    const forms = [...new Set(tree.map(slugOfForm).filter(Boolean))];
     const at = await head();
     const sent = await sentAt(at);
-    const titles = await readMany(main, forms.map(formFile));
+    // The title in the default language where the form has one.
+    const titles = await readMany(main, forms.map((slug) => formDirs.map((dir) => `${dir}/forms/${slug}.json`).find((p) => tree.includes(p))));
     const texts = at ? await readMany(at, sent) : [];
     const parse = (bytes) => { try { return JSON.parse(decoder.decode(bytes)); } catch { return null; } };
     const bySlug = new Map(forms.map((slug, i) => [slug, { slug, title: parse(titles[i])?.title ?? slug, submissions: [] }]));
