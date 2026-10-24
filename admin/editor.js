@@ -801,12 +801,27 @@ function pickImage(current) {
     }));
     const input = dialog.querySelector('input[type=file]');
     input.value = '';
+    // Preparing a large photo takes a moment; meanwhile the dialog says so and cannot be left.
+    const label = input.closest('label').firstChild;
+    const controls = [...dialog.querySelectorAll('button, input')];
+    let busy = false;
+    dialog.oncancel = (event) => { if (busy) event.preventDefault(); };
     input.onchange = async () => {
       const file = input.files[0];
       if (!file) return;
-      const { path, note } = await upload(file);
-      if (note) toast(note);
-      choose(path);
+      const text = label.textContent;
+      busy = true;
+      label.textContent = 'Bild wird vorbereitet …';
+      controls.forEach((c) => { c.disabled = true; });
+      try {
+        const { path, note } = await upload(file);
+        if (note) toast(note, false, true);
+        choose(path);
+      } finally {
+        busy = false;
+        label.textContent = text;
+        controls.forEach((c) => { c.disabled = false; });
+      }
     };
     dialog.querySelector('.ve-cancel').onclick = () => { dialog.close(); resolve(null); };
     dialog.showModal();
@@ -1068,13 +1083,13 @@ async function finish() {
 }
 
 let toastTimer;
-function toast(text, error = false) {
+function toast(text, error = false, long = error) {
   const node = $('#ve-toast');
   node.textContent = text;
   node.className = error ? 've-error' : '';
   node.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { node.hidden = true; }, error || text.length > 100 ? 8000 : 3000);
+  toastTimer = setTimeout(() => { node.hidden = true; }, long ? 8000 : 3000);
 }
 
 function shortcuts(event, inField) {
@@ -1454,7 +1469,7 @@ async function upload(file) {
       const mb = (n) => `${(n / 1e6).toLocaleString('de', { maximumFractionDigits: 1 })} MB`;
       note = `„${file.name}“ war sehr groß und wurde verkleinert: ${smaller.width} × ${smaller.height} statt ${smaller.from.width} × ${smaller.from.height} Pixel, ${mb(smaller.bytes.length)} statt ${mb(bytes.length)}.`;
       bytes = smaller.bytes;
-    }
+    } else note = `„${file.name}“ ließ sich hier nicht verkleinern und wird so gespeichert, wie es ist.`;
   }
   const stem = file.name.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '');
   let path = `${mediaDir}/${stem}`;

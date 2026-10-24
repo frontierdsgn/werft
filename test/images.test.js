@@ -46,4 +46,5 @@ test('werft.config.js sets the limit or turns scaling off', () => {
   assert.equal(maxSize({ images: { maxSize: 1600 } }), 1600);
   assert.equal(downscaleTarget(jpeg(6000, 4000), maxSize({ images: { maxSize: false } })), null);
   assert.equal(downscaleTarget(jpeg(6000, 4000), maxSize({ images: { maxSize: 0 } })), null);
+  assert.equal(downscaleTarget(jpeg(6000, 4000), -1), null);
 });

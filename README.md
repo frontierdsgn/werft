@@ -459,9 +459,9 @@ applies the orientation the camera recorded and drops other metadata such as the
 tells the editor what it did. It never scales up, and keeps the original when scaling would not
 make the file smaller or the browser cannot write the format. GIFs, animated PNGs and WebPs,
 smaller images and other files are saved as they are, as are files added to the media directory
-without the editor. In Chrome, a
-6000 × 4000 JPEG of 24 MB became 2560 × 1707 and 1.8 MB in under a second (measured 24 October
-2026, Chromium 155, a photo-sized image of noise, the worst case for its size).
+without the editor. In Chrome, a 6000 × 4000 JPEG of 24 MB became 2560 × 1707 and 1.8 MB in under
+a second (measured 24 October 2026, Chromium 155, a photo-sized image of noise, the worst case for
+its size).
 
 ### Scheduling
 
