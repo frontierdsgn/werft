@@ -28,5 +28,8 @@
     "admin",
     "gateway",
     "adapters"
-  ]
+  ],
+  "optionalDependencies": {
+    "sharp": "^0.35.5"
+  }
 }

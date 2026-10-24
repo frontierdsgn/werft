@@ -144,7 +144,7 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      base: '',                      // set when the site is served below a path, e.g. 'salon'
      passthrough: [{ from: '.', paths: ['alt'] }], // copied unchanged into the output
      languages: ['de', 'en'],       // optional, the first is the default; see Languages
-     images: { maxSize: 2560 },     // optional; see Images
+     images: { maxSize: 2560, widths: [480, 960, 1600], formats: ['webp'] }, // optional; see Images
    };
    ```
 3. **Theme** (`theme/index.js`), a plain object:
@@ -157,7 +157,8 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      `date` names the post field that orders posts (default `publish_date`); declare it with
      `fields.date(name, label)`, which stores an ISO date (`2026-11-14`) and shows it in the
      editor's locale (14.11.2026 in a German browser). Older files with "14.11.2026" are read too.
-   - `ctx` offers `settings`, `menu(id)`, `image(src)` (with width and height), `posts()`, `form(slug)`,
+   - `ctx` offers `settings`, `menu(id)`, `image(src)` (with width and height), `img(image, options)`
+     (a responsive `<img>`, see [Images](#images)), `posts()`, `form(slug)`,
      `md()`, `inline()`. `posts()` returns the published posts newest first by their date, posts
      without a date last by slug; `posts({ slugs })` returns the named posts in that order, and
      `limit` cuts the list. The admin lists posts newest first too.
@@ -524,6 +525,47 @@ smaller images and other files are saved as they are, as are files added to the 
 without the editor. In Chrome, a 6000 × 4000 JPEG of 24 MB became 2560 × 1707 and 1.8 MB in under
 a second (measured 24 October 2026, Chromium 155, a photo-sized image of noise, the worst case for
 its size).
+
+`werft build` makes smaller copies of every JPEG, PNG and WebP image in the media directories, 480,
+960 and 1600 pixels wide (only widths below the image's own) in its own format and as WebP, into
+`_werft/img/` in the output; the repository keeps only the originals. `images` in `werft.config.js`
+changes that: `widths: [400, 800, 1200]`, and `formats: ['webp', 'avif']` adds AVIF (about 40 %
+smaller than WebP, slower to encode). GIFs and animated images keep their one size. The copies are
+made with [sharp](https://sharp.pixelplumbing.com/), an optional dependency installed with werft;
+where it cannot be installed, the build says so and the site uses the originals. The build keeps
+the copies in `node_modules/.cache/werft-images`, by the image's content, and encodes only new or
+changed images: four 2560-pixel photos took 1.5 s in the first build and 0.1 s in the next
+(measured 24 October 2026 on a 48-thread workstation, Node 22; about one second of one core per
+photo). To keep the cache between GitHub Actions runs, add this step after `npm ci` in the site's
+`deploy` job (and in `gate`, if it builds):
+
+```yaml
+- uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+  with:
+    path: node_modules/.cache/werft-images
+    key: werft-images-${{ hashFiles('assets/img/**') }} # the site's mediaDirs
+    restore-keys: werft-images-
+```
+
+Themes write images with `ctx.img(image, options)`; `image` is a picture field (`{ src, alt }`) or
+a path. It writes `<img>` with `width` and `height` from the file, `alt` (from the field, or
+`options.alt`, else empty), `loading="lazy"` and `decoding="async"`, and for an image with copies
+`srcset` and `sizes` (`options.sizes`, default `100vw`) inside a `<picture>` with a `<source>` for
+the WebP (and AVIF) copies, so the browser loads the smallest file that fills the space. Every
+other option becomes an attribute (`class`, `style`, `loading: 'eager'` for the first image of a
+page, `fetchpriority`; `width` and `height` replace the file's), and `false` leaves one out:
+
+```js
+ctx.img(section.image, { sizes: '(min-width: 60em) 50vw, 100vw', class: 'hero' })
+// <picture><source type="image/webp" srcset="_werft/img/assets/img/foto.480.webp 480w, …" sizes="…">
+//   <img src="assets/img/foto.jpg" alt="…" srcset="_werft/img/assets/img/foto.480.jpg 480w, …,
+//   assets/img/foto.jpg 2560w" sizes="…" width="2560" height="1707" loading="lazy" decoding="async"
+//   class="hero"></picture>
+```
+
+`ctx.image(src)` gives the same as data: `width`, `height`, `variants` (`{ src, width, height, type }`),
+`srcset` and `sources` (`{ type, srcset }`), with addresses that work from the page being rendered.
+The editor's preview shows the originals.
 
 ### Sign-in
 
