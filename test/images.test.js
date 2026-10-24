@@ -163,6 +163,7 @@ test('"Ersetzen" changes only what the editor may change and says whether the ol
   assert.equal(some.left, true);
   // The new file's name may contain the old one; a mention the rewrite does not recognise keeps the file.
   assert.equal(replaceEverywhere(entries, 'assets/img/foto.jpg', 'assets/img/foto.jpg.png').left, false);
+  assert.equal(replaceEverywhere([['content/settings/site.json', { icon: 'assets/img/foto.jpg.webp' }]], 'assets/img/foto.jpg.webp', 'assets/img/foto.jpg', { may: () => false }).left, true);
   assert.equal(replaceMedia('assets/img/foto.jpgä.png', 'assets/img/foto.jpg', 'x'), 'assets/img/foto.jpgä.png');
   assert.equal(replaceEverywhere([['content/pages/a.json', { url: 'https://x.example/assets/img/foto.jpg' }]], 'assets/img/foto.jpg', 'assets/img/neu.png').left, true);
 });
