@@ -548,7 +548,8 @@ html`<header>${ctx.search({ label: 'Suche', placeholder: 'Suchbegriff', empty: '
 ```
 
 - The index is `_werft/search/<ctx.lang>.json`: `{ lang, entries: [{ url, title, text }] }`, one
-  entry per published page and post page of the language, except those set to `noindex` in SEO.
+  entry per published page and post page of the language (a language that shows the default
+  language's posts lists those), except those set to `noindex` in SEO.
   `url` is relative to the site's root (`''` for the home page, `en/` for the English one), `title`
   is the entry's title (else its first `<h1>`), `text` the text of the page's `<main>` (else its
   `<body>`) without `<nav>`, `<search>`, scripts and styles. Put the content in `<main>`, so the
@@ -563,6 +564,7 @@ html`<header>${ctx.search({ label: 'Suche', placeholder: 'Suchbegriff', empty: '
   languages passes them per `ctx.lang`.
 - The index holds the text of every public page and is loaded whole, so it suits small sites; its
   size is that of the site's text.
+- The editor's preview runs no theme scripts, so the box does not show there.
 
 ## Compatibility
 

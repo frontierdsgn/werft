@@ -44,8 +44,11 @@ test('the build writes a search index per language with the text of each public 
     // A post without a `title` is named by its first heading.
     { url: 'termine/konzert.html', title: 'Konzert am Fluss', text: 'Konzert am Fluss Am 2026-07-01' },
   ]);
-  // The other language: its own pages, below its code.
-  assert.deepEqual(JSON.parse(files['_werft/search/en.json']).entries, [{ url: 'en/', title: 'Home', text: 'Home Welcome to the ferry.' }]);
+  // The other language: its own pages, below its code, and the default language's posts it shows.
+  assert.deepEqual(JSON.parse(files['_werft/search/en.json']).entries, [
+    { url: 'en/', title: 'Home', text: 'Home Welcome to the ferry.' },
+    { url: 'termine/konzert.html', title: 'Konzert am Fluss', text: 'Konzert am Fluss Am 2026-07-01' },
+  ]);
   assert.match(files['_werft/search.js'], /^\/\/ werft site search/);
   // ASCII only: a host may serve it without a charset.
   assert.match(files['_werft/search.js'], /^[\x00-\x7f]*$/);
@@ -113,7 +116,7 @@ test('the script lists the results while the visitor types, linked from the page
   const list = fakeElement('ul');
   form.querySelector = (selector) => ({ input, ul: list })[selector];
   const requests = [];
-  const index = { entries: [{ url: 'kontakt.html', title: 'Kontakt <b>', text: 'Café & Fähre' }] };
+  const index = { entries: [{ url: 'kontakt.html', title: 'Kontakt <b>', text: 'Café & Fähre' }, { url: 'javascript:alert(1).html', title: 'Fähre', text: '' }] };
   const run = new Function('document', 'location', 'fetch', files['_werft/search.js']);
   const document = { querySelectorAll: () => [form], createElement: fakeElement };
   const fetch = async (url) => { requests.push(url.href); return { ok: true, json: async () => index }; };
@@ -125,9 +128,10 @@ test('the script lists the results while the visitor types, linked from the page
   input.value = 'fahre';
   await input.dispatch('input');
   assert.deepEqual(requests, ['https://salon.example/_werft/search/de.json']);
-  const [item] = list.children;
+  // A slug that looks like a scheme stays a file below the site's root.
+  assert.deepEqual(list.children.map((item) => item.children[0].href), ['https://salon.example/javascript:alert(1).html', 'https://salon.example/kontakt.html']);
+  const [, item] = list.children;
   const [link, snippet] = item.children;
-  assert.equal(link.href, 'https://salon.example/kontakt.html');
   assert.equal(link.textContent, 'Kontakt <b>');
   assert.equal(snippet.textContent, 'Café & Fähre');
 
