@@ -7,7 +7,7 @@
 import { schema as adminSchema } from 'werft/schema';
 import { createContext, mediaPaths, markdown, raw, escape, imageSize, isPublic } from 'werft';
 import { downscale, downscaleTarget, maxSize, replaceEverywhere, picturesOf } from 'werft/images';
-import { siteLanguages, languageDir, localize, deepMerge, differences, pageFile, pageLinks } from 'werft/content';
+import { siteLanguages, languageDir, localize, deepMerge, differences, pageFile, siteAddresses } from 'werft/content';
 import { requireUser, loadSite, api, signOut, useLocale } from './session.js';
 import { disarm, postPreview } from './preview.js';
 import { pageRenderer, mapDocument, getAt, setAt, textOf, unmark } from './visual-map.js';
@@ -333,38 +333,43 @@ function draw() {
   if (view === 'form' && selection.startsWith('page:') && pageList.includes(selection.slice(5))) current = selection.slice(5);
   const data = content();
   let result;
-  // Relative addresses on the page lead from where the page is published (below <lang>/ for a
-  // language other than the default, in a post's folder for a post page).
-  let folder = langPrefix();
+  // Relative addresses on the page lead from where the page is published (its folder, below <lang>/
+  // for a language other than the default); links in the content from the language's folder, on a
+  // post's page from the post's address as the theme gives it.
+  const addresses = siteAddresses({ site, theme, content: data, preview: true });
+  let file = `${langPrefix()}index.html`;
+  let from = file;
   if (view === 'form' && selection.startsWith('post:') && dataOf(selection)) {
     // A post as the site shows it: its own page, or marked on the page that lists it. A post all
     // languages share is shown in the default language, where it is published.
     const shared = !isDefault() && languageOf(selection) !== lang;
-    if (shared) folder = '';
+    const shownIn = shared ? defaultLang : lang;
+    if (shared) file = from = 'index.html';
     const entry = { ...JSON.parse(JSON.stringify(dataOf(selection)), mediaPaths(site)), slug: selection.slice(5) };
     const post = postPreview(entry, shared ? content(defaultLang) : data, { site, theme, media });
-    if (!post.note) folder += String(theme.postType.url(entry) ?? '').replace(/[^/]*$/, '');
+    const own = !post.note && addresses.post(entry, shownIn);
+    if (own) ({ file, key: from } = own);
+    else if (post.focus) file = addresses.page(post.focus, shownIn).file;
     result = { html: post.html, texts: [], images: [], note: post.note };
   } else {
     const slug = view === 'form' ? previewPage(data) : current;
+    if (slug) file = addresses.page(slug, lang).file;
     result = slug === undefined
       ? { html: '<!doctype html><html><head></head><body></body></html>', texts: [], images: [], note: t('preview.noPage', { language: languageName(lang) }) }
       : renderer(data, slug);
   }
-  baseEl.href = new URL(folder, siteURL).href;
+  baseEl.href = new URL(file.replace(/[^/]*$/, ''), siteURL).href;
   const parsed = new DOMParser().parseFromString(result.html, 'text/html');
   if (result.note) parsed.body.prepend(Object.assign(parsed.createElement('p'), { className: 've-preview-note', textContent: result.note }));
   // Nothing of the page runs in the editor: no scripts, handlers, redirects or frames.
   parsed.querySelectorAll('script, noscript, base, meta[http-equiv], iframe, object, embed').forEach((n) => n.remove());
   disarm(parsed);
-  // Links to pages the language lacks lead to the default language's, as on the site.
-  if (!isDefault() && folder.startsWith(langPrefix())) {
-    const link = pageLinks({ site, content: data, preview: true });
-    for (const a of parsed.querySelectorAll('a[href]')) {
-      const href = unmark(a.getAttribute('href'));
-      const next = link(href, `${folder}index.html`);
-      if (next !== href) a.setAttribute('href', next);
-    }
+  // Links the content writes ("kontakt.html") lead to their pages, and to the default language's
+  // where the language lacks one, as on the site.
+  for (const a of parsed.querySelectorAll('a[href]')) {
+    const href = unmark(a.getAttribute('href'));
+    const next = addresses.link(href, file, from);
+    if (next !== href) a.setAttribute('href', next);
   }
   // Files uploaded but not saved yet come from the browser's copy.
   const pending = [...uploads].filter(([, u]) => !u.saved).map(([path, u]) => [new URL(path, siteURL).href, u.url, path]);
@@ -544,12 +549,13 @@ function pageOfURL(href) {
   const url = new URL(href, siteURL);
   const root = new URL(siteURL);
   if (url.origin !== root.origin || !url.pathname.startsWith(root.pathname)) return null;
-  let rest = decodeURIComponent(url.pathname.slice(root.pathname.length));
-  const other = languages.slice(1).find((l) => rest === l || rest.startsWith(`${l}/`));
-  if (other) rest = rest.slice(other.length + 1);
-  const slug = rest === '' ? 'index' : rest.replace(/\.html$/, '');
-  const target = other ?? defaultLang;
-  return (slug !== current || target !== lang) && slugsIn('pages', target).includes(slug) ? { slug, lang: target } : null;
+  const rest = decodeURIComponent(url.pathname.slice(root.pathname.length));
+  const addresses = siteAddresses({ site, theme, content: content(), preview: true });
+  for (const l of languages.length ? languages : [lang]) {
+    const slug = slugsIn('pages', l).find((s) => { const at = addresses.page(s, l); return [at.url, at.file, `${langPrefix(l)}${pageFile(s)}`].includes(rest); });
+    if (slug) return slug !== current || l !== lang ? { slug, lang: l } : null;
+  }
+  return null;
 }
 
 // ---- Overlay: outlines and tool bars over the page frame ----
@@ -918,7 +924,9 @@ function confirmDialog(title, text, yes, { other, cancel = t('cancel') } = {}) {
   dialog.showModal();
   return new Promise((resolve) => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'yes' ? true : dialog.returnValue === 'other' ? 'other' : false), { once: true }));
 }
-function promptDialog(title, label, value = '', { yes = t('create'), hint = '' } = {}) {
+// With `choice` ({ label, value, options: [{ value, label }] }) the dialog also offers a choice, and
+// the answer is { text, choice }.
+function promptDialog(title, label, value = '', { yes = t('create'), hint = '', choice } = {}) {
   const dialog = $('#ve-prompt');
   dialog.querySelector('h2').textContent = title;
   Object.assign(dialog.querySelector('.ve-hint'), { textContent: hint, hidden: !hint });
@@ -926,8 +934,15 @@ function promptDialog(title, label, value = '', { yes = t('create'), hint = '' }
   dialog.querySelector('button[value=ok]').textContent = yes;
   const input = dialog.querySelector('input');
   input.value = value;
+  const select = choice && el('select', {}, ...choice.options.map((o) => el('option', { value: o.value, selected: o.value === choice.value }, o.label)));
+  const extra = choice && el('label', {}, el('span', {}, choice.label), select);
+  if (extra) input.closest('label').after(extra);
   dialog.showModal();
-  return new Promise((resolve) => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'ok' && input.value.trim() ? input.value.trim() : null), { once: true }));
+  return new Promise((resolve) => dialog.addEventListener('close', () => {
+    extra?.remove();
+    const text = dialog.returnValue === 'ok' && input.value.trim() ? input.value.trim() : null;
+    resolve(choice && text ? { text, choice: select.value } : text);
+  }, { once: true }));
 }
 
 function startEditing() {
@@ -944,7 +959,7 @@ const statusOf = (entry) => {
   const status = entry?.status ?? 'published';
   return status === 'published' && entry?.publish_date && Date.parse(entry.publish_date) > Date.now() ? t('status.scheduled') : statusName(status);
 };
-const pageURL = (slug) => `${siteURL}${langPrefix()}${slug === 'index' ? '' : pageFile(slug)}`;
+const pageURL = (slug) => `${siteURL}${siteAddresses({ site, theme, content: content(), preview: true }).page(slug, lang).url}`;
 
 // The name of a source and what it is, for the top bar and the sidebar.
 function describe(source) {
@@ -1264,6 +1279,17 @@ function drawPages() {
   const changed = new Set(changedPaths());
   const order = (a, b) => (b.slug === 'index') - (a.slug === 'index') || String(a.data.title ?? a.slug).localeCompare(String(b.data.title ?? b.slug), locale());
   const pages = slugsIn('pages').map((slug) => ({ slug, data: files.get(fileOf(`page:${slug}`)).data })).sort(order);
+  // Pages below their parent page, in the same order there, indented.
+  const listed = new Set(pages.map((p) => p.slug));
+  const addresses = siteAddresses({ site, theme, content: content(), preview: true });
+  const parentsOf = (slug) => addresses.ancestors(slug).filter((s) => listed.has(s));
+  const rank = new Map(pages.map((p, i) => [p.slug, i]));
+  const place = (slug) => [...parentsOf(slug), slug].map((s) => rank.get(s));
+  pages.sort((a, b) => {
+    const [x, y] = [place(a.slug), place(b.slug)];
+    const i = x.findIndex((n, j) => n !== y[j]);
+    return i < 0 || i >= y.length ? x.length - y.length : x[i] - y[i];
+  });
   // The second line names only what is worth noticing: the home page, a status other than published.
   const note = (...parts) => parts.filter(Boolean).join(' · ');
   const unusual = (data) => (statusOf(data) === statusName('published') ? '' : statusOf(data));
@@ -1301,8 +1327,12 @@ function drawPages() {
     return without.length ? t('page.missingIn', { languages: without.join(', ') }) : '';
   };
   if (can('content')) {
-    sections.push(group(t('pages'), el('ul', {}, ...pages.map(({ slug, data }) => item(`page:${slug}`, data.title ?? slug, note(slug === 'index' && t('page.home'), unusual(data), missing(slug)),
-      () => { if (slug !== current) openPage(slug); pageSettings(); }))),
+    sections.push(group(t('pages'), el('ul', {}, ...pages.map(({ slug, data }) => {
+      const row = item(`page:${slug}`, data.title ?? slug, note(slug === 'index' && t('page.home'), unusual(data), missing(slug)),
+        () => { if (slug !== current) openPage(slug); pageSettings(); });
+      if (parentsOf(slug).length) row.style.paddingInlineStart = `${parentsOf(slug).length * 16}px`;
+      return row;
+    })),
     button(t('page.new'), null, newPage, 've-tool ve-wide')));
     // Pages of other languages this one lacks, offered as a copy to translate.
     const untranslatedPages = [...new Set(languages.filter((l) => l !== lang).flatMap((l) => slugsIn('pages', l)))].filter((slug) => !slugsIn('pages').includes(slug))
@@ -1437,7 +1467,10 @@ function pageSettings() {
 
 // ---- A page's address ----
 // The address of a page on the site, from the host's root.
-const pageAddress = (slug, l = lang) => `${base}${langPrefix(l)}${slug === 'index' ? '' : pageFile(slug)}`;
+const addressesNow = () => siteAddresses({ site, theme, content: content(), preview: true });
+const pageAddress = (slug, l = lang, addresses = addressesNow()) => `${base}${addresses.page(slug, l).url}`;
+// A page's parent page (the default language's page decides, as in the build), '' for none.
+const parentOf = (slug) => (files.get(fileOf(`page:${slug}`, defaultLang))?.data ?? files.get(fileOf(`page:${slug}`))?.data)?.parent ?? '';
 // Changing an address adds a redirect, and redirects are for administrators (gateway/roles.js).
 const mayRename = (slug) => slug !== 'index' && can('content') && can('structure');
 function addressCard(slug) {
@@ -1450,29 +1483,44 @@ function addressCard(slug) {
 // change: the files are renamed, links in the content lead to the new address, and a page that was
 // published gets a redirect from its old address.
 async function renamePage(slug) {
+  // The parent pages on offer: any page but the home page, the not-found page and the page itself
+  // with the pages below it.
+  const before = addressesNow();
+  const below = (s) => before.ancestors(s).includes(slug);
+  const parents = slugsIn('pages').filter((s) => !['index', '404', slug].includes(s) && !below(s))
+    .map((s) => ({ value: s, label: `${titleOf('pages', s)} (${pageAddress(s, lang, before)})` })).sort((a, b) => a.label.localeCompare(b.label, locale()));
   const answer = await promptDialog(t('address.change'), t('address.new'), slug, {
     yes: t('change'),
     hint: `${t('address.hint')}${languages.length ? ` ${t('address.allLanguages')}` : ''}`,
+    choice: { label: t('address.parent'), value: parentOf(slug), options: [{ value: '', label: t('address.topLevel') }, ...parents] },
   });
   if (!answer) return;
-  const next = slugify(answer.replace(/^\/+|\.html$/gi, ''));
-  if (next === slug) return;
+  const next = slugify(answer.text.replace(/^\/+|\/+$|\.html$/gi, ''));
+  const parent = answer.choice;
+  if (next === slug && parent === parentOf(slug)) return;
   const all = languages.length ? languages : [lang];
-  if (all.some((l) => files.has(fileOf(`page:${next}`, l)))) { toast(t('address.taken', { file: pageFile(next) }), true); return; }
+  if (next !== slug && all.some((l) => files.has(fileOf(`page:${next}`, l)))) { toast(t('address.taken', { file: next }), true); return; }
   startEditing();
   let unresolved = [];
   let redirected = false;
   change(() => {
-    const moves = [];
+    // Every published page whose address changes (the page and the pages below it, in each
+    // language) gets a redirect from its old address.
+    const published = all.flatMap((l) => slugsIn('pages', l).filter((s) => {
+      const saved = files.get(fileOf(`page:${s}`, l))?.saved;
+      return saved && (JSON.parse(saved).status ?? 'published') === 'published';
+    }).map((s) => ({ s, l, from: pageAddress(s, l, before) })));
     for (const l of all) {
       const path = fileOf(`page:${slug}`, l);
       const f = files.get(path);
       if (!f?.data) continue;
+      if (parent) f.data.parent = parent; else delete f.data.parent;
+      if (next === slug) continue;
       files.set(fileOf(`page:${next}`, l), { sha: null, saved: null, data: f.data });
-      const saved = f.saved && JSON.parse(f.saved);
       if (f.saved === null) files.delete(path); else f.data = null;
-      if (saved && (saved.status ?? 'published') === 'published') moves.push({ from: pageAddress(slug, l), to: pageAddress(next, l) });
     }
+    const after = addressesNow();
+    const moves = published.map(({ s, l, from }) => ({ from, to: pageAddress(s === slug ? next : s, l, after) })).filter((m) => m.from !== m.to);
     // Settings and menus of other languages are rewritten in their files; untouched copies of
     // patterns and forms are made again from the rewritten originals.
     syncViews();
@@ -1480,7 +1528,7 @@ async function renamePage(slug) {
     for (const [path, f] of [...files]) if (unchangedCopy(path, f)) files.delete(path);
     const retarget = retargetLink(slug, next, { base, languages });
     for (const [path, f] of files) {
-      if (!f.data || path === fileOf('redirects')) continue;
+      if (next === slug || !f.data || path === fileOf('redirects')) continue;
       const result = retargetLinks(f.data, retarget);
       if (result.changed) f.data = result.data;
       if (mentions(f.data, slug)) unresolved.push(entryTitle(path, f.data) ?? path);
@@ -1595,7 +1643,7 @@ async function findDeleted(limit) {
   const mayRestore = (path) => { const e = entryAt(path); return !!e && can(e.kind === 'post' ? 'post' : 'content'); };
   // A page whose old address redirects was moved (a new address), not deleted.
   const redirected = new Set((files.get(fileOf('redirects'))?.data?.redirects ?? []).map((r) => r.from));
-  const moved = (path) => { const e = entryAt(path); return e?.kind === 'page' && redirected.has(pageAddress(e.slug, e.lang ?? defaultLang)); };
+  const moved = (path) => { const e = entryAt(path); return e?.kind === 'page' && [pageAddress(e.slug, e.lang ?? defaultLang), `${base}${langPrefix(e.lang ?? defaultLang)}${pageFile(e.slug)}`].some((a) => redirected.has(a)); };
   const found = deletedEntries(snapshots, { isEntry: mayRestore, exists: (path) => files.has(path) || moved(path) });
   // The last versions, one request per commit that holds some.
   for (const sha of new Set(found.map((e) => e.from))) {

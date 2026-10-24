@@ -62,7 +62,7 @@ test('a link shows a draft to someone without an account, marked noindex', async
   const page = await call(link.url);
   assert.equal(page.status, 200);
   assert.match(page.data, /<h1>Neue Seite<\/h1>/);
-  assert.match(page.data, /<head><base href="\/sub\/"><meta name="robots" content="noindex">/);
+  assert.match(page.data, /<head><base href="\/sub\/neu\/"><meta name="robots" content="noindex">/, 'the page\'s own folder');
   assert.match(page.data, /<header>Kopf<\/header>/, 'nothing lands in <header>');
   assert.match(page.data, /IMG/, 'the media that exist are known');
   assert.deepEqual([page.headers.get('x-robots-tag'), page.headers.get('referrer-policy'), page.headers.get('cache-control')], ['noindex', 'no-referrer', 'no-store']);
@@ -78,11 +78,11 @@ test('posts and other languages render like the build, from their folder', async
   const ed = await signIn('ed@test', 'editor-password');
   const urlOf = async (path) => (await call('/api/werft/previews', { token: ed, method: 'POST', body: { path } })).data.previews[0].url;
   const post = await call(await urlOf('content/events/fest.json'));
-  assert.match(post.data, /<base href="\/sub\/termine\/">.*<h1>Sommerfest<\/h1>/s);
+  assert.match(post.data, /<base href="\/sub\/termine\/fest\/">.*<h1>Sommerfest<\/h1>/s);
   const english = await call(await urlOf('content/en/pages/neu.json'));
-  assert.match(english.data, /<base href="\/sub\/en\/">.*<h1>New page<\/h1>/s);
-  assert.match(english.data, /href="\.\.\/assets\/site\.css"/, 'relative addresses work from the language folder');
-  assert.match(english.data, /<a href="\.\.\/kontakt\.html">contact<\/a>/, 'a page the language has only as a draft links to the default language, as on the site');
+  assert.match(english.data, /<base href="\/sub\/en\/neu\/">.*<h1>New page<\/h1>/s);
+  assert.match(english.data, /href="\.\.\/\.\.\/assets\/site\.css"/, 'relative addresses work from the page\'s folder');
+  assert.match(english.data, /<a href="\.\.\/\.\.\/kontakt\/">contact<\/a>/, 'a page the language has only as a draft links to the default language, as on the site');
 });
 
 test('a link stops working when it expires or is revoked, and a forged one never works', async () => {

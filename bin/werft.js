@@ -60,7 +60,7 @@ const commands = {
       const themeFiles = themeDir ? (await store.list(themeDir)).filter((p) => /\.(js|css|html|json)$/.test(p) && !p.includes('node_modules/')).map((p) => `${themeDir}/${p}`) : [path.normalize(result.site.theme)];
       const sources = [];
       for (const p of [...(await store.list(contentDir)).filter((p) => p.endsWith('.json')).map((p) => `${contentDir}/${p}`), ...themeFiles]) sources.push({ path: p, text: await store.readText(p) });
-      const { findings, pages } = check({ files, site: result.site, redirects: result.content.redirects, sources });
+      const { findings, pages } = check({ files, site: result.site, redirects: result.redirects, sources });
       // The same problem on many pages (a menu link, say) is printed once, with the places.
       const problems = new Map();
       for (const f of findings) {

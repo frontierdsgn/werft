@@ -33,11 +33,11 @@ test('ctx.head() writes title, description, canonical address and link preview',
     + '<meta property="og:title" content="Salon am Fluss"><meta property="og:description" content="Haare &amp; mehr"><meta property="og:url" content="https://salon.example/">'
     + '<meta property="og:image" content="https://salon.example/assets/img/teilen.jpg"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">'
     + '<meta name="twitter:card" content="summary_large_image"><link rel="alternate" type="application/rss+xml" title="Salon: News" href="feed.xml"></head>');
-  assert.equal(out['kontakt.html'], '<head><title>Kontakt | Salon</title><meta name="robots" content="noindex">'
-    + '<link rel="canonical" href="https://salon.example/kontakt.html"><meta property="og:type" content="website"><meta property="og:site_name" content="Salon">'
-    + '<meta property="og:title" content="Kontakt"><meta property="og:url" content="https://salon.example/kontakt.html">'
-    + '<meta property="og:image" content="https://cdn.example/k.png"><meta name="twitter:card" content="summary_large_image"><link rel="alternate" type="application/rss+xml" title="Salon: News" href="feed.xml"></head>');
-  assert.match(out['news/neu.html'], /<title>Neu &lt;da&gt; \| Salon<\/title><meta name="description" content="Ab Juni">.*<meta property="og:type" content="article">.*<meta property="og:url" content="https:\/\/salon.example\/news\/neu.html">/);
+  assert.equal(out['kontakt/index.html'], '<head><title>Kontakt | Salon</title><meta name="robots" content="noindex">'
+    + '<link rel="canonical" href="https://salon.example/kontakt/"><meta property="og:type" content="website"><meta property="og:site_name" content="Salon">'
+    + '<meta property="og:title" content="Kontakt"><meta property="og:url" content="https://salon.example/kontakt/">'
+    + '<meta property="og:image" content="https://cdn.example/k.png"><meta name="twitter:card" content="summary_large_image"><link rel="alternate" type="application/rss+xml" title="Salon: News" href="../feed.xml"></head>');
+  assert.match(out['news/neu/index.html'], /<title>Neu &lt;da&gt; \| Salon<\/title><meta name="description" content="Ab Juni">.*<meta property="og:type" content="article">.*<meta property="og:url" content="https:\/\/salon.example\/news\/neu\/">/);
 });
 
 test('ctx.head() without a site address leaves out what needs one', async () => {
@@ -58,11 +58,11 @@ test('ctx.head() names the versions of an entry in other languages', async () =>
     'content/fr/pages/kontakt.json': json({ title: 'Contact', status: 'draft' }),
   });
   const links = (text) => [...text.matchAll(/<link rel="(?:alternate" hreflang|canonical)[^>]*>/g)].map((m) => m[0]);
-  assert.deepEqual(links(out['en/kontakt.html']), [
-    '<link rel="canonical" href="https://salon.example/en/kontakt.html">',
-    '<link rel="alternate" hreflang="de" href="https://salon.example/kontakt.html">',
-    '<link rel="alternate" hreflang="en" href="https://salon.example/en/kontakt.html">',
-    '<link rel="alternate" hreflang="x-default" href="https://salon.example/kontakt.html">',
+  assert.deepEqual(links(out['en/kontakt/index.html']), [
+    '<link rel="canonical" href="https://salon.example/en/kontakt/">',
+    '<link rel="alternate" hreflang="de" href="https://salon.example/kontakt/">',
+    '<link rel="alternate" hreflang="en" href="https://salon.example/en/kontakt/">',
+    '<link rel="alternate" hreflang="x-default" href="https://salon.example/kontakt/">',
   ]);
   // A page in one language only names no other version.
   assert.deepEqual(links(out['index.html']), ['<link rel="canonical" href="https://salon.example/">']);
@@ -75,8 +75,8 @@ test('ctx.head() names the versions of an entry in other languages', async () =>
     'content/pages/team.json': json({ title: 'Team' }),
     'content/en/pages/team.json': json({ title: 'Team', seo: { noindex: true } }),
   });
-  assert.deepEqual(links(again['en/kontakt.html']).slice(0, 2), ['<link rel="canonical" href="https://salon.example/en/kontakt.html">', '<link rel="alternate" hreflang="de" href="https://salon.example/kontakt.html">']);
-  assert.deepEqual(links(again['team.html']), ['<link rel="canonical" href="https://salon.example/team.html">']);
+  assert.deepEqual(links(again['en/kontakt/index.html']).slice(0, 2), ['<link rel="canonical" href="https://salon.example/en/kontakt/">', '<link rel="alternate" hreflang="de" href="https://salon.example/kontakt/">']);
+  assert.deepEqual(links(again['team/index.html']), ['<link rel="canonical" href="https://salon.example/team/">']);
 });
 
 test('a post names its versions in other languages by their own addresses', async () => {
@@ -85,7 +85,7 @@ test('a post names its versions in other languages by their own addresses', asyn
     'content/news/neu.json': json({ title: 'Neu' }),
     'content/en/news/neu.json': json({ title: 'New' }),
   }, { ...theme, renderPost: (post, ctx) => html`${ctx.head()}${ctx.translations.map((t) => html`<a href="${t.url}">${t.lang}</a>`)}` });
-  assert.match(out['news/neu.html'], /<link rel="alternate" hreflang="en" href="https:\/\/salon.example\/en\/news\/neu.html">.*<a href="neu.html">de<\/a><a href="..\/en\/news\/neu.html">en<\/a>$/);
+  assert.match(out['news/neu/index.html'], /<link rel="alternate" hreflang="en" href="https:\/\/salon.example\/en\/news\/neu\/">.*<a href=".\/">de<\/a><a href="..\/..\/en\/news\/neu\/">en<\/a>$/);
 });
 
 test('ctx.head() takes a picture as image and keeps an absolute image without a site address', () => {
@@ -146,7 +146,7 @@ test('the site icon appears on every page and in the web manifest', async () => 
   const tags = '<link rel="icon" href="assets/img/icon.png" type="image/png" sizes="512x512"><link rel="apple-touch-icon" href="assets/img/icon.png"><link rel="manifest" href="manifest.webmanifest"></head>';
   assert.ok(out['index.html'].endsWith(tags));
   assert.ok(out['en/index.html'].endsWith(tags.replace(/href="/g, 'href="../')));
-  assert.ok(out['news/neu.html'].endsWith(tags.replace(/href="/g, 'href="../')));
+  assert.ok(out['news/neu/index.html'].endsWith(tags.replace(/href="/g, 'href="../../')));
   assert.deepEqual(JSON.parse(out['manifest.webmanifest']), { name: 'Salon', start_url: './', display: 'browser', icons: [{ src: 'assets/img/icon.png', sizes: '512x512', type: 'image/png' }] });
   // Without an icon: no tags and no manifest.
   const plain = await built({}, { 'content/pages/index.json': json({ title: 'Start' }) });
@@ -201,13 +201,13 @@ test('the build writes an RSS feed of the newest posts per language, and ctx.hea
   assert.equal(out['feed.xml'], '<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Salon: Neuigkeiten</title>'
     + '<link>https://salon.example/</link><description>Salon: Neuigkeiten</description><language>de</language>'
     + '<atom:link href="https://salon.example/feed.xml" rel="self" type="application/rss+xml"/>'
-    + '<item><title>Neu &amp; frisch</title><link>https://salon.example/news/neu.html</link><guid isPermaLink="true">https://salon.example/news/neu.html</guid>'
-    + '<pubDate>Fri, 01 May 2026 08:00:00 GMT</pubDate><description>Ab &amp;lt;Juni&amp;gt; &amp;amp; 10&amp;amp;euro; (de, ../)</description></item>'
-    + '<item><title>Nur Datum</title><link>https://salon.example/news/datum.html</link><guid isPermaLink="true">https://salon.example/news/datum.html</guid>'
+    + '<item><title>Neu &amp; frisch</title><link>https://salon.example/news/neu/</link><guid isPermaLink="true">https://salon.example/news/neu/</guid>'
+    + '<pubDate>Fri, 01 May 2026 08:00:00 GMT</pubDate><description>Ab &amp;lt;Juni&amp;gt; &amp;amp; 10&amp;amp;euro; (de, ../../)</description></item>'
+    + '<item><title>Nur Datum</title><link>https://salon.example/news/datum/</link><guid isPermaLink="true">https://salon.example/news/datum/</guid>'
     + '<pubDate>Sun, 01 Mar 2026 00:00:00 GMT</pubDate></item>'
-    + '<item><title>Alt</title><link>https://salon.example/news/alt.html</link><guid isPermaLink="true">https://salon.example/news/alt.html</guid>'
+    + '<item><title>Alt</title><link>https://salon.example/news/alt/</link><guid isPermaLink="true">https://salon.example/news/alt/</guid>'
     + '<pubDate>Fri, 02 Jan 2026 10:00:00 GMT</pubDate></item></channel></rss>\n');
-  assert.match(out['en/feed.xml'], /<title>Salon: News<\/title>.*<language>en<\/language><atom:link href="https:\/\/salon.example\/en\/feed.xml".*<item><title>New<\/title><link>https:\/\/salon.example\/en\/news\/new.html<\/link>/);
+  assert.match(out['en/feed.xml'], /<title>Salon: News<\/title>.*<language>en<\/language><atom:link href="https:\/\/salon.example\/en\/feed.xml".*<item><title>New<\/title><link>https:\/\/salon.example\/en\/news\/new\/<\/link>/);
   // French shows the German posts and links their feed, by its title.
   assert.equal(out['fr/feed.xml'], undefined);
   const link = (text) => text.match(/<link rel="alternate" type="application\/rss\+xml"[^>]*>/)?.[0];
@@ -264,7 +264,7 @@ test('ctx.head() writes the organization the site settings describe as JSON-LD o
   const english = jsonLd(out['en/index.html']);
   assert.deepEqual([english['@id'], english.url, english.address.addressLocality, english.openingHoursSpecification], ['https://salon.example/sub/#organization', 'https://salon.example/sub/en/', 'Town',
     [{ '@type': 'OpeningHoursSpecification', dayOfWeek: ['Friday', 'Saturday', 'Sunday', 'Monday'], opens: '10:00', closes: '22:00' }]]);
-  assert.equal(jsonLd(out['kontakt.html']), null, 'only on the home page');
+  assert.equal(jsonLd(out['kontakt/index.html']), null, 'only on the home page');
   // Without the field in the theme the settings are not read; a group with only its defaults, or
   // hours that are not a list, writes nothing.
   assert.equal(jsonLd((await built({}, files))['index.html']), null);

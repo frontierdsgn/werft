@@ -16,6 +16,7 @@ before(async () => {
   write('theme/index.js', 'export default { blocks: {}, renderPage: (page, ctx) => ctx.html`<title>${page.title}</title>` };\n');
   write('content/pages/index.json', '{"title":"Start","status":"published"}\n');
   write('content/pages/404.json', '{"title":"Nicht gefunden","status":"published"}\n');
+  write('content/pages/kontakt.json', '{"title":"Kontakt","status":"published"}\n');
   write('_site-secret/secret.txt', 'secret');
   execFileSync('git', ['init', '--quiet', '-b', 'main'], { cwd: root });
   execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@test', 'commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: root });
@@ -49,4 +50,13 @@ test('answers an unknown address with the nearest 404 page and status 404', asyn
   const english = await fetch(`${base}/en/missing/page.html`);
   assert.deepEqual([english.status, await english.text()], [404, 'Not found here']);
   assert.equal((await fetch(`${base}/404.html`)).status, 200, 'the page itself is a page');
+});
+
+test('a page lives at its clean address, and its old .html address redirects there', async () => {
+  const page = await fetch(`${base}/kontakt/`);
+  assert.deepEqual([page.status, await page.text()], [200, '<title>Kontakt</title>']);
+  for (const [address, location] of [['/kontakt.html', '/kontakt/'], ['/kontakt', '/kontakt/']]) {
+    const response = await fetch(`${base}${address}`, { redirect: 'manual' });
+    assert.deepEqual([response.status, response.headers.get('location')], [301, location], address);
+  }
 });
