@@ -13,7 +13,7 @@ import { disarm, postPreview } from './preview.js';
 import { pageRenderer, mapDocument, getAt, setAt, textOf, unmark } from './visual-map.js';
 import { buildForm, emptyValue } from './visual-form.js';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
-import { formView, mediaView, submissionsView, usersView, deletedView } from './form-view.js';
+import { formView, mediaView, submissionsView, usersView, deletedView, accountView } from './form-view.js';
 import { retargetLink, retargetLinks, mentions, movedRedirects } from './rename.js';
 import { draftKey, collectDraft, changedSince, applyDraft } from './drafts.js';
 import { duplicatePage } from './duplicate.js';
@@ -224,7 +224,7 @@ let current = slugsIn('pages').includes('index') ? 'index' : slugsIn('pages')[0]
 // which it offers to translate.
 const pageSource = () => `page:${current ?? (slugsIn('pages', defaultLang).includes('index') ? 'index' : slugsIn('pages', defaultLang)[0] ?? 'index')}`;
 // The view, and what the form view shows: a source (page:<slug>, post:<slug>, settings, …), or
-// `media`, `submissions` or `users`. Both come from the address, then from the last visit.
+// `media`, `submissions`, `users` or `account`. Both come from the address, then from the last visit.
 let view = ['visual', 'form'].includes(hashView) ? hashView : localStorage.getItem('werft.view') === 'visual' ? 'visual' : 'form';
 let selection = pageSource();
 let showPreview = innerWidth >= 1200;
@@ -324,7 +324,7 @@ function previewPage(data) {
   }
   return current;
 }
-const hasPreview = () => view === 'visual' || !['media', 'submissions', 'users', 'redirects', 'deleted'].includes(selection);
+const hasPreview = () => view === 'visual' || !['media', 'submissions', 'users', 'account', 'redirects', 'deleted'].includes(selection);
 
 function draw() {
   const pageList = slugsIn('pages');
@@ -963,13 +963,14 @@ function describe(source) {
     submissions: { kind: 'Website', title: 'Einsendungen' },
     users: { kind: 'Website', title: 'Benutzer' },
     deleted: { kind: 'Website', title: 'Gelöschte Inhalte' },
+    account: { kind: 'Konto', title: 'Mein Konto' },
   }[kind];
 }
 
 // The language whose file a source is: none for what all languages share; the default language's
 // for posts of a language that has none of its own.
 function languageOf(source) {
-  if (!languages.length || /^(redirects|media|submissions|users|deleted)$/.test(source)) return null;
+  if (!languages.length || /^(redirects|media|submissions|users|deleted|account)$/.test(source)) return null;
   return source.startsWith('post:') && postDir() === `${contentDir}/${postType.name}` ? defaultLang : lang;
 }
 
@@ -1182,9 +1183,9 @@ function openPage(slug) {
 }
 
 // Opens a source (page:<slug>, post:<slug>, pattern:<slug>, form:<slug>, settings, menus,
-// redirects) or `media` / `submissions` / `users`. The page view shows pages and opens the rest in
-// its side panel; what has no page of its own (patterns, images, submissions, users) opens in the
-// form view.
+// redirects) or `media` / `submissions` / `users` / `account`. The page view shows pages and opens
+// the rest in its side panel; what has no page of its own (patterns, images, submissions, users, the
+// account) opens in the form view.
 function open(source) {
   const [kind, slug] = source.split(':');
   if (view === 'visual') {
@@ -1246,7 +1247,7 @@ let formShows = null;
 function drawForm() {
   const main = $('#ve-form');
   const scroll = formShows === selection ? main.scrollTop : 0;
-  const pages = { media: mediaView, submissions: submissionsView, users: usersView, deleted: deletedView };
+  const pages = { media: mediaView, submissions: submissionsView, users: usersView, deleted: deletedView, account: accountView };
   const show = Object.hasOwn(pages, selection) ? pages[selection] : formView;
   formHandle = show(app, main);
   main.scrollTop = scroll;
@@ -1338,6 +1339,7 @@ function drawPages() {
   if (can('media')) siteList.append(item('media', 'Bilder', 'Alle Bilder, neue hochladen'));
   if (can('content') && slugsIn('forms').length) siteList.append(item('submissions', 'Einsendungen', 'Was Besucher über Formulare gesendet haben'));
   if (me.role === 'administrator') siteList.append(item('users', 'Benutzer', 'Wer die Website bearbeiten darf'));
+  siteList.append(item('account', 'Mein Konto', 'Ihr Name und Ihr Passwort'));
   if (siteList.children.length) sections.push(group('Website', siteList));
   const more = [];
   if (can('content')) {
@@ -1706,7 +1708,7 @@ $('#ve-site').textContent = site.name;
 $('#ve-signout').addEventListener('click', () => app.signOut());
 for (const b of document.querySelectorAll('.ve-views button[data-view]')) b.addEventListener('click', () => { if (b.dataset.view !== view) setView(b.dataset.view); });
 $('#ve-app').hidden = false;
-if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'submissions', 'users', 'deleted'].includes(hashOpen)) {
+if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'submissions', 'users', 'deleted', 'account'].includes(hashOpen)) {
   if (hashOpen.startsWith('page:')) current = hashOpen.slice(5);
   selection = hashOpen;
 }

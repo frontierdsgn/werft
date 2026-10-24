@@ -15,7 +15,8 @@
 // site's history: a sign-out adds its id, "everywhere" (by the user or an administrator) the time
 // before which a user's sessions count as ended. Renewing a session reads the list; other requests
 // use a copy at most SESSIONS_CHECK old.
-//   /api/werft/me, /api/werft/users       current user; user management (administrators)
+//   /api/werft/me, /api/werft/users       current user, POST: own name and password; user
+//                                         management (administrators)
 //   /api/werft/tick                       publish scheduled entries that are due
 //   /api/werft/forms/<form>               form submissions from visitors (see submissions.js)
 //   /api/werft/submissions                read and delete them (administrators and editors)
@@ -142,6 +143,10 @@ export function createGateway(options) {
   }
 
   const attempts = throttle({ secret, now, store: options.throttleStore });
+  const tooMany = (wait, what = 'Anmeldeversuche') => {
+    const minutes = Math.ceil(wait / 60000);
+    return json({ message: `Zu viele ${what}. Bitte in ${minutes === 1 ? 'einer Minute' : `${minutes} Minuten`} noch einmal versuchen.` }, 429, { 'retry-after': String(Math.ceil(wait / 1000)) });
+  };
 
   // A browser that signed in to an account gets a device token for it; its later attempts count
   // against that token instead of the account and the address, so guesses from elsewhere do not
@@ -152,10 +157,7 @@ export function createGateway(options) {
     const keys = device?.typ === 'device' && device.sub === email ? [['device', device.id]]
       : [['account', email], ...(addressKey(address) ? [['address', addressKey(address)]] : [])];
     const attempt = await attempts.attempt(keys);
-    if (attempt.wait) {
-      const minutes = Math.ceil(attempt.wait / 60000);
-      return json({ message: `Zu viele Anmeldeversuche. Bitte in ${minutes === 1 ? 'einer Minute' : `${minutes} Minuten`} noch einmal versuchen.` }, 429, { 'retry-after': String(Math.ceil(attempt.wait / 1000)) });
-    }
+    if (attempt.wait) return tooMany(attempt.wait);
     let user;
     try { user = await signIn(email, body.password); } catch (e) { attempt.cancel(); throw e; }
     if (!user) { await attempt.failed(); return error(401, 'E-Mail oder Passwort stimmt nicht.'); }
@@ -332,6 +334,47 @@ export function createGateway(options) {
     return result;
   }
 
+  // "Mein Konto": every user changes their own name and, with the current password, their own
+  // password; nothing else and nobody else's. Checking the current password counts like a sign-in
+  // attempt. A new password ends the user's other sessions (see stampOf); this one goes on with new
+  // tokens.
+  async function account(request, user) {
+    const body = (await request.json()) ?? {};
+    const other = body.email !== undefined && String(body.email).trim().toLowerCase() !== user.email.toLowerCase();
+    if (typeof body !== 'object' || other || Object.keys(body).some((k) => !['email', 'name', 'password', 'current_password'].includes(k))) return error(403, 'Hier ändern Sie nur Ihren eigenen Namen und Ihr Passwort.');
+    if (body.name !== undefined && (typeof body.name !== 'string' || !body.name.trim())) return error(422, 'Bitte einen Namen angeben.');
+    if (body.name?.trim().length > 100) return error(422, 'Der Name darf höchstens 100 Zeichen haben.');
+    if (body.password !== undefined && (typeof body.password !== 'string' || body.password.length < 10)) return error(422, 'Passwörter brauchen mindestens 10 Zeichen.');
+    // The entry as it is now, and the commit it was read from: a change in between (an administrator
+    // setting a new password) fails with 409 instead of being undone, and a session the change has
+    // ended may not change anything.
+    const { users, sha: parent } = await loadUsers();
+    const existing = findUser(users, user.email);
+    if (!existing || (await stampOf(existing)) !== user.payload.stamp) return error(401, 'Bitte anmelden.');
+    const name = body.name?.trim() ?? existing.name;
+    let { password } = existing;
+    if (body.password !== undefined) {
+      // Guesses count against this session (an older one without an id: the account), so guessing
+      // elsewhere does not keep the owner from changing the password.
+      const attempt = await attempts.attempt([user.payload.sid ? ['session', user.payload.sid] : ['account', user.email.toLowerCase()]]);
+      if (attempt.wait) return tooMany(attempt.wait, 'Versuche');
+      if (!(await verifyPassword(String(body.current_password ?? ''), existing.password))) { await attempt.failed(); return error(422, 'Das bisherige Passwort stimmt nicht.'); }
+      await attempt.succeeded();
+      password = await hashPassword(body.password, options.iterations);
+    }
+    if (name === existing.name && password === existing.password) return json(publicUser(existing));
+    const updated = { ...existing, name, password };
+    try {
+      await saveUsers(user, users.map((u) => (u === existing ? updated : u)), `Konto geändert: ${user.email}`, parent);
+    } catch (e) {
+      if (e.status === 409) return error(409, 'Der Stand hat sich inzwischen geändert. Bitte neu laden und erneut versuchen.');
+      throw e;
+    }
+    if (password === existing.password) return json(publicUser(updated));
+    const { body: tokens, headers } = await issueTokens(request, updated);
+    return json({ ...publicUser(updated), ...tokens }, 200, headers);
+  }
+
   async function usersApi(request, user) {
     if (user.role !== 'administrator') return error(403, 'Nur Administratoren verwalten Benutzer.');
     const { users, sha: parent } = await loadUsers();
@@ -420,6 +463,7 @@ export function createGateway(options) {
       const user = await authenticate(request);
       if (!user) return error(401, 'Bitte anmelden.');
       if (path === '/tick') return await tick(url);
+      if (path === '/me' && request.method === 'POST') return await account(request, user);
       if (path === '/me') return json({ ...publicUser(user), editable: editable(user.role), statuses: statuses(user.role), roles: ROLES });
       if (path === '/users') return await usersApi(request, user);
       if (path === '/submissions') return await forms.api(request, user);

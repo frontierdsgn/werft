@@ -67,7 +67,7 @@ Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 
 | WordPress | werft |
 |---|---|
-| Login at /admin, users, roles | Own e-mail/password logins, no GitHub account needed. Roles Administrator, Redakteur, Autor, Mitarbeiter with WordPress's rules ([roles.js](gateway/roles.js)), enforced by the gateway. "Benutzer" in the editor for administrators. |
+| Login at /admin, users, roles | Own e-mail/password logins, no GitHub account needed. Roles Administrator, Redakteur, Autor, Mitarbeiter with WordPress's rules ([roles.js](gateway/roles.js)), enforced by the gateway. "Benutzer" in the editor for administrators; "Mein Konto" for everyone. |
 | Pages and posts | Pages built from sections (the theme's blocks), plus one post type per theme (e.g. events). Add, delete, reorder sections. "Seite duplizieren" (in a page's settings and at the end of its form) copies a page in the language being edited as a draft under a new title and address, without its publishing date and SEO title. "Adresse" in a page's settings changes its address (administrators, since it adds a redirect): in one save the page and its translations are renamed, links in the content follow, a published page's old address redirects to the new one, and what still names the old address (a full URL) is listed. |
 | Draft, pending review, publish, schedule | Status per entry; a publish date in the future schedules it (see [Scheduling](#scheduling)). Contributors are offered only "Entwurf" and "Zur Prüfung"; when the gateway refuses a change for the editor's role, the admin says so instead of "try again later". |
 | Visual editing, preview | Two views of the same [editor](#editor), switched at the top of the sidebar: "Formular" shows the fields beside a live preview rendered by the site's own theme (a click on a section in the preview opens it in the form); "Auf der Seite" edits on the page itself. A post without a page of its own (no `renderPost` in the theme) is previewed marked on the page that lists it, else alone in the theme's listing section, else as a card of its fields. |
@@ -102,6 +102,10 @@ one, and unsaved changes, undo and "Speichern" carry over between them.
   sections and list items can be added, duplicated, moved and removed. Desktop and mobile width.
 - Both: undo and redo (Ctrl+Z, Ctrl+Y); "Speichern" (Ctrl+S) writes every changed file and upload in
   one commit. "Benutzer" (administrators only) changes users at once, without "Speichern".
+- "Mein Konto" (every role): one's own name, one's own password (with the current one; wrong
+  guesses count against the session like [sign-in](#sign-in) attempts, 5 then a growing wait; the
+  other devices are then signed out) and "Überall abmelden". The gateway takes only the name and
+  the password there, only for the signed-in user, and refuses a session the change has ended.
 - Unsaved changes are also kept in the browser (its local storage, per user, site and branch), so
   a closed tab or a crash does not lose them. When the admin opens again on that browser, it offers
   "Wiederherstellen", "Verwerfen" or "Später" and names entries someone saved since; restoring
@@ -628,8 +632,9 @@ cannot read. A reload, or an access token that has expired, renews the session w
 
 - "Abmelden" ends the session on the server: its refresh token is refused from then on, and so is
   its access token (at once in the same process; on Cloudflare in other isolates within a minute).
-- "Überall abmelden" on "Benutzer" (administrators, for anyone including themselves) ends every
-  session of that person. Changing a user's password or role, or deleting the user, ends them too.
+- "Überall abmelden" in "Mein Konto" (everyone, for themselves) and on "Benutzer" (administrators,
+  for anyone) ends every session of that person. Changing a user's password or role, or deleting
+  the user, ends them too.
 - Ended sessions are listed in `.werft/sessions.json` on the branch `werft-sessions`, which the
   gateway creates with the first sign-out: one small commit per sign-out, never on the site's
   branch, so nothing is rebuilt. Entries are dropped once their tokens have expired. Renewing a
