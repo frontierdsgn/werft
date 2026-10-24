@@ -311,6 +311,7 @@ test('guessing the current password counts against the session, not guesses else
   const statuses = [];
   for (let i = 0; i < 6; i++) statuses.push((await call(`${ORIGIN}/api/werft/me`, { token: session2, method: 'POST', body: { password: 'third-password', current_password: `guess-${i}` } })).status);
   assert.deepEqual(statuses, [422, 422, 422, 422, 422, 429]);
+  assert.match((await call(`${ORIGIN}/api/werft/me`, { token: session2, method: 'POST', body: { password: 'third-password', current_password: 'x' } })).data.message, /^Zu viele Versuche\./);
   clock += 60 * 60 * 1000;
 });
 
@@ -320,7 +321,9 @@ test('a change to the own account keeps a newer password and needs a valid sessi
   await call(users, { token: admin, method: 'POST', body: { email: 'raced@test', name: 'R', password: 'first-password', role: 'author' } });
   const token = await signIn('raced@test', 'first-password');
   const me = (body) => call(`${ORIGIN}/api/werft/me`, { token, method: 'POST', body });
-  assert.equal((await me({ name: 'R' })).status, 200, 'nothing to change, nothing committed');
+  const before = (await store.storage.head('main')).sha;
+  assert.equal((await me({ name: 'R' })).status, 200);
+  assert.equal((await store.storage.head('main')).sha, before, 'nothing to change, nothing committed');
   for (const body of [{ name: '  ' }, { name: { x: 1 } }, { password: { length: 20 } }]) assert.equal((await me(body)).status, 422, JSON.stringify(body));
   // The request is signed in, then waits for its body while an administrator sets a new password.
   let send;

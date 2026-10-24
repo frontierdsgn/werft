@@ -143,9 +143,9 @@ export function createGateway(options) {
   }
 
   const attempts = throttle({ secret, now, store: options.throttleStore });
-  const tooMany = (wait) => {
+  const tooMany = (wait, what = 'Anmeldeversuche') => {
     const minutes = Math.ceil(wait / 60000);
-    return json({ message: `Zu viele Anmeldeversuche. Bitte in ${minutes === 1 ? 'einer Minute' : `${minutes} Minuten`} noch einmal versuchen.` }, 429, { 'retry-after': String(Math.ceil(wait / 1000)) });
+    return json({ message: `Zu viele ${what}. Bitte in ${minutes === 1 ? 'einer Minute' : `${minutes} Minuten`} noch einmal versuchen.` }, 429, { 'retry-after': String(Math.ceil(wait / 1000)) });
   };
 
   // A browser that signed in to an account gets a device token for it; its later attempts count
