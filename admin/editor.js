@@ -18,6 +18,7 @@ import { retargetLink, retargetLinks, mentions, movedRedirects } from './rename.
 import { draftKey, collectDraft, changedSince, applyDraft } from './drafts.js';
 import { duplicatePage } from './duplicate.js';
 import { entryOf, deletedEntries, restoredEntry } from './deleted.js';
+import { textsOf, search } from './search.js';
 
 const REPO = '/api/v1/repos/werft/site';
 const { site, theme, base } = await loadSite();
@@ -1282,6 +1283,15 @@ function drawPages() {
     details.addEventListener('toggle', () => onToggle(details.open));
     return details;
   };
+  // While something is typed into the search, the sidebar lists what matches.
+  if (query) {
+    found = search(searchable(), query);
+    list.replaceChildren(group(`Suchergebnisse (${found.length})`, found.length
+      ? el('ul', { className: 've-results' }, ...found.map((r) => item(r.source, r.title, `${r.kindName}${r.snippet ? ` · ${r.snippet}` : ''}`)))
+      : el('p', { className: 've-hint' }, 'Nichts gefunden. Gesucht wird in Titeln und Texten der Seiten, Einträge, Muster und Formulare und in den Namen der Bilder.')));
+    drawLanguages();
+    return;
+  }
   const sections = [];
   // The languages a page is missing in, worth noticing.
   const missing = (slug) => {
@@ -1345,6 +1355,33 @@ function drawPages() {
   list.replaceChildren(...sections);
   drawLanguages();
 }
+
+// ---- Search in the sidebar ----
+// Titles and texts of what the user may edit, in the language being edited, and image names.
+let query = '';
+let found = [];
+function searchable() {
+  const out = [];
+  const add = (kind, folder) => {
+    for (const slug of slugsIn(folder)) {
+      const source = `${kind}:${slug}`;
+      // A pattern or form not translated yet shows the default language's.
+      const data = files.get(fileOf(source))?.data ?? files.get(fileOf(source, defaultLang))?.data;
+      if (data) out.push({ source, title: data.title ?? slug, kindName: KIND_NAME[kind], texts: textsOf(data) });
+    }
+  };
+  if (can('content')) add('page', 'pages');
+  if (postType && can('post')) add('post', postType.name);
+  if (can('content')) { add('pattern', 'patterns'); if (collection('forms')) add('form', 'forms'); }
+  if (can('media')) for (const path of images()) out.push({ source: 'media', title: path.split('/').pop(), kindName: 'Bild', texts: [] });
+  return out;
+}
+const searchBox = $('#ve-search');
+searchBox.addEventListener('input', () => { query = searchBox.value.trim(); drawPages(); });
+searchBox.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') { searchBox.value = ''; query = ''; drawPages(); }
+  if (event.key === 'Enter' && found.length) { event.preventDefault(); open(found[0].source); }
+});
 
 // The language switch at the top of the sidebar, for a site in several languages.
 function drawLanguages() {

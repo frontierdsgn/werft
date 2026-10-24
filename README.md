@@ -81,7 +81,9 @@ Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 
 `/admin` is one app. The sidebar lists everything that can be edited (pages, the theme's post type,
 site settings, menus, images, form submissions, users; patterns, forms and redirects folded under "Weitere Inhalte")
-and is the same in both views. A switch at its top changes the view; the editor remembers the last
+and is the same in both views. Its search ("Suchen …") finds pages, posts, patterns and forms by
+their titles and texts in the language being edited, and images by name, ignoring case and accents;
+Enter opens the first match, Escape ends the search. A switch at its top changes the view; the editor remembers the last
 one, and unsaved changes, undo and "Speichern" carry over between them.
 
 - **Formular** (the default): the entry as cards, from the top: title and main fields, the sections
