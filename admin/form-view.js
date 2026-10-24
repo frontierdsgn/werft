@@ -3,6 +3,7 @@
 // into the editor's unsaved changes like those made on the page; "Speichern" stores both.
 import { buildForm } from './visual-form.js';
 import { versionDiff, diffHTML } from './diff.js';
+import { setupTwoFactor, recoveryCodes } from './two-factor.js';
 
 const el = (tag, props = {}, ...children) => {
   const node = Object.assign(document.createElement(tag), props);
@@ -367,7 +368,7 @@ export function usersView(app, root) {
   };
   const drawList = () => {
     listCard.replaceChildren(el('h2', {}, 'Alle Benutzer'), el('ul', { className: 've-people' }, ...users.map((u) => el('li', {},
-      el('div', {}, el('strong', {}, u.name || u.email), el('small', {}, `${u.email} · ${roles[u.role]?.label ?? u.role}${u.email === app.me.email ? ' · Sie selbst' : ''}`)),
+      el('div', {}, el('strong', {}, u.name || u.email), el('small', {}, `${u.email} · ${roles[u.role]?.label ?? u.role}${u.two_factor ? ' · Zwei-Faktor' : ''}${u.email === app.me.email ? ' · Sie selbst' : ''}`)),
       el('div', { className: 've-actions-row' },
         app.button('Bearbeiten', `${u.name || u.email} bearbeiten`, () => drawForm(u), 've-tool'),
         app.button('Überall abmelden', `${u.name || u.email} auf allen Geräten abmelden`, async () => {
@@ -376,6 +377,10 @@ export function usersView(app, root) {
           if (self) app.signOut({ everywhere: true });
           else if (await send({ action: 'signout', email: u.email })) app.toast(`${u.name || u.email} ist überall abgemeldet.`);
         }, 've-tool'),
+        u.two_factor && u.email !== app.me.email ? app.button('Zwei-Faktor zurücksetzen', `Zwei-Faktor-Anmeldung von ${u.name || u.email} zurücksetzen`, async () => {
+          if (!(await app.confirmDialog('Zwei-Faktor-Anmeldung zurücksetzen?', `Zum Beispiel, wenn ${u.name || u.email} das Telefon und die Wiederherstellungscodes verloren hat. Die Person meldet sich danach nur mit dem Passwort an und kann die Zwei-Faktor-Anmeldung neu einrichten.`, 'Zurücksetzen'))) return;
+          if (await send({ action: 'two-factor-off', email: u.email })) app.toast('Zwei-Faktor-Anmeldung zurückgesetzt.');
+        }, 've-tool') : null,
         u.email === app.me.email ? null : app.button('Löschen', `${u.name || u.email} löschen`, async () => {
           if (await app.confirmDialog('Benutzer löschen?', `${u.name || u.email} kann die Website danach nicht mehr bearbeiten.`, 'Löschen')) send({ action: 'delete', email: u.email });
         }, 've-tool ve-danger'))))));
@@ -447,6 +452,43 @@ export function accountView(app, root) {
     el('div', { className: 've-actions-row' }, app.button('Überall abmelden', null, async () => {
       if (await app.confirmDialog('Überall abmelden?', 'Sie werden auf allen Geräten abgemeldet, auch hier.', 'Abmelden')) app.signOut({ everywhere: true });
     }, 've-tool')));
-  page.append(nameCard, passwordCard, devices);
+  page.append(nameCard, passwordCard, twoFactorCard(app), devices);
   return { reveal() {} };
+}
+
+// "Zwei-Faktor-Anmeldung" in "Mein Konto": off, it offers to set it up; on, new recovery codes and
+// switching it off (not where the site requires it), each with the password.
+function twoFactorCard(app) {
+  const section = card('Zwei-Faktor-Anmeldung', null);
+  const body = el('div');
+  section.append(body);
+  const withPassword = (label, action, then) => {
+    const password = el('input', { id: `ve-2fa-${action}`, type: 'password', autocomplete: 'current-password', required: true });
+    const error = el('p', { className: 've-error', role: 'alert' });
+    const form = el('form', { className: 've-form ve-user-form' }, el('div', { className: 've-control' }, el('label', { className: 've-label', htmlFor: password.id }, 'Ihr Passwort zur Bestätigung'), password), error,
+      el('div', { className: 've-actions-row' }, el('button', { type: 'submit', className: 've-primary' }, label), app.button('Abbrechen', null, draw, 've-tool')));
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try { then(await app.api('/me/two-factor', { method: 'POST', body: { action, current_password: password.value } })); } catch (e) { error.textContent = e.message; }
+    });
+    body.replaceChildren(form);
+    password.focus();
+  };
+  const draw = () => {
+    if (!app.me.two_factor) {
+      body.replaceChildren(el('p', { className: 've-hint' }, 'Aus. Mit der Zwei-Faktor-Anmeldung braucht die Anmeldung außer dem Passwort einen Code aus einer App auf Ihrem Telefon. Wer nur Ihr Passwort kennt, kommt dann nicht hinein.'), el('div'));
+      setupTwoFactor(body.lastChild, { api: app.api, siteName: app.site.name, onDone: (result) => { Object.assign(app.me, { two_factor: true, recovery_left: result.recovery_codes.length }); app.toast('Zwei-Faktor-Anmeldung eingeschaltet.'); draw(); } });
+      return;
+    }
+    body.replaceChildren(
+      el('p', { className: 've-hint' }, `An. Noch ${app.me.recovery_left ?? 0} von 10 Wiederherstellungscodes übrig.`),
+      el('div', { className: 've-actions-row' },
+        app.button('Neue Wiederherstellungscodes', null, () => withPassword('Neue Codes erzeugen', 'recovery', (result) => {
+          app.me.recovery_left = result.recovery_codes.length;
+          body.replaceChildren(el('p', { className: 've-hint' }, 'Die alten Codes gelten nicht mehr.'), recoveryCodes(result.recovery_codes, app.site.name, draw, 'Fertig'));
+        }), 've-tool'),
+        app.me.two_factor_mandatory ? null : app.button('Ausschalten', null, () => withPassword('Ausschalten', 'disable', () => { Object.assign(app.me, { two_factor: false, recovery_left: null }); app.toast('Zwei-Faktor-Anmeldung ausgeschaltet.'); draw(); }), 've-tool ve-danger')));
+  };
+  draw();
+  return section;
 }

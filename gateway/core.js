@@ -5,8 +5,10 @@
 // and Deno.
 //
 //   /api/werft/session                    POST: sign-in with e-mail and password → tokens (throttled,
-//                                         see throttle.js); DELETE: sign-out, { everywhere } for all
+//                                         see throttle.js), or with two-factor sign-in a ticket, then
+//                                         { ticket, code }; DELETE: sign-out, { everywhere } for all
 //                                         of one's sessions
+//   /api/werft/me/two-factor              set up, renew recovery codes, switch off (see totp.js)
 //   /api/werft/login/oauth/access_token   renews tokens (refresh-token grant)
 //   /api/werft/password/forgot, …/reset   "Passwort vergessen?": a link by e-mail, then a new password
 //   /api/werft/previews                   preview links of a page or post: list, create, revoke
@@ -31,6 +33,7 @@ import { ROLES, denial, classify, editable, statuses } from './roles.js';
 import { submissions } from './submissions.js';
 import { previewTarget, renderPreview } from './preview.js';
 import { throttle, addressKey } from './throttle.js';
+import { newSecret, stepOf, otpauthURL, sealSecret, openSecret, newRecoveryCodes, recoveryHash } from './totp.js';
 import { loadContent, isScheduled, siteLanguages } from '../lib/content.js';
 
 const PREFIX = '/api/werft';
@@ -55,7 +58,7 @@ async function sha256(text) {
 }
 
 // The gateway's view of a site (werft.config.js and its theme).
-export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [], languages: siteLanguages(site), base: site.base, admin: site.admin });
+export const gatewaySite = (site, theme) => ({ twoFactor: site.twoFactor, name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [], languages: siteLanguages(site), base: site.base, admin: site.admin });
 
 // options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs, languages? },
 //   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?(),
@@ -162,6 +165,7 @@ export function createGateway(options) {
   // against that token instead of the account and the address, so guesses from elsewhere do not
   // lock the owner out.
   async function session(request, body, address) {
+    if (body.ticket !== undefined) return secondFactor(request, body, address);
     const email = String(body.email ?? '').trim().toLowerCase();
     const device = await readToken(secret, body.device, now()).catch(() => null);
     const keys = device?.typ === 'device' && device.sub === email ? [['device', device.id]]
@@ -172,7 +176,111 @@ export function createGateway(options) {
     try { user = await signIn(email, body.password); } catch (e) { attempt.cancel(); throw e; }
     if (!user) { await attempt.failed(); return error(401, 'E-Mail oder Passwort stimmt nicht.'); }
     await attempt.succeeded();
-    const id = device?.typ === 'device' && device.sub === email ? device.id : base64url.encode(crypto.getRandomValues(new Uint8Array(12)));
+    // With two-factor sign-in the password only earns a ticket for five minutes; the code earns the session.
+    if (user.totp) return json({ second_factor: true, ticket: await signToken(secret, { typ: 'mfa', sub: user.email, stamp: await stampOf(user), device: device?.typ === 'device' && device.sub === email ? device.id : undefined, exp: Math.floor(now() / 1000) + 300 }) });
+    return started(request, user, device?.typ === 'device' && device.sub === email ? device.id : null);
+  }
+
+  // ---- Two-factor sign-in (totp.js) ----
+  // The roles the site requires it of (werft.config.js `twoFactor`: true for administrators, or a
+  // list of roles); until they set it up, their sessions reach only "Mein Konto".
+  const mustUseTwoFactor = (user) => !user.totp && (site.twoFactor === true ? ['administrator'] : [site.twoFactor ?? []].flat()).includes(user.role);
+
+  // The second step of a sign-in: the ticket and a code from the app, or a recovery code, which is
+  // then used up. Codes count against the account like passwords; a code used once does not work
+  // again in this process.
+  const usedSteps = new Map();
+  async function secondFactor(request, body, address) {
+    const ticket = await readToken(secret, body.ticket, now()).catch(() => null);
+    const again = () => error(401, 'Bitte melden Sie sich noch einmal an.');
+    if (ticket?.typ !== 'mfa') return again();
+    const { users, sha: parent } = await loadUsers();
+    const user = findUser(users, ticket.sub);
+    if (!user?.totp || (await stampOf(user)) !== ticket.stamp) return again();
+    const email = user.email.toLowerCase();
+    const attempt = await attempts.attempt([['totp', email], ...(addressKey(address) ? [['address', addressKey(address)]] : [])]);
+    if (attempt.wait) return tooMany(attempt.wait, 'Versuche');
+    const code = String(body.code ?? '').trim();
+    let ok = false;
+    try {
+      if (/^\d{6}$/.test(code.replace(/\s/g, ''))) {
+        const totpSecret = await openSecret(secret, user.totp);
+        const step = totpSecret && await stepOf(totpSecret, code, now());
+        ok = step != null && step > (usedSteps.get(email) ?? -1);
+        if (ok) usedSteps.set(email, step);
+      } else {
+        const hash = await recoveryHash(secret, email, code);
+        if ((user.recovery ?? []).includes(hash)) {
+          await saveUsers(user, users.map((u) => (u === user ? { ...u, recovery: u.recovery.filter((h) => h !== hash) } : u)), `Wiederherstellungscode verwendet: ${user.email}`, parent);
+          ok = true;
+        }
+      }
+    } catch (e) {
+      attempt.cancel();
+      if (e.status === 409) return error(409, 'Der Stand hat sich inzwischen geändert. Bitte noch einmal versuchen.');
+      throw e;
+    }
+    if (!ok) { await attempt.failed(); return error(401, 'Der Code stimmt nicht.'); }
+    await attempt.succeeded();
+    return started(request, user, ticket.device ?? null);
+  }
+
+  // "Zwei-Faktor-Anmeldung" in "Mein Konto": start (a new secret, sealed into a ticket for ten
+  // minutes), enable (with a code from the app and the current password; returns the recovery
+  // codes once), recovery (new codes), disable (not where the site requires it). Each change but
+  // new codes ends the user's other sessions; this one goes on with new tokens.
+  async function twoFactorApi(request, user) {
+    const body = (await request.json()) ?? {};
+    const { users, sha: parent } = await loadUsers();
+    const existing = findUser(users, user.email);
+    if (!existing || (await stampOf(existing)) !== user.payload.stamp) return error(401, 'Bitte anmelden.');
+    if (body.action === 'start') {
+      if (existing.totp) return error(422, 'Die Zwei-Faktor-Anmeldung ist schon eingerichtet.');
+      const totpSecret = newSecret();
+      const pending = await signToken(secret, { typ: 'totp-setup', sub: existing.email, secret: await sealSecret(secret, totpSecret), exp: Math.floor(now() / 1000) + 600 });
+      return json({ secret: totpSecret, url: otpauthURL({ issuer: site.name ?? 'werft', account: existing.email, secret: totpSecret }), pending });
+    }
+    if (!['enable', 'disable', 'recovery'].includes(body.action)) return error(422, 'Unbekannte Aktion.');
+    if (body.action === 'disable' && mustUseTwoFactor({ ...existing, totp: null })) return error(422, 'Auf dieser Website ist die Zwei-Faktor-Anmeldung für Ihre Rolle Pflicht.');
+    if (body.action !== 'enable' && !existing.totp) return error(422, 'Die Zwei-Faktor-Anmeldung ist nicht eingerichtet.');
+    if (body.action === 'enable' && existing.totp) return error(422, 'Die Zwei-Faktor-Anmeldung ist schon eingerichtet.');
+    const attempt = await attempts.attempt([user.payload.sid ? ['session', user.payload.sid] : ['account', user.email.toLowerCase()]]);
+    if (attempt.wait) return tooMany(attempt.wait, 'Versuche');
+    if (!(await verifyPassword(String(body.current_password ?? ''), existing.password))) { await attempt.failed(); return error(422, 'Das bisherige Passwort stimmt nicht.'); }
+    let updated, codes = null;
+    if (body.action === 'enable') {
+      const pending = await readToken(secret, body.pending, now()).catch(() => null);
+      const totpSecret = pending?.typ === 'totp-setup' && pending.sub === existing.email ? await openSecret(secret, pending.secret) : null;
+      if (!totpSecret) { attempt.cancel(); return error(410, 'Die Einrichtung ist abgelaufen. Bitte noch einmal beginnen.'); }
+      const step = await stepOf(totpSecret, body.code, now());
+      if (step == null) { await attempt.failed(); return error(422, 'Der Code stimmt nicht. Bitte den aktuellen Code aus der App eingeben.'); }
+      usedSteps.set(existing.email.toLowerCase(), step);
+      codes = newRecoveryCodes();
+      updated = { ...existing, totp: pending.secret, recovery: await Promise.all(codes.map((c) => recoveryHash(secret, existing.email, c))) };
+    } else if (body.action === 'recovery') {
+      codes = newRecoveryCodes();
+      updated = { ...existing, recovery: await Promise.all(codes.map((c) => recoveryHash(secret, existing.email, c))) };
+    } else {
+      const { totp, recovery, ...rest } = existing;
+      updated = rest;
+    }
+    await attempt.succeeded();
+    try {
+      await saveUsers(user, users.map((u) => (u === existing ? updated : u)), `Zwei-Faktor-Anmeldung ${{ enable: 'eingerichtet', disable: 'ausgeschaltet', recovery: 'mit neuen Wiederherstellungscodes' }[body.action]}: ${existing.email}`, parent);
+    } catch (e) {
+      if (e.status === 409) return error(409, 'Der Stand hat sich inzwischen geändert. Bitte neu laden und erneut versuchen.');
+      throw e;
+    }
+    const result = { ...publicUser(updated), ...(codes && { recovery_codes: codes }) };
+    if (body.action === 'recovery') return json(result);
+    const { body: tokens, headers } = await issueTokens(request, updated);
+    return json({ ...result, ...tokens }, 200, headers);
+  }
+
+  // A signed-in session, with the device token of this browser for the account.
+  async function started(request, user, deviceId) {
+    const email = user.email.toLowerCase();
+    const id = deviceId ?? base64url.encode(crypto.getRandomValues(new Uint8Array(12)));
     const deviceToken = await signToken(secret, { typ: 'device', sub: email, id, exp: Math.floor(now() / 1000) + DEVICE_TTL });
     const { body: tokens, headers } = await issueTokens(request, user);
     return json({ ...tokens, device: deviceToken, user: publicUser(user) }, 200, headers);
@@ -445,6 +553,8 @@ export function createGateway(options) {
       if (e.status === 409) return error(409, 'Der Stand hat sich inzwischen geändert. Bitte noch einmal versuchen.');
       throw e;
     }
+    // With two-factor sign-in the link sets the password only; the code still earns the session.
+    if (updated.totp) return json({ second_factor: true, ticket: await signToken(secret, { typ: 'mfa', sub: updated.email, stamp: await stampOf(updated), exp: Math.floor(now() / 1000) + 300 }) });
     const { body: tokens, headers } = await issueTokens(request, updated);
     return json({ ...tokens, user: publicUser(updated) }, 200, headers);
   }
@@ -543,6 +653,13 @@ export function createGateway(options) {
       if (!existing) return error(404, 'Unbekannter Benutzer.');
       if (existing.email === user.email) return error(422, 'Sie können sich nicht selbst löschen.');
       next = users.filter((u) => u !== existing);
+    } else if (body.action === 'two-factor-off') {
+      // For someone who lost their phone and their recovery codes; ends their sessions. One's own goes
+      // off in "Mein Konto", with the password.
+      if (!existing?.totp) return error(404, 'Diese Person hat keine Zwei-Faktor-Anmeldung.');
+      if (existing.email === user.email) return error(422, 'Ihre eigene Zwei-Faktor-Anmeldung schalten Sie unter „Mein Konto“ aus.');
+      const { totp, recovery, ...rest } = existing;
+      next = users.map((u) => (u === existing ? rest : u));
     } else {
       if (!/^[^@\s]+@[^@\s]+$/.test(email)) return error(422, 'Bitte eine gültige E-Mail-Adresse angeben.');
       if (body.role && !ROLES[body.role]) return error(422, 'Unbekannte Rolle.');
@@ -554,7 +671,7 @@ export function createGateway(options) {
       next = existing ? users.map((u) => (u === existing ? updated : u)) : [...users, updated];
     }
     try {
-      await saveUsers(user, next, `Benutzer ${body.action === 'delete' ? 'gelöscht' : existing ? 'geändert' : 'angelegt'}: ${email}`, parent);
+      await saveUsers(user, next, `Benutzer ${body.action === 'delete' ? 'gelöscht' : body.action === 'two-factor-off' ? 'ohne Zwei-Faktor-Anmeldung' : existing ? 'geändert' : 'angelegt'}: ${email}`, parent);
     } catch (e) {
       if (e.status === 409) return error(409, 'Der Stand hat sich inzwischen geändert. Bitte neu laden und erneut versuchen.');
       throw e;
@@ -611,9 +728,11 @@ export function createGateway(options) {
       if (path === '/status') return json({ ok: true, storage: storage.kind, branch, has_users: (await loadUsers()).users.length > 0, mail: !!mail });
       const user = await authenticate(request);
       if (!user) return error(401, 'Bitte anmelden.');
+      if (path === '/me/two-factor' && request.method === 'POST') return await twoFactorApi(request, user);
+      if (mustUseTwoFactor(user) && path !== '/me') return json({ message: 'Bitte richten Sie zuerst die Zwei-Faktor-Anmeldung ein (Mein Konto).', code: 'two_factor_setup' }, 403);
       if (path === '/tick') return await tick(url);
       if (path === '/me' && request.method === 'POST') return await account(request, user);
-      if (path === '/me') return json({ ...publicUser(user), editable: editable(user.role), statuses: statuses(user.role), roles: ROLES });
+      if (path === '/me') return json({ ...publicUser(user), two_factor_required: mustUseTwoFactor(user), two_factor_mandatory: mustUseTwoFactor({ ...user, totp: null }), recovery_left: user.totp ? (user.recovery ?? []).length : null, editable: editable(user.role), statuses: statuses(user.role), roles: ROLES });
       if (path === '/users') return await usersApi(request, user);
       if (path === '/previews') return await previewsApi(request, url, user);
       if (path === '/submissions') return await forms.api(request, user);
