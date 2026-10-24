@@ -327,3 +327,47 @@ export function usersView(app, root) {
   app.api('/users').then((result) => { ({ users, roles } = result); drawList(); drawForm(); }, (e) => { listCard.replaceChildren(el('p', { className: 've-error' }, e.message)); });
   return { reveal() {} };
 }
+
+// "Mein Konto", for every role: one's own name and password, and signing out on all devices.
+export function accountView(app, root) {
+  const page = el('div', { className: 've-form-page' }, head(app, 'Konto', 'Mein Konto', `Angemeldet als ${app.me.email}.`));
+  root.replaceChildren(page);
+  const field = (label, input, hint) => el('div', { className: 've-control' }, el('label', { className: 've-label', htmlFor: input.id }, label), hint ? el('small', { className: 've-hint' }, hint) : null, input);
+  const form = (card, inputs, submit, onSubmit) => {
+    const error = el('p', { className: 've-error', role: 'alert' });
+    const f = el('form', { className: 've-form ve-user-form' }, ...inputs, error, el('div', { className: 've-actions-row' }, el('button', { type: 'submit', className: 've-primary' }, submit)));
+    f.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      error.textContent = '';
+      try { await onSubmit(); } catch (e) { error.textContent = e.message; }
+    });
+    card.append(f);
+    return card;
+  };
+
+  const name = el('input', { id: 've-account-name', type: 'text', value: app.me.name ?? '', required: true, maxLength: 100, autocomplete: 'name' });
+  const nameCard = form(card('Name', 'So erscheinen Sie bei Ihren Änderungen.'), [field('Name', name)], 'Namen speichern', async () => {
+    const result = await app.api('/me', { method: 'POST', body: { name: name.value } });
+    app.me.name = result.name;
+    document.querySelector('#ve-user').textContent = result.name;
+    app.toast('Name gespeichert.');
+  });
+
+  const current = el('input', { id: 've-account-current', type: 'password', required: true, autocomplete: 'current-password' });
+  const next = el('input', { id: 've-account-new', type: 'password', required: true, minLength: 10, autocomplete: 'new-password' });
+  const repeat = el('input', { id: 've-account-repeat', type: 'password', required: true, minLength: 10, autocomplete: 'new-password' });
+  const passwordCard = form(card('Passwort ändern', 'Danach sind Sie auf anderen Geräten abgemeldet, hier nicht.'),
+    [field('Bisheriges Passwort', current), field('Neues Passwort', next, 'Mindestens 10 Zeichen.'), field('Neues Passwort wiederholen', repeat)], 'Passwort ändern', async () => {
+      if (next.value !== repeat.value) throw new Error('Die beiden neuen Passwörter sind nicht gleich.');
+      await app.api('/me', { method: 'POST', body: { password: next.value, current_password: current.value } });
+      for (const input of [current, next, repeat]) input.value = '';
+      app.toast('Passwort geändert.');
+    });
+
+  const devices = card('Auf allen Geräten abmelden', 'Zum Beispiel, wenn Sie sich an einem fremden Computer nicht abgemeldet haben. Danach melden Sie sich überall neu an, auch hier.',
+    el('div', { className: 've-actions-row' }, app.button('Überall abmelden', null, async () => {
+      if (await app.confirmDialog('Überall abmelden?', 'Sie werden auf allen Geräten abgemeldet, auch hier.', 'Abmelden')) app.signOut({ everywhere: true });
+    }, 've-tool')));
+  page.append(nameCard, passwordCard, devices);
+  return { reveal() {} };
+}
