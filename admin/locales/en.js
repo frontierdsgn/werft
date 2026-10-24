@@ -40,6 +40,7 @@ export default {
   page: 'Page',
   pages: 'Pages',
   post: 'Post',
+  term: 'Term',
   pattern: 'Pattern',
   patterns: 'Patterns',
   form: 'Form',
@@ -109,6 +110,7 @@ export default {
   'pattern.new': '+ New pattern',
   'pattern.newTitle': 'New pattern',
   'form.untranslated': 'Form · not translated yet',
+  'term.untranslated': '{kind} · not translated yet',
   'form.new': '+ New form',
   'form.newTitle': 'New form',
 
@@ -174,6 +176,7 @@ export default {
   'shared.settings': 'Website setting: changes apply to all pages.',
   'shared.menus': 'Menu: changes apply to all pages.',
   'shared.form': 'Form: changes apply wherever it appears.',
+  'shared.term': '{label}: changes apply to every entry that has it.',
   'shared.settingsFrom': 'Whatever you do not change here comes from the version in {language}.',
   'shared.menusFrom': 'A menu you do not change here comes from the version in {language}.',
   'shared.untranslated': 'Not translated yet: it shows the content of the version in {language} until you change it here.',
@@ -285,6 +288,7 @@ export default {
   // The form view
   'lead.page': 'Here you change the title, texts and images of this page. On the right you see how the page will look.',
   'lead.post': 'Here you change this entry. On the right you see how it appears on the website.',
+  'lead.term': 'Entries are given this term in their fields; the website lists them on a page of its own.',
   'lead.pattern': 'A pattern is a group of sections that appears the same on several pages, for example directions.',
   'lead.form': 'A form that visitors fill in on the website. Here you set its fields and texts.',
   'lead.settings': 'Details that apply to the whole website.',
@@ -451,6 +455,7 @@ export default {
 // German text. A theme's labels are the theme's and stay as written, unless they are one of these.
 export const fields = {
   'Name der Website': 'Name of the website',
+  Beschreibung: 'Description',
   'Anhang an jeden Seitentitel': 'Added to every page title',
   'z. B. „| Firmenname“, mit Leerzeichen angehängt': 'e.g. “| Company name”, added with a space',
   'Sprache (Code)': 'Language (code)',

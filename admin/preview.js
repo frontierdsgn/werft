@@ -1,6 +1,7 @@
 // Helpers for the editor's page preview: what makes a page safe to show next to the signed-in
 // user's tokens, and how a post is shown when it has no page of its own.
 import { createContext, safeURL, html } from 'werft';
+import { postTypesOf } from 'werft/content';
 import { t, intlLocale } from './i18n.js';
 
 const replaceIn = (list, entry) => [...list.filter((e) => e.slug !== entry.slug), entry].sort((a, b) => (a.slug < b.slug ? -1 : 1));
@@ -34,15 +35,17 @@ export function disarm(doc) {
 // A post as the site shows it, for any theme: its own page when the theme has post pages; else the
 // page that lists it, with the post marked; else the post alone in a block that lists posts; else
 // its data. Drafts and scheduled posts are shown as if published.
-export function postPreview(entry, content, { site, theme, media }) {
+// `type` is the post's type (the theme's first by default).
+export function postPreview(entry, content, { site, theme, media, type = postTypesOf(theme)[0] }) {
   const post = { ...entry, status: 'published', publish_date: undefined };
-  const { label, previewPage } = theme.postType;
+  const { label, previewPage } = type;
   const title = post.title || post.slug;
-  const others = content.posts.filter((p) => p.slug !== post.slug);
+  const first = type.name === postTypesOf(theme)[0]?.name;
+  const others = (content.types?.[type.name] ?? (first ? content.posts : [])).filter((p) => p.slug !== post.slug);
   const withPost = replaceIn(others, post);
-  const contextWith = (posts) => createContext({ site, theme, content: { ...content, posts }, media, now: new Date(), preview: true });
+  const contextWith = (posts) => createContext({ site, theme, content: { ...content, types: { ...content.types, [type.name]: posts }, ...(first && { posts }) }, media, now: new Date(), preview: true });
   const render = (posts, page) => theme.renderPage(page, contextWith(posts).for(page)).value;
-  if (theme.renderPost && theme.postType.url) return { html: theme.renderPost(post, contextWith(withPost).for(post)).value };
+  if (theme.renderPost && type.url) return { html: theme.renderPost(post, contextWith(withPost).for(post, 'post', { type: type.name })).value };
 
   const pages = [...content.pages].sort((a, b) => (b.slug === previewPage) - (a.slug === previewPage));
   for (const page of pages) {
@@ -68,7 +71,7 @@ export function postPreview(entry, content, { site, theme, media }) {
     if (field.widget === 'datetime') return new Date(v).toLocaleString(intlLocale(), { dateStyle: 'long', ...(field.time_format !== false && { timeStyle: 'short' }) });
     return typeof v === 'object' ? JSON.stringify(v) : String(v);
   };
-  const fields = theme.postType.fields.filter((f) => post[f.name] != null && post[f.name] !== '');
+  const fields = type.fields.filter((f) => post[f.name] != null && post[f.name] !== '');
   return {
     html: html`<body><dl style="margin:24px;font:16px/1.5 system-ui,sans-serif">${fields.map((f) => html`<dt style="font-weight:700;margin-top:12px">${f.label}</dt><dd style="margin:0">${value(f)}</dd>`)}</dl></body>`.value,
     note: t('postPreview.fields', { label, title }),

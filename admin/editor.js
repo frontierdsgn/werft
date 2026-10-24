@@ -7,7 +7,7 @@
 import { schema as adminSchema } from 'werft/schema';
 import { createContext, mediaPaths, markdown, raw, escape, imageSize, isPublic } from 'werft';
 import { downscale, downscaleTarget, maxSize, replaceEverywhere, picturesOf } from 'werft/images';
-import { siteLanguages, languageDir, localize, deepMerge, differences, pageFile, siteAddresses } from 'werft/content';
+import { siteLanguages, languageDir, localize, deepMerge, differences, pageFile, siteAddresses, postTypesOf, taxonomiesOf } from 'werft/content';
 import { requireUser, loadSite, api, signOut, useLocale } from './session.js';
 import { disarm, postPreview } from './preview.js';
 import { pageRenderer, mapDocument, getAt, setAt, textOf, unmark } from './visual-map.js';
@@ -32,7 +32,16 @@ const can = (kind) => (me.editable ?? []).includes(kind);
 const schema = adminSchema({ site, theme, editable: me.editable, statuses: me.statuses });
 const collection = (name) => schema.collections.find((c) => c.name === name);
 const settingsFile = (name) => collection('settings')?.files.find((f) => f.name === name);
-const postType = theme.postType;
+// The theme's post types and taxonomies. A post is the source post.<type>:<slug>, a term
+// term.<taxonomy>:<slug> (post:<slug>, from earlier addresses, is a post of the first type).
+const postTypes = postTypesOf(theme);
+const taxonomies = taxonomiesOf(theme);
+const postKind = (type) => `post.${type}`;
+const typeOfKind = (kind) => (kind === 'post' ? postTypes[0] : String(kind).startsWith('post.') ? postTypes.find((t) => t.name === kind.slice(5)) : undefined);
+const taxonomyOfKind = (kind) => (String(kind).startsWith('term.') ? taxonomies.find((t) => t.name === kind.slice(5)) : undefined);
+const isPost = (source) => !!typeOfKind(String(source).split(':')[0]);
+const isTerm = (source) => !!taxonomyOfKind(String(source).split(':')[0]);
+const typeOf = (source) => typeOfKind(String(source).split(':')[0]);
 // A site in several languages is edited one language at a time; its first language is the default.
 const languages = siteLanguages(site);
 const defaultLang = languages[0];
@@ -76,18 +85,19 @@ const media = await fetch(`${base}_werft/media.json`).then((r) => (r.ok ? r.json
 const uploads = new Map(); // site-relative path → { base64, url }
 const removed = new Set(); // media files to delete with the next save
 
-const FOLDERS = { page: 'pages', pattern: 'patterns', form: 'forms', post: postType?.name };
+const FOLDERS = { page: 'pages', pattern: 'patterns', form: 'forms',
+  ...Object.fromEntries(postTypes.map((t) => [postKind(t.name), t.name])), ...Object.fromEntries(taxonomies.map((t) => [`term.${t.name}`, t.name])) };
 const SETTINGS = { settings: 'site', menus: 'menus', redirects: 'redirects' };
 const slugOf = (path) => path.split('/').pop().replace(/\.json$/, '');
 const slugsAt = (dir) => [...files].filter(([p, f]) => f.data && p.startsWith(`${dir}/`)).map(([p]) => slugOf(p));
-// A language's posts: its own once it has some, else the default language's, shared by all.
-const postDir = (l = lang) => (isDefault(l) || !slugsAt(`${langDir(l)}/${postType.name}`).length ? `${contentDir}/${postType.name}` : `${langDir(l)}/${postType.name}`);
+// A language's posts of a type: its own once it has some, else the default language's, shared by all.
+const postDir = (l = lang, type = postTypes[0]?.name) => (isDefault(l) || !slugsAt(`${langDir(l)}/${type}`).length ? `${contentDir}/${type}` : `${langDir(l)}/${type}`);
 // The file of a source in a language (the editor's, unless named). Redirects are shared.
 function fileOf(source, l = lang) {
   const [kind, slug] = source.split(':');
   if (kind === 'redirects') return `${contentDir}/settings/redirects.json`;
   if (SETTINGS[kind]) return `${langDir(l)}/settings/${SETTINGS[kind]}.json`;
-  if (kind === 'post') return `${postDir(l)}/${slug}.json`;
+  if (typeOfKind(kind)) return `${postDir(l, typeOfKind(kind).name)}/${slug}.json`;
   return `${langDir(l)}/${FOLDERS[kind]}/${slug}.json`;
 }
 // Patterns and forms another language has not translated yet are the default language's; one is
@@ -97,7 +107,7 @@ function dataOf(source) {
   const kind = source.split(':')[0];
   if (!isDefault() && (kind === 'settings' || kind === 'menus')) return viewOf(kind);
   const path = fileOf(source);
-  const original = !isDefault() && !files.has(path) && (kind === 'pattern' || kind === 'form') && files.get(fileOf(source, defaultLang))?.data;
+  const original = !isDefault() && !files.has(path) && (kind === 'pattern' || kind === 'form' || isTerm(source)) && files.get(fileOf(source, defaultLang))?.data;
   if (original) {
     files.set(path, { sha: null, saved: null, data: structuredClone(original) });
     copies.set(path, canon(original));
@@ -110,7 +120,7 @@ const unchangedCopy = (path, f) => f.saved === null && f.data !== null && copies
 // The slugs of a folder (pages, patterns, forms, the post type) in a language. A language shows
 // the default language's patterns and forms it has not translated.
 function slugsIn(folder, l = lang) {
-  if (folder === postType?.name) return slugsAt(postDir(l));
+  if (postTypes.some((t) => t.name === folder)) return slugsAt(postDir(l, folder));
   const own = slugsAt(`${langDir(l)}/${folder}`);
   return isDefault(l) || folder === 'pages' ? own : [...new Set([...own, ...slugsAt(`${contentDir}/${folder}`)])];
 }
@@ -147,10 +157,14 @@ function content(l = lang) {
   const copy = (data) => JSON.parse(JSON.stringify(data), revive);
   const folder = (dir) => [...files].filter(([p, f]) => f.data && p.startsWith(`${dir}/`)).map(([p, f]) => ({ ...copy(f.data), slug: slugOf(p) })).sort((a, b) => (a.slug < b.slug ? -1 : 1));
   const one = (path, fallback) => (files.get(path)?.data ? copy(files.get(path).data) : fallback);
-  const of = (dir) => ({
-    pages: folder(`${dir}/pages`), posts: postType ? folder(`${dir}/${postType.name}`) : [], patterns: folder(`${dir}/patterns`), forms: folder(`${dir}/forms`),
-    settings: one(`${dir}/settings/site.json`, {}), menus: one(`${dir}/settings/menus.json`, {}),
-  });
+  const of = (dir) => {
+    const types = Object.fromEntries(postTypes.map((t) => [t.name, folder(`${dir}/${t.name}`)]));
+    return {
+      pages: folder(`${dir}/pages`), posts: types[postTypes[0]?.name] ?? [], types, patterns: folder(`${dir}/patterns`), forms: folder(`${dir}/forms`),
+      terms: Object.fromEntries(taxonomies.map((t) => [t.name, folder(`${dir}/${t.name}`)])),
+      settings: one(`${dir}/settings/site.json`, {}), menus: one(`${dir}/settings/menus.json`, {}),
+    };
+  };
   const all = { ...of(contentDir), redirects: one(`${contentDir}/settings/redirects.json`, { redirects: [] }).redirects ?? [] };
   if (languages.length) all.languages = Object.fromEntries(languages.slice(1).map((l) => [l, of(langDir(l))]));
   return localize(all, { site, lang: l });
@@ -168,7 +182,7 @@ function topFields(source) {
   if (kind === 'page') return collection('pages')?.fields;
   if (kind === 'pattern') return collection('patterns')?.fields;
   if (kind === 'form') return collection('forms')?.fields;
-  if (kind === 'post') return collection(postType?.name)?.fields;
+  if (typeOfKind(kind) || taxonomyOfKind(kind)) return collection(FOLDERS[kind])?.fields;
   return settingsFile(SETTINGS[kind])?.fields;
 }
 function schemaAt(source, path) {
@@ -195,7 +209,8 @@ function sourceLabel(source) {
   if (kind === 'menus') return t('menus');
   if (kind === 'redirects') return t('redirects');
   if (kind === 'form') return t('source.form', { title: dataOf(source)?.title ?? slug });
-  if (kind === 'post') return t('source.post', { kind: postType?.singular ?? t('post'), title: dataOf(source)?.title ?? slug });
+  if (typeOfKind(kind)) return t('source.post', { kind: typeOfKind(kind).singular ?? t('post'), title: dataOf(source)?.title ?? slug });
+  if (taxonomyOfKind(kind)) return t('source.post', { kind: taxonomyOfKind(kind).singular ?? t('term'), title: dataOf(source)?.title ?? slug });
   return t('page');
 }
 // Whether a pattern or form is shown in the default language because the editor's language has
@@ -208,6 +223,7 @@ function sharedNote(source) {
     settings: t('shared.settings'),
     menus: t('shared.menus'),
     form: t('shared.form'),
+    ...(taxonomyOfKind(kind) && { [kind]: t('shared.term', { label: taxonomyOfKind(kind).label }) }),
   }[kind];
   if (!note || isDefault()) return note;
   const language = languageName(defaultLang);
@@ -218,7 +234,8 @@ function sharedNote(source) {
 
 // ---- Editor state ----
 // The language comes from the address too (#view/source/lang).
-const [hashView, hashOpen, hashLang] = decodeURIComponent(location.hash.slice(1)).split('/');
+const [hashView, hashSource, hashLang] = decodeURIComponent(location.hash.slice(1)).split('/');
+const hashOpen = hashSource?.startsWith('post:') && postTypes.length ? `${postKind(postTypes[0].name)}:${hashSource.slice(5)}` : hashSource;
 if (languages.includes(hashLang)) lang = hashLang;
 let current = slugsIn('pages').includes('index') ? 'index' : slugsIn('pages')[0];
 // What the form view opens when the language has no page yet: the default language's home page,
@@ -339,15 +356,16 @@ function draw() {
   const addresses = siteAddresses({ site, theme, content: data, preview: true });
   let file = `${langPrefix()}index.html`;
   let from = file;
-  if (view === 'form' && selection.startsWith('post:') && dataOf(selection)) {
+  if (view === 'form' && isPost(selection) && dataOf(selection)) {
     // A post as the site shows it: its own page, or marked on the page that lists it. A post all
     // languages share is shown in the default language, where it is published.
     const shared = !isDefault() && languageOf(selection) !== lang;
     const shownIn = shared ? defaultLang : lang;
     if (shared) file = from = 'index.html';
-    const entry = { ...JSON.parse(JSON.stringify(dataOf(selection)), mediaPaths(site)), slug: selection.slice(5) };
-    const post = postPreview(entry, shared ? content(defaultLang) : data, { site, theme, media });
-    const own = !post.note && addresses.post(entry, shownIn);
+    const entry = { ...JSON.parse(JSON.stringify(dataOf(selection)), mediaPaths(site)), slug: selection.split(':')[1] };
+    const type = typeOf(selection);
+    const post = postPreview(entry, shared ? content(defaultLang) : data, { site, theme, media, type });
+    const own = !post.note && addresses.post(entry, shownIn, type.name);
     if (own) ({ file, key: from } = own);
     else if (post.focus) file = addresses.page(post.focus, shownIn).file;
     result = { html: post.html, texts: [], images: [], note: post.note };
@@ -969,7 +987,8 @@ function describe(source) {
   const name = data?.title ?? (FOLDERS[kind] ? titleOf(FOLDERS[kind], slug) : slug);
   return {
     page: { kind: t('page'), title: name },
-    post: { kind: postType?.singular ?? t('post'), title: name },
+    ...(typeOfKind(kind) && { [kind]: { kind: typeOfKind(kind).singular ?? t('post'), title: name } }),
+    ...(taxonomyOfKind(kind) && { [kind]: { kind: taxonomyOfKind(kind).singular ?? t('term'), title: name } }),
     pattern: { kind: t('pattern'), title: name },
     form: { kind: t('form'), title: name },
     settings: { kind: t('site'), title: t('settings') },
@@ -987,7 +1006,7 @@ function describe(source) {
 // for posts of a language that has none of its own.
 function languageOf(source) {
   if (!languages.length || /^(redirects|media|submissions|users|deleted|account)$/.test(source)) return null;
-  return source.startsWith('post:') && postDir() === `${contentDir}/${postType.name}` ? defaultLang : lang;
+  return isPost(source) && postDir(lang, typeOf(source).name) === `${contentDir}/${typeOf(source).name}` ? defaultLang : lang;
 }
 
 function drawBar() {
@@ -996,7 +1015,7 @@ function drawBar() {
   const shown = view === 'form' ? selection : current ? `page:${current}` : null;
   const { kind, title } = (shown && describe(shown)) ?? {};
   const language = shown && languageOf(shown);
-  const data = /^(page|post|pattern|form):/.test(shown) ? dataOf(shown) : null;
+  const data = /^(page|post(\.[^:]*)?|term\.[^:]*|pattern|form):/.test(shown) ? dataOf(shown) : null;
   const left = el('div', { className: 've-top-left' });
   if (editing || view === 'form') {
     const saveButton = button(t('save'), t('save.shortcut'), save, 've-primary ve-save');
@@ -1206,7 +1225,7 @@ function open(source) {
   const [kind, slug] = source.split(':');
   if (view === 'visual') {
     if (kind === 'page') return openPage(slug);
-    if (kind === 'post') return openPost(slug);
+    if (typeOfKind(kind)) return openPost(slug, typeOfKind(kind).name);
     if (['settings', 'menus', 'redirects', 'form'].includes(kind)) return openPanel(describe(source).title, source, []);
     return setView('form', source);
   }
@@ -1232,7 +1251,7 @@ function setView(next, source) {
   layout();
   draw();
   if (view === 'form') drawForm();
-  else if (!target.startsWith('page:') && /^(post|settings|menus|redirects|form)\b/.test(target) && dataOf(target)) open(target);
+  else if (!target.startsWith('page:') && (isPost(target) || /^(settings|menus|redirects|form)\b/.test(target)) && dataOf(target)) open(target);
 }
 
 // The view and whether the form view shows its preview, for the stylesheet; the address keeps both.
@@ -1271,7 +1290,7 @@ function drawForm() {
   layout();
 }
 
-let postsOpen = false;
+const postsOpen = new Set(); // the post types whose list is open in the sidebar
 let moreOpen = false;
 function drawPages() {
   const list = $('#ve-pages');
@@ -1346,23 +1365,24 @@ function drawPages() {
         }))));
     }
   }
-  if (postType && can('post')) {
+  for (const postType of can('post') ? postTypes : []) {
+    const kind = postKind(postType.name);
     const date = postType.date ?? 'publish_date';
-    const posts = slugsIn(postType.name).map((slug) => ({ slug, data: files.get(fileOf(`post:${slug}`)).data }))
+    const posts = slugsIn(postType.name).map((slug) => ({ slug, data: files.get(fileOf(`${kind}:${slug}`)).data }))
       .sort((a, b) => String(b.data[date] ?? '').localeCompare(String(a.data[date] ?? '')));
     const when = (data) => (data[date] ? new Date(data[date]).toLocaleDateString(intlLocale()) : '');
     // A language without posts of its own shows the default language's; its first own post ends that.
-    const shared = !isDefault() && languageOf('post:') !== lang;
+    const shared = !isDefault() && languageOf(`${kind}:`) !== lang;
     // Own posts of the language that are not public yet: the site still shows the default ones.
     const waiting = !isDefault() && !shared && !posts.some(({ data }) => isPublic(data));
     // Starting own posts changes what the public site shows, so it is for roles that may publish.
     const mayPublish = (me.statuses ?? []).includes('published');
-    sections.push(folded(`${postType.label} (${posts.length})`, postsOpen || shown.startsWith('post:'), (o) => { postsOpen = o; },
+    sections.push(folded(`${postType.label} (${posts.length})`, postsOpen.has(postType.name) || shown.startsWith(`${kind}:`), (o) => { if (o) postsOpen.add(postType.name); else postsOpen.delete(postType.name); },
       shared && el('p', { className: 've-hint' }, t('posts.shared', { label: postType.label, language: languageName(lang), defaultLanguage: languageName(defaultLang) })),
       waiting && el('p', { className: 've-hint' }, t('posts.waiting', { label: postType.label, language: languageName(lang), defaultLanguage: languageName(defaultLang) })),
-      button(shared ? t('posts.newShared', { kind: postType.singular ?? t('post') }) : t('posts.new', { kind: postType.singular ?? t('post') }), null, () => newPost(), 've-tool ve-wide'),
-      shared && mayPublish && button(t('posts.startOwn', { label: postType.label, language: languageName(lang) }), null, () => newPost({ own: true }), 've-tool ve-wide'),
-      el('ul', {}, ...posts.map(({ slug, data }) => item(`post:${slug}`, data.title ?? slug, note(when(data), unusual(data)))))));
+      button(shared ? t('posts.newShared', { kind: postType.singular ?? t('post') }) : t('posts.new', { kind: postType.singular ?? t('post') }), null, () => newPost({ type: postType.name }), 've-tool ve-wide'),
+      shared && mayPublish && button(t('posts.startOwn', { label: postType.label, language: languageName(lang) }), null, () => newPost({ own: true, type: postType.name }), 've-tool ve-wide'),
+      el('ul', {}, ...posts.map(({ slug, data }) => item(`${kind}:${slug}`, data.title ?? slug, note(when(data), unusual(data)))))));
   }
   const siteList = el('ul', {});
   if (can('settings')) siteList.append(item('settings', t('settings'), t('settings.sub')));
@@ -1381,10 +1401,16 @@ function drawPages() {
       more.push(el('h3', {}, t('forms')), el('ul', {}, ...slugsIn('forms').map((slug) => item(`form:${slug}`, titleOf('forms', slug), untranslated(`form:${slug}`) ? t('form.untranslated') : t('form')))),
         button(t('form.new'), null, () => newEntry('form'), 've-tool ve-wide'));
     }
+    // The terms of each taxonomy (categories, tags, …) that posts are given.
+    for (const taxonomy of taxonomies) {
+      const kind = `term.${taxonomy.name}`;
+      more.push(el('h3', {}, taxonomy.label), el('ul', {}, ...slugsIn(taxonomy.name).map((slug) => item(`${kind}:${slug}`, titleOf(taxonomy.name, slug), untranslated(`${kind}:${slug}`) ? t('term.untranslated', { kind: taxonomy.singular ?? t('term') }) : taxonomy.singular ?? t('term')))),
+        button(t('posts.new', { kind: taxonomy.singular ?? t('term') }), null, () => newEntry(kind), 've-tool ve-wide'));
+    }
   }
   if (can('structure')) more.push(el('h3', {}, t('redirects')), el('ul', {}, item('redirects', t('redirects'), t('redirects.sub'))));
   if (can('content')) more.push(el('h3', {}, t('deleted')), el('ul', {}, item('deleted', t('deleted'), t('deleted.sub'))));
-  if (more.length) sections.push(folded(t('more'), moreOpen || /^(pattern|form:|redirects|deleted)/.test(shown), (o) => { moreOpen = o; }, ...more));
+  if (more.length) sections.push(folded(t('more'), moreOpen || /^(pattern|form:|term\.|redirects|deleted)/.test(shown), (o) => { moreOpen = o; }, ...more));
   list.replaceChildren(...sections);
   drawLanguages();
 }
@@ -1404,8 +1430,8 @@ function searchable() {
     }
   };
   if (can('content')) add('page', 'pages');
-  if (postType && can('post')) add('post', postType.name);
-  if (can('content')) { add('pattern', 'patterns'); if (collection('forms')) add('form', 'forms'); }
+  if (can('post')) for (const type of postTypes) add(postKind(type.name), type.name);
+  if (can('content')) { add('pattern', 'patterns'); if (collection('forms')) add('form', 'forms'); for (const tax of taxonomies) add(`term.${tax.name}`, tax.name); }
   if (can('media')) for (const path of images()) out.push({ source: 'media', title: path.split('/').pop(), kindName: t('image'), texts: [] });
   return out;
 }
@@ -1442,7 +1468,7 @@ function switchLanguage(next, source) {
   const [kind, slug] = target.split(':');
   if (kind === 'page') current = slug;
   if (view === 'visual') return setView(view, target.startsWith('page:') ? target : pageSource());
-  setView(view, kind === 'post' && !slugsIn(postType.name).includes(slug) ? pageSource() : target);
+  setView(view, typeOfKind(kind) && !slugsIn(typeOfKind(kind).name).includes(slug) ? pageSource() : target);
 }
 
 // A page of another language as a copy in the editor's language, to be translated in place. It is
@@ -1564,7 +1590,7 @@ const slugify = (title) => title.toLowerCase().replace(/ä/g, 'ae').replace(/ö/
   .normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'seite';
 // A slug no entry of the folder has; a new page also takes none another language uses, which would
 // make it that page's translation.
-const KIND = { pages: 'page', patterns: 'pattern', forms: 'form', [postType?.name]: 'post' };
+const KIND = Object.fromEntries(Object.entries(FOLDERS).map(([kind, folder]) => [folder, kind]));
 const taken = (folder, slug) => (folder === 'pages' && languages.length ? languages : [lang]).some((l) => slugsIn(folder, l).includes(slug)) || files.has(fileOf(`${KIND[folder]}:${slug}`));
 const unique = (folder, slug) => { let s = slug; for (let n = 2; taken(folder, s); n++) s = `${slug}-${n}`; return s; };
 
@@ -1595,32 +1621,36 @@ async function duplicate(slug) {
 
 // A new pattern or form, opened in the form view.
 async function newEntry(kind) {
-  const title = await promptDialog(kind === 'pattern' ? t('pattern.newTitle') : t('form.newTitle'), t('name'));
+  const taxonomy = taxonomyOfKind(kind);
+  const title = await promptDialog(taxonomy ? t('post.newTitle', { kind: taxonomy.singular ?? t('term') }) : kind === 'pattern' ? t('pattern.newTitle') : t('form.newTitle'), t('name'));
   if (!title) return;
   const slug = unique(FOLDERS[kind], slugify(title));
   change(() => { files.set(fileOf(`${kind}:${slug}`), { sha: null, saved: null, data: kind === 'pattern' ? { title, sections: [] } : { title } }); });
   setView('form', `${kind}:${slug}`);
 }
 
-function openPost(slug) {
-  if (view === 'form') { open(`post:${slug}`); return; }
+function openPost(slug, type = postTypes[0].name) {
+  const source = `${postKind(type)}:${slug}`;
+  if (view === 'form') { open(source); return; }
+  const postType = typeOfKind(postKind(type));
   // The page that lists the posts stays in view beside the post's details.
   const listing = postType.previewPage;
   if (listing && listing !== current && slugsIn('pages').includes(listing)) openPage(listing);
-  openPanel(t('post.panelTitle', { kind: postType.singular ?? t('post'), title: titleOf(postType.name, slug) }), `post:${slug}`, [], {
-    extra: button(t('delete'), null, () => removeEntry(`post:${slug}`), 've-tool ve-danger'),
+  openPanel(t('post.panelTitle', { kind: postType.singular ?? t('post'), title: titleOf(type, slug) }), source, [], {
+    extra: button(t('delete'), null, () => removeEntry(source), 've-tool ve-danger'),
   });
 }
-// own: the first post of a language that has shown the default language's posts so far.
-async function newPost({ own = false } = {}) {
+// own: the first post of a language that has shown the default language's posts of the type so far.
+async function newPost({ own = false, type = postTypes[0].name } = {}) {
+  const postType = typeOfKind(postKind(type));
   const names = { label: postType.label, language: languageName(lang), defaultLanguage: languageName(defaultLang) };
   if (own && !(await confirmDialog(t('posts.ownTitle', names), t('posts.ownText', names), t('continue')))) return;
   const title = await promptDialog(t('post.newTitle', { kind: postType.singular ?? t('post') }), t('title'));
   if (!title) return;
-  const slug = unique(postType.name, slugify(title));
-  const path = own ? `${langDir()}/${postType.name}/${slug}.json` : fileOf(`post:${slug}`);
+  const slug = unique(type, slugify(title));
+  const path = own ? `${langDir()}/${type}/${slug}.json` : fileOf(`${postKind(type)}:${slug}`);
   change(() => { files.set(path, { sha: null, saved: null, data: { title, status: 'draft' } }); });
-  openPost(slug);
+  openPost(slug, type);
 }
 
 // ---- Deleted entries ----
@@ -1628,7 +1658,7 @@ async function newPost({ own = false } = {}) {
 // compared in order (admin/deleted.js). Each commit's files are read once per visit.
 const historyTrees = new Map(); // commit sha → [{ path, sha }]
 const entryAt = (path) => entryOf(path, { contentDir, languages, folders: FOLDERS });
-const kindName = (kind) => ({ page: t('page'), post: postType?.singular ?? t('post'), pattern: t('pattern'), form: t('form') })[kind];
+const kindName = (kind) => ({ page: t('page'), pattern: t('pattern'), form: t('form') })[kind] ?? typeOfKind(kind)?.singular ?? taxonomyOfKind(kind)?.singular ?? t('post');
 // limit: how many of the latest commits that changed the content are searched (the gateway gives
 // at most 100). Returns { entries, searched, more }.
 async function findDeleted(limit) {
@@ -1642,7 +1672,7 @@ async function findDeleted(limit) {
       return { commit: { sha: c.sha, date: c.commit.author.date, author: c.commit.author.name }, files: await historyTrees.get(c.sha) };
     })));
   }
-  const mayRestore = (path) => { const e = entryAt(path); return !!e && can(e.kind === 'post' ? 'post' : 'content'); };
+  const mayRestore = (path) => { const e = entryAt(path); return !!e && can(typeOfKind(e.kind) ? 'post' : 'content'); };
   // A page whose old address redirects was moved (a new address), not deleted.
   const redirected = new Set((files.get(fileOf('redirects'))?.data?.redirects ?? []).map((r) => r.from));
   const moved = (path) => { const e = entryAt(path); return e?.kind === 'page' && [pageAddress(e.slug, e.lang ?? defaultLang), `${base}${langPrefix(e.lang ?? defaultLang)}${pageFile(e.slug)}`].some((a) => redirected.has(a)); };
@@ -1667,7 +1697,7 @@ function restoreDeleted(entry) {
   const source = `${entry.kind}:${entry.slug}`;
   const target = entry.lang ?? defaultLang;
   if (languages.length && target !== lang) switchLanguage(target, source); else open(source);
-  toast(entry.kind === 'page' || entry.kind === 'post' ? t('restore.draft', { title: entry.title }) : t('restore.done', { title: entry.title }));
+  toast(entry.kind === 'page' || typeOfKind(entry.kind) ? t('restore.draft', { title: entry.title }) : t('restore.done', { title: entry.title }));
 }
 
 // ---- Images ----
@@ -1725,8 +1755,8 @@ function kindOf(path) {
   if (language) rest = rest.slice(language.length + 1);
   if (rest === 'settings/site.json') return 'settings';
   if (rest.startsWith('settings/')) return 'structure';
-  if (postType && rest.startsWith(`${postType.name}/`)) return 'post';
-  return ['pages/', 'patterns/', 'forms/'].some((d) => rest.startsWith(d)) ? 'content' : 'code';
+  if (postTypes.some((type) => rest.startsWith(`${type.name}/`))) return 'post';
+  return ['pages', 'patterns', 'forms', ...taxonomies.map((tax) => tax.name)].some((d) => rest.startsWith(`${d}/`)) ? 'content' : 'code';
 }
 // Every use of an image in the entries the editor may change shows another one instead. The old file
 // is deleted with the next save once nothing names it any more (an unsaved upload stays in the
@@ -1791,7 +1821,7 @@ $('#ve-site').textContent = site.name;
 $('#ve-signout').addEventListener('click', () => app.signOut());
 for (const b of document.querySelectorAll('.ve-views button[data-view]')) b.addEventListener('click', () => { if (b.dataset.view !== view) setView(b.dataset.view); });
 $('#ve-app').hidden = false;
-if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'submissions', 'users', 'deleted', 'account'].includes(hashOpen)) {
+if (hashOpen && /^(page|post\.[^:]+|term\.[^:]+|pattern|form):/.test(hashOpen) && FOLDERS[hashOpen.split(':')[0]] ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'submissions', 'users', 'deleted', 'account'].includes(hashOpen)) {
   if (hashOpen.startsWith('page:')) current = hashOpen.slice(5);
   selection = hashOpen;
 }

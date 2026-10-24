@@ -17,6 +17,7 @@ const dateTime = (iso) => new Date(iso).toLocaleString(intlLocale(), { dateStyle
 const lead = (kind) => ({
   page: t('lead.page'),
   post: t('lead.post'),
+  term: t('lead.term'),
   pattern: t('lead.pattern'),
   form: t('lead.form'),
   settings: t('lead.settings'),
@@ -59,7 +60,9 @@ const card = (title, lead, ...children) => el('section', { className: 've-card' 
 export function formView(app, root) {
   const source = app.selection;
   const data = app.dataOf(source);
-  const [type, slug] = source.split(':');
+  const [full, slug] = source.split(':');
+  // post.<type> and term.<taxonomy> are posts and terms.
+  const type = full.split('.')[0];
   const { kind, title } = app.describe(source);
   const from = !data && app.translatableFrom(source);
   if (from) {
@@ -120,7 +123,7 @@ export function formView(app, root) {
   if (type === 'page' || type === 'post') page.append(previewLinks(app, source));
   const actions = [
     type === 'page' && app.can('content') ? app.button(t('page.duplicateMore'), null, () => app.duplicate(slug), 've-tool') : null,
-    ['post', 'pattern', 'form'].includes(type) || (type === 'page' && slug !== 'index') ? app.button(t('delete.kindMore', { kind }), null, () => app.removeEntry(source), 've-tool ve-danger') : null,
+    ['post', 'term', 'pattern', 'form'].includes(type) || (type === 'page' && slug !== 'index') ? app.button(t('delete.kindMore', { kind }), null, () => app.removeEntry(source), 've-tool ve-danger') : null,
   ].filter(Boolean);
   if (actions.length) page.append(card(null, null, el('div', { className: 've-actions-row' }, ...actions)));
   root.replaceChildren(page);
