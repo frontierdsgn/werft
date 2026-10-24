@@ -186,34 +186,48 @@ test('the build writes an RSS feed of the newest posts per language, and ctx.hea
     'content/pages/index.json': json({ title: 'Start' }),
     'content/en/pages/index.json': json({ title: 'Home' }),
     'content/fr/pages/index.json': json({ title: 'Accueil' }),
-    'content/news/alt.json': json({ title: 'Alt', publish_date: '2026-01-02T10:00:00.000Z' }),
-    'content/news/neu.json': json({ title: 'Neu & frisch', publish_date: '2026-05-01T08:00:00.000Z', teaser: 'Ab <Juni>' }),
+    'content/news/alt.json': json({ title: 'Alt', publish_date: '2026-01-02T10:00:00.000Z', date: '2027-03-01' }),
+    'content/news/neu.json': json({ title: 'Neu & frisch\u000b', publish_date: '2026-05-01T08:00:00.000Z', teaser: 'Ab <Juni> & 10&euro;' }),
+    'content/news/datum.json': json({ title: 'Nur Datum', date: '2026-03-01' }),
+    'content/news/versteckt.json': json({ title: 'Versteckt', publish_date: '2026-05-02T08:00:00.000Z', seo: { noindex: true } }),
     'content/news/geplant.json': json({ title: 'Geplant', publish_date: '2026-12-01T08:00:00.000Z' }),
     'content/news/entwurf.json': json({ title: 'Entwurf', status: 'draft' }),
     'content/en/news/new.json': json({ title: 'New', publish_date: '2026-05-01T08:00:00.000Z' }),
   };
-  const feedTheme = { ...theme, postType: { ...theme.postType, label: 'Neuigkeiten', feed: { description: (post) => post.teaser } } };
+  const feedTheme = { ...theme, postType: { ...theme.postType, label: 'Neuigkeiten', date: 'date', feed: { title: (lang) => (lang === 'en' ? 'Salon: News' : undefined), description: (post, ctx) => post.teaser && `${post.teaser} (${ctx.lang})` } } };
   const out = await built({ languages: ['de', 'en', 'fr'] }, files, feedTheme);
-  assert.equal(out['feed.xml'], '<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0"><channel><title>Salon: Neuigkeiten</title>'
+  // Newest first by publish date (else the post type's date); drafts, scheduled and noindex posts
+  // left out; descriptions are text inside HTML; characters XML does not allow are dropped.
+  assert.equal(out['feed.xml'], '<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Salon: Neuigkeiten</title>'
     + '<link>https://salon.example/</link><description>Salon: Neuigkeiten</description><language>de</language>'
+    + '<atom:link href="https://salon.example/feed.xml" rel="self" type="application/rss+xml"/>'
     + '<item><title>Neu &amp; frisch</title><link>https://salon.example/news/neu.html</link><guid isPermaLink="true">https://salon.example/news/neu.html</guid>'
-    + '<pubDate>Fri, 01 May 2026 08:00:00 GMT</pubDate><description>Ab &lt;Juni&gt;</description></item>'
+    + '<pubDate>Fri, 01 May 2026 08:00:00 GMT</pubDate><description>Ab &amp;lt;Juni&amp;gt; &amp;amp; 10&amp;amp;euro; (de)</description></item>'
+    + '<item><title>Nur Datum</title><link>https://salon.example/news/datum.html</link><guid isPermaLink="true">https://salon.example/news/datum.html</guid>'
+    + '<pubDate>Sun, 01 Mar 2026 00:00:00 GMT</pubDate></item>'
     + '<item><title>Alt</title><link>https://salon.example/news/alt.html</link><guid isPermaLink="true">https://salon.example/news/alt.html</guid>'
     + '<pubDate>Fri, 02 Jan 2026 10:00:00 GMT</pubDate></item></channel></rss>\n');
-  assert.match(out['en/feed.xml'], /<language>en<\/language><item><title>New<\/title><link>https:\/\/salon.example\/en\/news\/new.html<\/link>/);
-  // French shows the German posts and links their feed.
+  assert.match(out['en/feed.xml'], /<title>Salon: News<\/title>.*<language>en<\/language><atom:link href="https:\/\/salon.example\/en\/feed.xml".*<item><title>New<\/title><link>https:\/\/salon.example\/en\/news\/new.html<\/link>/);
+  // French shows the German posts and links their feed, by its title.
   assert.equal(out['fr/feed.xml'], undefined);
   const link = (text) => text.match(/<link rel="alternate" type="application\/rss\+xml"[^>]*>/)?.[0];
   assert.equal(link(out['index.html']), '<link rel="alternate" type="application/rss+xml" title="Salon: Neuigkeiten" href="feed.xml">');
-  assert.equal(link(out['en/index.html']), '<link rel="alternate" type="application/rss+xml" title="Salon: Neuigkeiten" href="feed.xml">');
+  assert.equal(link(out['en/index.html']), '<link rel="alternate" type="application/rss+xml" title="Salon: News" href="feed.xml">');
   assert.equal(link(out['fr/index.html']), '<link rel="alternate" type="application/rss+xml" title="Salon: Neuigkeiten" href="../feed.xml">');
-  // Posts without pages of their own link to the home page; without a site address there is no feed.
+  // Posts without pages of their own link to the home page.
   const { renderPost, ...listOnly } = feedTheme;
   const list = await built({}, { ...files, 'content/settings/site.json': json({ title: 'Salon', url: 'https://salon.example/salon/' }) }, listOnly);
   assert.match(list['feed.xml'], /<item><title>Neu &amp; frisch<\/title><link>https:\/\/salon.example\/salon\/<\/link><guid isPermaLink="false">https:\/\/salon.example\/salon\/#neu<\/guid>/);
-  const none = await built({}, { ...files, 'content/settings/site.json': json({ title: 'Salon' }) }, feedTheme);
-  assert.equal(none['feed.xml'], undefined);
-  assert.equal(link(none['index.html']), undefined);
-  const off = await built({}, files, { ...feedTheme, postType: { ...feedTheme.postType, feed: false } });
-  assert.equal(off['feed.xml'], undefined);
+  // No feed and no link without a site address, on a site hidden from search engines, without
+  // public posts, or with feed: false.
+  for (const [why, more, t] of [
+    ['no address', { 'content/settings/site.json': json({ title: 'Salon' }) }, feedTheme],
+    ['noindex', { 'content/settings/site.json': json({ title: 'Salon', url: 'https://salon.example/', search_visibility: 'noindex' }) }, feedTheme],
+    ['no posts', Object.fromEntries(Object.keys(files).filter((f) => f.includes('/news/')).map((f) => [f, json({ status: 'draft' })])), feedTheme],
+    ['off', {}, { ...feedTheme, postType: { ...feedTheme.postType, feed: false } }],
+  ]) {
+    const none = await built({}, { ...files, ...more }, t);
+    assert.equal(none['feed.xml'], undefined, why);
+    assert.equal(link(none['index.html']), undefined, why);
+  }
 });

@@ -162,9 +162,14 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      `fields.date(name, label)`, which stores an ISO date (`2026-11-14`) and shows it in the
      editor's locale (14.11.2026 in a German browser). Older files with "14.11.2026" are read too.
      Once the site setting `url` is set, the build writes `feed.xml` (RSS 2.0, `en/feed.xml` for a
-     language with posts of its own) with the 20 newest published posts: title, link to the post's
-     page (to the home page without `renderPost`), date and the text `postType.feed.description(post)`
-     returns (default: the post's SEO description); `feed: false` turns it off.
+     language with posts of its own) with the 20 newest published posts by their publish date
+     (else the date field), leaving out noindex posts: title, link to the post's page (to the home
+     page without `renderPost`), date and the text `postType.feed.description(post, ctx)` returns
+     (default: the post's SEO description), shown as plain text. `postType.feed.title` (text, or
+     a function of the language) replaces the title "<site name>: <post type label>". A site set
+     to "Nicht indexieren" or without public posts gets no feed. The build's `feed.xml` replaces a
+     file of that name from the theme; a theme with its own feed sets `feed: false`, which also
+     leaves out the link.
    - `ctx` offers `settings`, `menu(id)`, `image(src)` (with width and height), `img(image, options)`
      (a responsive `<img>`, see [Images](#images)), `posts()`, `form(slug)`,
      `md()`, `inline()`. `posts()` returns the published posts newest first by their date, posts
