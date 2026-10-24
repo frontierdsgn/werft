@@ -56,7 +56,7 @@ export async function renderPreview({ site, theme, target, files, media = {}, re
   const dir = `${site.base ? `${String(site.base).replace(/^\/+|\/+$/g, '')}/` : ''}${folder}${file.includes('/') ? file.slice(0, file.lastIndexOf('/') + 1) : ''}`;
   // In another language, links to pages it lacks lead to the default language's, as in the build.
   if (folder) {
-    const link = pageLinks({ site, content: ctx.content, preview: true, now });
+    const link = pageLinks({ site, content: ctx.content, now });
     html = html.replace(/ href="([^"]*)"/g, (m, href) => ` href="${link(href, folder + file)}"`);
   }
   const head = `<base href="/${escapeAttr(dir)}"><meta name="robots" content="noindex">`;

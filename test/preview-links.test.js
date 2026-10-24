@@ -19,6 +19,7 @@ const site = { name: 'Test', contentDir: 'content', base: 'sub', languages: ['de
 
 async function setup({ withRender = true, renderTheme = theme } = {}) {
   const hub = fakeGitHub();
+  const down = { now: false };
   const users = [
     { email: 'ed@test', name: 'Ed', role: 'editor', password: await hashPassword('editor-password', 1000) },
     { email: 'con@test', name: 'Con', role: 'contributor', password: await hashPassword('contrib-password', 1000) },
@@ -29,13 +30,14 @@ async function setup({ withRender = true, renderTheme = theme } = {}) {
     'content/pages/neu.json': JSON.stringify({ title: 'Neue Seite', status: 'draft', html: '<img src=x onerror="fetch(\'/api/werft/users\')">' }),
     'assets/img/a.jpg': 'jpeg',
     'content/pages/kontakt.json': JSON.stringify({ title: 'Kontakt', status: 'published' }),
-    'content/en/pages/neu.json': JSON.stringify({ title: 'New page', status: 'draft' }),
+    'content/en/pages/kontakt.json': JSON.stringify({ title: 'Contact', status: 'draft' }),
+    'content/en/pages/neu.json': JSON.stringify({ title: 'New page', status: 'draft', html: '<a href="kontakt.html">contact</a>' }),
     'content/events/fest.json': JSON.stringify({ title: 'Sommerfest', status: 'draft' }),
     'content/settings/site.json': JSON.stringify({ title: 'Test' }),
   });
   const clock = { t: Date.parse('2026-06-01T00:00:00Z') };
   const make = () => createGateway({
-    storage: githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch }),
+    storage: githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: (...args) => (down.now ? Promise.resolve(new Response('{}', { status: 502 })) : hub.fetch(...args)) }),
     secret: 'x'.repeat(32), now: () => clock.t,
     site: { name: 'Test', contentDir: 'content', postType: 'events', languages: ['de', 'en'], base: 'sub', mediaDirs: ['assets/img'] },
     render: withRender ? { site, theme: renderTheme } : undefined,
@@ -47,7 +49,7 @@ async function setup({ withRender = true, renderTheme = theme } = {}) {
     return { status: response.status, headers: response.headers, data: type.includes('json') ? await response.json() : await response.text() };
   };
   const signIn = async (email, password) => (await call('/api/werft/session', { method: 'POST', body: { email, password } })).data.access_token;
-  return { call, signIn, clock, make };
+  return { call, signIn, clock, make, down };
 }
 
 test('a link shows a draft to someone without an account, marked noindex', async () => {
@@ -80,7 +82,7 @@ test('posts and other languages render like the build, from their folder', async
   const english = await call(await urlOf('content/en/pages/neu.json'));
   assert.match(english.data, /<base href="\/sub\/en\/">.*<h1>New page<\/h1>/s);
   assert.match(english.data, /href="\.\.\/assets\/site\.css"/, 'relative addresses work from the language folder');
-  assert.match(english.data, /<a href="\.\.\/kontakt\.html">/, 'a page the language lacks links to the default language');
+  assert.match(english.data, /<a href="\.\.\/kontakt\.html">contact<\/a>/, 'a page the language has only as a draft links to the default language, as on the site');
 });
 
 test('a link stops working when it expires or is revoked, and a forged one never works', async () => {
@@ -113,9 +115,17 @@ test('a broken link or a failing theme shows the "no longer valid" page; no link
   const failing = await setup({ renderTheme: { ...theme, renderPage: () => { throw new Error('theme bug'); } } });
   const ed = await failing.signIn('ed@test', 'editor-password');
   const [link] = (await failing.call('/api/werft/previews', { token: ed, method: 'POST', body: { path: 'content/pages/neu.json' } })).data.previews;
+  const logged = [];
   const error = console.error;
-  console.error = () => {};
-  try { assert.equal((await failing.call(link.url)).status, 410); } finally { console.error = error; }
+  console.error = (...args) => logged.push(args.join(' '));
+  try {
+    assert.equal((await failing.call(link.url)).status, 410);
+    assert.match(logged.join('\n'), /preview:.*theme bug/, 'the error is logged');
+    failing.down.now = true;
+    const outage = await failing.call(link.url);
+    assert.deepEqual([outage.status, outage.headers.get('retry-after')], [503, '60'], 'GitHub not answering is no dead link');
+    assert.match(outage.data, /gerade nicht erreichbar/);
+  } finally { console.error = error; }
   const bare = await setup({ withRender: false });
   assert.equal((await bare.call('/api/werft/previews', { token: await bare.signIn('ed@test', 'editor-password'), method: 'POST', body: { path: 'content/pages/neu.json' } })).status, 501);
 });

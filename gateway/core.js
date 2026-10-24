@@ -510,6 +510,8 @@ export function createGateway(options) {
       });
     } catch (e) {
       console.error('werft gateway: preview:', e);
+      // The repository could not be read: try again later; anything else (a theme that fails): gone.
+      if (e.github || e.status >= 500) return new Response('<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Vorschau</title><body style="font:17px/1.5 system-ui,sans-serif;max-width:32em;margin:15vh auto;padding:0 16px"><p lang="de">Die Vorschau ist gerade nicht erreichbar. Bitte in ein paar Minuten noch einmal versuchen.</p>', { status: 503, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex', 'retry-after': '60' } });
       return gone();
     }
     if (html == null) return gone();
