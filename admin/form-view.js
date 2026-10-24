@@ -110,10 +110,11 @@ export function formView(app, root) {
   if (named('seo').length) page.append(buildForm(named('seo'), data, ctx));
 
   page.append(versions(app, source));
-  if (['post', 'pattern', 'form'].includes(type) || (type === 'page' && slug !== 'index')) {
-    page.append(card(null, null, el('div', { className: 've-actions-row' },
-      app.button(`${kind} löschen …`, null, () => app.removeEntry(source), 've-tool ve-danger'))));
-  }
+  const actions = [
+    type === 'page' && app.can('content') ? app.button('Seite duplizieren …', null, () => app.duplicate(slug), 've-tool') : null,
+    ['post', 'pattern', 'form'].includes(type) || (type === 'page' && slug !== 'index') ? app.button(`${kind} löschen …`, null, () => app.removeEntry(source), 've-tool ve-danger') : null,
+  ].filter(Boolean);
+  if (actions.length) page.append(card(null, null, el('div', { className: 've-actions-row' }, ...actions)));
   root.replaceChildren(page);
 
   return {
