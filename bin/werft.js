@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 // werft command line: build, serve and manage a werft site.
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
-import { buildToDisk, loadSite } from '../lib/node.js';
+import { buildToDisk, fsStore, loadSite } from '../lib/node.js';
 import { USERS_FILE, hashPassword, parseUsers, serializeUsers, findUser } from '../gateway/auth.js';
 import { ROLES } from '../gateway/roles.js';
 
 const [command = 'help', ...args] = process.argv.slice(2);
 const option = (name) => { const i = args.indexOf(`--${name}`); return i < 0 ? undefined : args[i + 1]; };
-const positional = args.filter((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'));
+// Options without a value; every other option takes the next argument.
+const FLAGS = ['--strict', '--password-prompt'];
+const positional = args.filter((a, i) => !a.startsWith('--') && !(args[i - 1]?.startsWith('--') && !FLAGS.includes(args[i - 1])));
 
 function ask(question, { hidden = false } = {}) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
@@ -37,6 +40,46 @@ const commands = {
     const result = await buildToDisk(positional[0] ?? '.', { out: option('out'), now: option('now') ? new Date(option('now')) : undefined });
     console.log(`Built ${result.files.length} files into ${result.outDir} in ${Date.now() - started} ms`);
     if (result.schedule.next_publish) console.log(`Next scheduled publication: ${result.schedule.next_publish}`);
+  },
+  // Builds the site into a temporary directory and checks the build (lib/check.js).
+  async check() {
+    const started = Date.now();
+    const { check } = await import('../lib/check.js');
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'werft-check-'));
+    try {
+      const result = await buildToDisk(positional[0] ?? '.', { out: path.join(tmp, 'site'), now: option('now') ? new Date(option('now')) : undefined });
+      const files = [];
+      for (const rel of await fsStore(result.outDir).list('')) {
+        const file = path.join(result.outDir, rel);
+        files.push({ path: rel, size: (await fs.stat(file)).size, text: /\.(html?|css)$/i.test(rel) ? await fs.readFile(file, 'utf8') : undefined });
+      }
+      // The content and the theme, so a finding can name where its address is written.
+      const store = fsStore(result.root);
+      const contentDir = result.site.contentDir ?? result.site.content ?? 'content';
+      const themeDir = path.relative(result.root, path.dirname(path.resolve(result.root, result.site.theme)));
+      const themeFiles = themeDir ? (await store.list(themeDir)).filter((p) => /\.(js|css|html|json)$/.test(p) && !p.includes('node_modules/')).map((p) => `${themeDir}/${p}`) : [path.normalize(result.site.theme)];
+      const sources = [];
+      for (const p of [...(await store.list(contentDir)).filter((p) => p.endsWith('.json')).map((p) => `${contentDir}/${p}`), ...themeFiles]) sources.push({ path: p, text: await store.readText(p) });
+      const { findings, pages } = check({ files, site: result.site, redirects: result.content.redirects, sources });
+      // The same problem on many pages (a menu link, say) is printed once, with the places.
+      const problems = new Map();
+      for (const f of findings) {
+        const key = JSON.stringify([f.severity, f.rule, f.message, f.sources]);
+        if (!problems.has(key)) problems.set(key, { ...f, places: [] });
+        problems.get(key).places.push(f.line ? `${f.file}:${f.line}:${f.column}` : f.file);
+      }
+      for (const p of problems.values()) {
+        const places = p.places.length > 4 ? `${p.places.slice(0, 3).join(', ')} and ${p.places.length - 3} more` : p.places.join(', ');
+        console.log(`${p.severity} ${p.rule}: ${p.message}\n  at ${places}${p.sources.length ? `\n  written in ${p.sources.join(', ')}` : ''}`);
+      }
+      const errors = findings.filter((f) => f.severity === 'error').length;
+      const warnings = findings.length - errors;
+      const failed = errors + (args.includes('--strict') ? warnings : 0);
+      console.log(`${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'} in ${pages} pages and ${files.length} files, checked in ${Date.now() - started} ms`);
+      if (failed) process.exitCode = 1;
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
   },
   dev: () => serveCommand(true),
   serve: () => serveCommand(false),
@@ -91,6 +134,7 @@ const commands = {
     console.log(`Usage: werft <command> [options]
 
   build [dir] [--out dir] [--now iso-date]   Build the site
+  check [dir] [--strict] [--now iso-date]     Build and check links, media, alt texts (--strict: warnings fail)
   dev [dir] [--port 8787]                     Local server: site, /admin and gateway on this git checkout
   serve [dir] [--port] [--host]               Same for production; needs WERFT_SECRET, publishes scheduled entries
   user list|add|set|remove [email] [dir]      Manage .werft/users.json (--role, --name, --password)
