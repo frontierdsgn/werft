@@ -237,27 +237,45 @@ test('ctx.head() writes the organization the site settings describe as JSON-LD o
   const withOrg = { ...theme, settingsFields: [fields.organization()] };
   const files = {
     'content/settings/site.json': json({
-      title: 'Salon </script><b>', url: 'https://salon.example/', icon: 'assets/img/icon.png',
+      title: 'Salon </script><b>', url: 'https://salon.example/sub/', icon: 'assets/img/icon.png', share_image: 'assets/img/teilen.jpg',
       organization: { type: 'LocalBusiness', street: 'Am Fluss 1', postal_code: '12345', city: 'Ort', country: 'DE', phone: '0123 456', email: '', hours: [
-        { days: 'Montag bis Freitag', opens: '09:00', closes: '18:00' }, { days: 'Samstag', opens: '9.30', closes: '14:00' }, { days: 'Sonntag', opens: '', closes: '' }, { days: 'Dienstag', opens: 'mittags', closes: '</script>' },
+        { from: 'Di', to: 'Fr', opens: '9:00', closes: '18.00' }, { from: 'Sa', opens: '9.30', closes: '24:00' }, { from: 'So', to: '', opens: '', closes: '' },
+        { from: 'Mo', opens: 'mittags', closes: '24:30' }, { from: 'constructor', opens: '09:00', closes: '10:00' }, null,
       ] },
     }),
+    'content/en/settings/site.json': json({ organization: { city: 'Town', hours: [{ from: 'Fr', to: 'Mo', opens: '10:00', closes: '22:00' }] } }),
     'content/pages/index.json': json({ title: 'Start' }),
+    'content/en/pages/index.json': json({ title: 'Home' }),
     'content/pages/kontakt.json': json({ title: 'Kontakt' }),
   };
-  const out = await built({}, files, withOrg);
-  const script = out['index.html'].match(/<script type="application\/ld\+json">(.*?)<\/script>/)[1];
-  assert.doesNotMatch(script, /<\//, 'no text ends the script early');
-  assert.deepEqual(JSON.parse(script), {
-    '@context': 'https://schema.org', '@type': 'LocalBusiness', name: 'Salon </script><b>', url: 'https://salon.example/',
-    logo: 'https://salon.example/assets/img/icon.png', telephone: '0123 456',
+  const jsonLd = (text) => JSON.parse(text.match(/<script type="application\/ld\+json">(.*?)<\/script>/)?.[1] ?? 'null');
+  const out = await built({ languages: ['de', 'en'] }, files, withOrg);
+  assert.doesNotMatch(out['index.html'].match(/ld\+json">(.*?)<\/script>/)[1], /<\//, 'no text ends the script early');
+  assert.deepEqual(jsonLd(out['index.html']), {
+    '@context': 'https://schema.org', '@type': 'LocalBusiness', '@id': 'https://salon.example/sub/#organization', name: 'Salon </script><b>',
+    url: 'https://salon.example/sub/', logo: 'https://salon.example/sub/assets/img/icon.png', image: 'https://salon.example/sub/assets/img/teilen.jpg', telephone: '0123 456',
     address: { '@type': 'PostalAddress', streetAddress: 'Am Fluss 1', postalCode: '12345', addressLocality: 'Ort', addressCountry: 'DE' },
     openingHoursSpecification: [
-      { '@type': 'OpeningHoursSpecification', dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'], opens: '09:00', closes: '18:00' },
-      { '@type': 'OpeningHoursSpecification', dayOfWeek: ['Saturday'], opens: '09:30', closes: '14:00' },
+      { '@type': 'OpeningHoursSpecification', dayOfWeek: ['Tuesday', 'Wednesday', 'Thursday', 'Friday'], opens: '09:00', closes: '18:00' },
+      { '@type': 'OpeningHoursSpecification', dayOfWeek: ['Saturday'], opens: '09:30', closes: '23:59' },
     ],
   });
-  assert.doesNotMatch(out['kontakt.html'], /ld\+json/, 'only on the home page');
-  // Without the field in the theme, the settings are not read.
-  assert.doesNotMatch((await built({}, files))['index.html'], /ld\+json/);
+  // A language's own values are laid over the default ones; its address is its home page.
+  const english = jsonLd(out['en/index.html']);
+  assert.deepEqual([english['@id'], english.url, english.address.addressLocality, english.openingHoursSpecification], ['https://salon.example/sub/#organization', 'https://salon.example/sub/en/', 'Town',
+    [{ '@type': 'OpeningHoursSpecification', dayOfWeek: ['Friday', 'Saturday', 'Sunday', 'Monday'], opens: '10:00', closes: '22:00' }]]);
+  assert.equal(jsonLd(out['kontakt.html']), null, 'only on the home page');
+  // Without the field in the theme the settings are not read; a group with only its defaults, or
+  // hours that are not a list, writes nothing.
+  assert.equal(jsonLd((await built({}, files))['index.html']), null);
+  for (const organization of [{ type: 'LocalBusiness', country: 'DE', hours: [] }, [], { hours: {} }, { hours: 'x' }]) {
+    const quiet = await built({}, { ...files, 'content/settings/site.json': json({ title: 'Salon', organization }) }, withOrg);
+    assert.equal(jsonLd(quiet['index.html']), null, JSON.stringify(organization));
+  }
+  // A theme's own types; an organization without an address.
+  const salon = { ...theme, settingsFields: [fields.organization({ types: [{ label: 'Friseursalon', value: 'HairSalon' }, { label: 'Verein', value: 'Organization' }] })] };
+  const typed = await built({}, { ...files, 'content/settings/site.json': json({ title: 'Salon', organization: { type: 'Organization', phone: '1' } }) }, salon);
+  assert.deepEqual(jsonLd(typed['index.html']), { '@context': 'https://schema.org', '@type': 'Organization', name: 'Salon', telephone: '1' });
+  const unknown = await built({}, { ...files, 'content/settings/site.json': json({ title: 'Salon', organization: { type: 'Bakery', phone: '1' } }) }, salon);
+  assert.equal(jsonLd(unknown['index.html'])['@type'], 'HairSalon', 'a type the theme does not offer becomes its first');
 });

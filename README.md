@@ -220,10 +220,17 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      writing `<meta charset>`, the viewport and its assets.
    - Structured data: with `fields.organization()` in `settingsFields`, the site settings get
      "Firma, Adresse und Öffnungszeiten für Suchmaschinen" (kind, name, address, phone, e-mail,
-     opening hours as days with times like `09:00` or `9.30`; a time werft cannot read leaves its
-     line out), and `ctx.head()` writes them on each language's home page as JSON-LD (schema.org
-     `LocalBusiness` or `Organization`, with the site's address, icon and share image), which
-     search engines read for their results.
+     opening hours), and `ctx.head()` writes them on each language's home page as JSON-LD
+     (schema.org `LocalBusiness` or `Organization`, with the site's address, icon and share
+     image), which search engines read for their results. Nothing is written while the group
+     holds no more than its defaults; the address only with a street or a city. A language's
+     settings can change single values (another city, other hours). `organization({ types })`
+     offers schema.org types of the theme's choice instead, e.g.
+     `[{ label: 'Friseursalon', value: 'HairSalon' }]`. Stored as `organization: { type, name,
+     street, postal_code, city, country, phone, email, hours: [{ from: 'Mo', to: 'Fr', opens:
+     '09:00', closes: '18:00' }] }` (days `Mo` … `So`, `to` empty for a single day; times like
+     `09:00` or `9.30`, `24:00` for midnight; a line werft cannot read is left out), so a theme
+     can show the opening hours itself; `fields.WEEKDAYS` maps the days to schema.org's.
 4. **Content**: `content/pages/<slug>.json` (`index` becomes `index.html`), `content/patterns/`,
    `content/forms/` (see [Form submissions](#form-submissions)), `content/<post type>/`, `content/settings/{site,menus,redirects}.json`;
    other languages in `content/<lang>/` (see [Languages](#languages)).
