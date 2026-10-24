@@ -2,7 +2,7 @@
 // someone without an account. The gateway checks the link (signed, expiring, listed until revoked,
 // see core.js); this module only finds the entry and renders it the way the build does, with a
 // draft or scheduled entry shown as published.
-import { loadContent, siteLanguages } from '../lib/content.js';
+import { loadContent, siteLanguages, pageLinks } from '../lib/content.js';
 import { createContext } from '../lib/build.js';
 
 const escapeAttr = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -20,7 +20,7 @@ export function previewTarget(path, { contentDir = 'content', postType, language
 
 // The entry's page as HTML, or null when the entry is gone. files: the content directory's tree
 // entries; read(paths) → texts.
-export async function renderPreview({ site, theme, target, files, read, now = new Date() }) {
+export async function renderPreview({ site, theme, target, files, media = {}, read, now = new Date() }) {
   const texts = new Map((await read(files.map((f) => f.path))).map((text, i) => [files[i].path, text]));
   const store = {
     list: async (dir) => files.filter((f) => f.path.startsWith(`${dir}/`)).map((f) => f.path.slice(dir.length + 1)),
@@ -32,7 +32,7 @@ export async function renderPreview({ site, theme, target, files, read, now = ne
   const entry = list?.find((e) => e.slug === target.slug);
   if (!entry) return null;
   list.splice(list.indexOf(entry), 1, { ...entry, status: 'published', publish_date: undefined });
-  const ctx = createContext({ site, theme, content, lang: target.lang, now, preview: true });
+  const ctx = createContext({ site, theme, content, media, lang: target.lang, now, preview: true });
   // The entry as the language shows it (filled in from the default language where it has to be).
   const shown = (target.kind === 'post' ? ctx.content.posts : ctx.content.pages).find((e) => e.slug === target.slug);
   if (!shown) return null;
@@ -54,6 +54,11 @@ export async function renderPreview({ site, theme, target, files, read, now = ne
   const folder = target.lang && target.lang !== languages[0] ? `${target.lang}/` : '';
   const file = kind === 'post' ? theme.postType.url(shown) : `${page.slug}.html`;
   const dir = `${site.base ? `${String(site.base).replace(/^\/+|\/+$/g, '')}/` : ''}${folder}${file.includes('/') ? file.slice(0, file.lastIndexOf('/') + 1) : ''}`;
+  // In another language, links to pages it lacks lead to the default language's, as in the build.
+  if (folder) {
+    const link = pageLinks({ site, content: ctx.content, preview: true, now });
+    html = html.replace(/ href="([^"]*)"/g, (m, href) => ` href="${link(href, folder + file)}"`);
+  }
   const head = `<base href="/${escapeAttr(dir)}"><meta name="robots" content="noindex">`;
-  return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (tag) => tag + head) : head + html;
+  return /<head(\s[^>]*)?>/i.test(html) ? html.replace(/<head(\s[^>]*)?>/i, (tag) => tag + head) : head + html;
 }

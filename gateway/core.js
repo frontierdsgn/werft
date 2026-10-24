@@ -470,6 +470,7 @@ export function createGateway(options) {
   async function previewsApi(request, url, user) {
     const body = request.method === 'POST' ? (await request.json()) ?? {} : {};
     const path = String(body.path ?? url.searchParams.get('path') ?? '').replace(/^\/+/, '');
+    if (!options.render) return error(501, 'Diese Website zeigt keine Vorschau-Links.');
     const reason = await mayChange(user, path);
     if (reason) return error(403, reason);
     const list = async () => Promise.all(Object.entries((await loadSessions(true)).previews)
@@ -490,21 +491,32 @@ export function createGateway(options) {
   }
 
   // The page for a preview link; anything that does not work, the same "no longer valid" page.
-  async function showPreview(token) {
+  async function showPreview(encoded) {
     const gone = () => new Response('<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Vorschau</title><body style="font:17px/1.5 system-ui,sans-serif;max-width:32em;margin:15vh auto;padding:0 16px"><p lang="de">Dieser Vorschau-Link gilt nicht mehr.</p>', { status: 410, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex' } });
-    const payload = await readToken(secret, token, now()).catch(() => null);
-    const link = payload?.typ === 'preview' && (await loadSessions(true)).previews[payload.id];
-    const target = link && link.path === payload.path && link.exp * 1000 > now() && options.render && previewTarget(link.path, site);
-    if (!target) return gone();
-    const head = await storage.head(branch);
-    const files = (await treeAt(head.sha)).filter((f) => f.path.startsWith(`${site.contentDir}/`));
-    const html = await renderPreview({
-      site: options.render.site, theme: options.render.theme, target, files, now: new Date(now()),
-      read: async (paths) => (await readMany(head.sha, paths)).map((b) => b && decoder.decode(b)),
-    });
+    let html;
+    try {
+      const payload = await readToken(secret, decodeURIComponent(encoded), now()).catch(() => null);
+      const link = payload?.typ === 'preview' && (await loadSessions(true)).previews[payload.id];
+      const target = link && link.path === payload.path && link.exp * 1000 > now() && options.render && previewTarget(link.path, site);
+      if (!target) return gone();
+      const head = await storage.head(branch);
+      const tree = await treeAt(head.sha);
+      const files = tree.filter((f) => f.path.startsWith(`${site.contentDir}/`));
+      // Which media exist, for ctx.exists() (no sizes: like the editor's preview).
+      const media = Object.fromEntries(tree.filter((f) => (site.mediaDirs ?? []).some((d) => f.path.startsWith(`${d}/`))).map((f) => [f.path, {}]));
+      html = await renderPreview({
+        site: options.render.site, theme: options.render.theme, target, files, media, now: new Date(now()),
+        read: async (paths) => (await readMany(head.sha, paths)).map((b) => b && decoder.decode(b)),
+      });
+    } catch (e) {
+      console.error('werft gateway: preview:', e);
+      return gone();
+    }
     if (html == null) return gone();
-    // No referrer, so the token does not travel to the hosts of the page's images or scripts.
-    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex', 'referrer-policy': 'no-referrer' } });
+    // The page runs in a sandbox with an origin of its own: whatever the entry's markup contains
+    // cannot act on the admin's origin (its refresh cookie, its API). No referrer, so the token does
+    // not travel to the hosts of the page's images or fonts.
+    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex', 'referrer-policy': 'no-referrer', 'content-security-policy': 'sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms' } });
   }
 
   async function usersApi(request, user) {
@@ -588,7 +600,7 @@ export function createGateway(options) {
       if (path === '/login/oauth/access_token' && request.method === 'POST') return await accessToken(request);
       if (path === '/session' && request.method === 'POST') return await session(request, (await request.json()) ?? {}, address);
       if (path === '/session' && request.method === 'DELETE') return await signOut(request);
-      if (path.startsWith('/preview/') && request.method === 'GET') return await showPreview(decodeURIComponent(path.slice(9)));
+      if (path.startsWith('/preview/') && request.method === 'GET') return await showPreview(path.slice(9));
       if (path === '/password/forgot' && request.method === 'POST') return await forgotPassword((await request.json()) ?? {}, { address, origin, waitUntil });
       if (path === '/password/reset' && request.method === 'POST') return await resetPassword(request, (await request.json()) ?? {});
       if (path === '/tick' && options.tickKey && url.searchParams.get('key')

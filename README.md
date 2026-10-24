@@ -708,16 +708,22 @@ entry creates a link (valid 1, 7 or 30 days), copies it and revokes it there.
 
 - The gateway renders the entry from the branch head with the site's theme, the same code as the
   build, at `/api/werft/preview/<token>`: a draft or scheduled entry as if published, a post
-  without a page of its own on the page that lists posts. Later saves show there too.
+  without a page of its own on the page that lists posts, links in another language as the build
+  sets them. Later saves show there too.
 - The page carries `noindex` (meta tag and `X-Robots-Tag`), is not cached, sends no referrer (so
   the link does not reach the hosts of its images or fonts), and has `<base href>` set to the
   entry's folder on the site, so stylesheets, images and links work.
+- It runs in a sandbox (`Content-Security-Policy: sandbox`, without `allow-same-origin`): it is
+  served on the admin's host, and a script in a draft must not act there for whoever opens the
+  link. In the sandbox the page has no origin, so what the browser loads only with CORS, the
+  site's own web fonts and `type="module"` scripts, may be missing from the preview.
 - The token is signed, ends with its date, and is listed in `.werft/sessions.json` on the branch
   `werft-sessions` (see [Sessions](#sessions)) until it expires or is revoked. Every view reads
   the list, so a revoked link stops at once. Creating and revoking are one commit each there.
-- A view reads the content with a few GitHub requests (100 files per GraphQL request) and renders
-  one page, within the free plan's limits. Media keep their originals (no sizes or variants, as in
-  the editor's preview), and theme scripts run as on the site.
+- A view reads the list and the content with a few GitHub requests (100 files per GraphQL request)
+  and renders one page. Its CPU time on Cloudflare (the free plan allows 10 ms) is unknown: open a
+  link and read the function's CPU time in the Pages project's metrics. Media keep their
+  originals (no sizes or variants, as in the editor's preview).
 
 ### Not-found page
 

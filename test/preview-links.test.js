@@ -12,12 +12,12 @@ const day = 24 * 3600 * 1000;
 const theme = {
   blocks: {},
   postType: { name: 'events', label: 'Termine', url: (post) => `termine/${post.slug}.html` },
-  renderPage: (page, ctx) => ctx.html`<html><head><title>${page.title}</title><link rel="stylesheet" href="${ctx.url('assets/site.css')}"></head><body><h1>${page.title}</h1>${ctx.posts().map((p) => ctx.html`<p>${p.title}</p>`)}</body></html>`,
+  renderPage: (page, ctx) => ctx.html`<html><head><title>${page.title}</title><link rel="stylesheet" href="${ctx.url('assets/site.css')}"></head><body><header>Kopf</header><h1>${page.title}</h1><a href="${ctx.url('kontakt.html')}">K</a>${ctx.exists('assets/img/a.jpg') ? 'IMG' : 'NOIMG'}${ctx.raw(page.html ?? '')}${ctx.posts().map((p) => ctx.html`<p>${p.title}</p>`)}</body></html>`,
   renderPost: (post, ctx) => ctx.html`<html><head><title>${post.title}</title></head><body><h1>${post.title}</h1></body></html>`,
 };
-const site = { name: 'Test', contentDir: 'content', base: 'sub', languages: ['de', 'en'], theme: './theme/index.js' };
+const site = { name: 'Test', contentDir: 'content', base: 'sub', languages: ['de', 'en'], mediaDirs: ['assets/img'], theme: './theme/index.js' };
 
-async function setup() {
+async function setup({ withRender = true, renderTheme = theme } = {}) {
   const hub = fakeGitHub();
   const users = [
     { email: 'ed@test', name: 'Ed', role: 'editor', password: await hashPassword('editor-password', 1000) },
@@ -26,7 +26,9 @@ async function setup() {
   hub.seed({
     '.werft/users.json': serializeUsers(users),
     'content/pages/index.json': JSON.stringify({ title: 'Start', status: 'published' }),
-    'content/pages/neu.json': JSON.stringify({ title: 'Neue Seite', status: 'draft' }),
+    'content/pages/neu.json': JSON.stringify({ title: 'Neue Seite', status: 'draft', html: '<img src=x onerror="fetch(\'/api/werft/users\')">' }),
+    'assets/img/a.jpg': 'jpeg',
+    'content/pages/kontakt.json': JSON.stringify({ title: 'Kontakt', status: 'published' }),
     'content/en/pages/neu.json': JSON.stringify({ title: 'New page', status: 'draft' }),
     'content/events/fest.json': JSON.stringify({ title: 'Sommerfest', status: 'draft' }),
     'content/settings/site.json': JSON.stringify({ title: 'Test' }),
@@ -35,8 +37,8 @@ async function setup() {
   const make = () => createGateway({
     storage: githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch }),
     secret: 'x'.repeat(32), now: () => clock.t,
-    site: { name: 'Test', contentDir: 'content', postType: 'events', languages: ['de', 'en'], base: 'sub' },
-    render: { site, theme },
+    site: { name: 'Test', contentDir: 'content', postType: 'events', languages: ['de', 'en'], base: 'sub', mediaDirs: ['assets/img'] },
+    render: withRender ? { site, theme: renderTheme } : undefined,
   });
   const gateway = make();
   const call = async (path, { token, method = 'GET', body, on = gateway } = {}) => {
@@ -59,7 +61,13 @@ test('a link shows a draft to someone without an account, marked noindex', async
   assert.equal(page.status, 200);
   assert.match(page.data, /<h1>Neue Seite<\/h1>/);
   assert.match(page.data, /<head><base href="\/sub\/"><meta name="robots" content="noindex">/);
+  assert.match(page.data, /<header>Kopf<\/header>/, 'nothing lands in <header>');
+  assert.match(page.data, /IMG/, 'the media that exist are known');
   assert.deepEqual([page.headers.get('x-robots-tag'), page.headers.get('referrer-policy'), page.headers.get('cache-control')], ['noindex', 'no-referrer', 'no-store']);
+  // The entry's markup is shown as the site would, but in a sandbox with an origin of its own, so
+  // a script in a draft cannot use the admin's cookie or API.
+  assert.match(page.headers.get('content-security-policy'), /^sandbox allow-scripts/);
+  assert.doesNotMatch(page.headers.get('content-security-policy'), /allow-same-origin/);
   assert.equal((await call('/api/werft/previews?path=content/pages/neu.json', { token: ed })).data.previews[0].url, link.url, 'the editor lists it again');
 });
 
@@ -72,6 +80,7 @@ test('posts and other languages render like the build, from their folder', async
   const english = await call(await urlOf('content/en/pages/neu.json'));
   assert.match(english.data, /<base href="\/sub\/en\/">.*<h1>New page<\/h1>/s);
   assert.match(english.data, /href="\.\.\/assets\/site\.css"/, 'relative addresses work from the language folder');
+  assert.match(english.data, /<a href="\.\.\/kontakt\.html">/, 'a page the language lacks links to the default language');
 });
 
 test('a link stops working when it expires or is revoked, and a forged one never works', async () => {
@@ -95,6 +104,20 @@ test('a link stops working when it expires or is revoked, and a forged one never
   const forged = JSON.parse(Buffer.from(body, 'base64url'));
   forged.path = 'content/pages/index.json';
   assert.equal((await call(`/api/werft/preview/${Buffer.from(JSON.stringify(forged)).toString('base64url')}.${signature}`)).status, 410);
+});
+
+test('a broken link or a failing theme shows the "no longer valid" page; no links without a renderer', async () => {
+  const { call } = await setup();
+  assert.equal((await call('/api/werft/preview/%E0')).status, 410);
+  assert.equal((await call('/api/werft/preview/abc.def')).status, 410);
+  const failing = await setup({ renderTheme: { ...theme, renderPage: () => { throw new Error('theme bug'); } } });
+  const ed = await failing.signIn('ed@test', 'editor-password');
+  const [link] = (await failing.call('/api/werft/previews', { token: ed, method: 'POST', body: { path: 'content/pages/neu.json' } })).data.previews;
+  const error = console.error;
+  console.error = () => {};
+  try { assert.equal((await failing.call(link.url)).status, 410); } finally { console.error = error; }
+  const bare = await setup({ withRender: false });
+  assert.equal((await bare.call('/api/werft/previews', { token: await bare.signIn('ed@test', 'editor-password'), method: 'POST', body: { path: 'content/pages/neu.json' } })).status, 501);
 });
 
 test('only who may change an entry shares it, and only pages and posts', async () => {

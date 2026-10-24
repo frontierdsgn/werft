@@ -164,7 +164,9 @@ function previewLinks(app, source) {
     return el('div', { className: 've-version' },
       el('div', { className: 've-control' }, field, el('small', {}, `Gültig bis ${dateTime(link.expires_at)} · erstellt von ${link.by}`)),
       el('div', { className: 've-actions-row' },
-        app.button('Kopieren', null, async () => { await navigator.clipboard.writeText(url).then(() => app.toast('Link kopiert.'), () => { field.select(); }); }, 've-tool'),
+        app.button('Kopieren', null, async () => {
+          try { await navigator.clipboard.writeText(url); app.toast('Link kopiert.'); } catch { field.select(); app.toast('Der Link ist markiert. Bitte mit Strg+C (Mac: ⌘+C) kopieren.'); }
+        }, 've-tool'),
         app.button('Widerrufen', null, async () => {
           if (!(await app.confirmDialog('Link widerrufen?', 'Wer den Link hat, sieht die Vorschau danach nicht mehr.', 'Widerrufen'))) return;
           send({ path, revoke: link.id }, 'Link widerrufen.');
