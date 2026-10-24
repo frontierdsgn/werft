@@ -58,9 +58,10 @@ const built = async (site, files, t = theme) => {
 };
 
 test('a site without languages builds as before', async () => {
-  // Recorded with werft 0.5.0 before languages existed.
-  const out = await built({ name: 'S' }, defaultContent);
+  // Recorded with werft 0.5.0 before languages existed; the feed of posts came later.
+  const { 'feed.xml': feed, ...out } = await built({ name: 'S' }, defaultContent);
   assert.deepEqual(out, GOLDEN);
+  assert.match(feed, /^<\?xml/);
 });
 
 const GOLDEN = {

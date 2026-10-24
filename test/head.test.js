@@ -32,11 +32,11 @@ test('ctx.head() writes title, description, canonical address and link preview',
     + '<link rel="canonical" href="https://salon.example/"><meta property="og:type" content="website"><meta property="og:site_name" content="Salon">'
     + '<meta property="og:title" content="Salon am Fluss"><meta property="og:description" content="Haare &amp; mehr"><meta property="og:url" content="https://salon.example/">'
     + '<meta property="og:image" content="https://salon.example/assets/img/teilen.jpg"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">'
-    + '<meta name="twitter:card" content="summary_large_image"></head>');
+    + '<meta name="twitter:card" content="summary_large_image"><link rel="alternate" type="application/rss+xml" title="Salon: News" href="feed.xml"></head>');
   assert.equal(out['kontakt.html'], '<head><title>Kontakt | Salon</title><meta name="robots" content="noindex">'
     + '<link rel="canonical" href="https://salon.example/kontakt.html"><meta property="og:type" content="website"><meta property="og:site_name" content="Salon">'
     + '<meta property="og:title" content="Kontakt"><meta property="og:url" content="https://salon.example/kontakt.html">'
-    + '<meta property="og:image" content="https://cdn.example/k.png"><meta name="twitter:card" content="summary_large_image"></head>');
+    + '<meta property="og:image" content="https://cdn.example/k.png"><meta name="twitter:card" content="summary_large_image"><link rel="alternate" type="application/rss+xml" title="Salon: News" href="feed.xml"></head>');
   assert.match(out['news/neu.html'], /<title>Neu &lt;da&gt; \| Salon<\/title><meta name="description" content="Ab Juni">.*<meta property="og:type" content="article">.*<meta property="og:url" content="https:\/\/salon.example\/news\/neu.html">/);
 });
 
@@ -57,7 +57,7 @@ test('ctx.head() names the versions of an entry in other languages', async () =>
     'content/en/pages/kontakt.json': json({ title: 'Contact' }),
     'content/fr/pages/kontakt.json': json({ title: 'Contact', status: 'draft' }),
   });
-  const links = (text) => [...text.matchAll(/<link rel="(?:alternate|canonical)"[^>]*>/g)].map((m) => m[0]);
+  const links = (text) => [...text.matchAll(/<link rel="(?:alternate" hreflang|canonical)[^>]*>/g)].map((m) => m[0]);
   assert.deepEqual(links(out['en/kontakt.html']), [
     '<link rel="canonical" href="https://salon.example/en/kontakt.html">',
     '<link rel="alternate" hreflang="de" href="https://salon.example/kontakt.html">',
@@ -178,4 +178,42 @@ test('the site icon works below a base path, on the not-found page and as the ed
   const svg = await built({}, { 'content/settings/site.json': json({ icon: 'assets/img/icon.svg' }), 'content/pages/index.json': json({ title: 'Start' }) });
   assert.match(svg['index.html'], /<link rel="icon" href="assets\/img\/icon.svg" type="image\/svg\+xml"><link rel="manifest" href="manifest.webmanifest">/);
   assert.equal(JSON.parse(svg['manifest.webmanifest']).name, undefined);
+});
+
+test('the build writes an RSS feed of the newest posts per language, and ctx.head() links it', async () => {
+  const files = {
+    'content/settings/site.json': json({ title: 'Salon', url: 'https://salon.example/' }),
+    'content/pages/index.json': json({ title: 'Start' }),
+    'content/en/pages/index.json': json({ title: 'Home' }),
+    'content/fr/pages/index.json': json({ title: 'Accueil' }),
+    'content/news/alt.json': json({ title: 'Alt', publish_date: '2026-01-02T10:00:00.000Z' }),
+    'content/news/neu.json': json({ title: 'Neu & frisch', publish_date: '2026-05-01T08:00:00.000Z', teaser: 'Ab <Juni>' }),
+    'content/news/geplant.json': json({ title: 'Geplant', publish_date: '2026-12-01T08:00:00.000Z' }),
+    'content/news/entwurf.json': json({ title: 'Entwurf', status: 'draft' }),
+    'content/en/news/new.json': json({ title: 'New', publish_date: '2026-05-01T08:00:00.000Z' }),
+  };
+  const feedTheme = { ...theme, postType: { ...theme.postType, label: 'Neuigkeiten', feed: { description: (post) => post.teaser } } };
+  const out = await built({ languages: ['de', 'en', 'fr'] }, files, feedTheme);
+  assert.equal(out['feed.xml'], '<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0"><channel><title>Salon: Neuigkeiten</title>'
+    + '<link>https://salon.example/</link><description>Salon: Neuigkeiten</description><language>de</language>'
+    + '<item><title>Neu &amp; frisch</title><link>https://salon.example/news/neu.html</link><guid isPermaLink="true">https://salon.example/news/neu.html</guid>'
+    + '<pubDate>Fri, 01 May 2026 08:00:00 GMT</pubDate><description>Ab &lt;Juni&gt;</description></item>'
+    + '<item><title>Alt</title><link>https://salon.example/news/alt.html</link><guid isPermaLink="true">https://salon.example/news/alt.html</guid>'
+    + '<pubDate>Fri, 02 Jan 2026 10:00:00 GMT</pubDate></item></channel></rss>\n');
+  assert.match(out['en/feed.xml'], /<language>en<\/language><item><title>New<\/title><link>https:\/\/salon.example\/en\/news\/new.html<\/link>/);
+  // French shows the German posts and links their feed.
+  assert.equal(out['fr/feed.xml'], undefined);
+  const link = (text) => text.match(/<link rel="alternate" type="application\/rss\+xml"[^>]*>/)?.[0];
+  assert.equal(link(out['index.html']), '<link rel="alternate" type="application/rss+xml" title="Salon: Neuigkeiten" href="feed.xml">');
+  assert.equal(link(out['en/index.html']), '<link rel="alternate" type="application/rss+xml" title="Salon: Neuigkeiten" href="feed.xml">');
+  assert.equal(link(out['fr/index.html']), '<link rel="alternate" type="application/rss+xml" title="Salon: Neuigkeiten" href="../feed.xml">');
+  // Posts without pages of their own link to the home page; without a site address there is no feed.
+  const { renderPost, ...listOnly } = feedTheme;
+  const list = await built({}, { ...files, 'content/settings/site.json': json({ title: 'Salon', url: 'https://salon.example/salon/' }) }, listOnly);
+  assert.match(list['feed.xml'], /<item><title>Neu &amp; frisch<\/title><link>https:\/\/salon.example\/salon\/<\/link><guid isPermaLink="false">https:\/\/salon.example\/salon\/#neu<\/guid>/);
+  const none = await built({}, { ...files, 'content/settings/site.json': json({ title: 'Salon' }) }, feedTheme);
+  assert.equal(none['feed.xml'], undefined);
+  assert.equal(link(none['index.html']), undefined);
+  const off = await built({}, files, { ...feedTheme, postType: { ...feedTheme.postType, feed: false } });
+  assert.equal(off['feed.xml'], undefined);
 });
