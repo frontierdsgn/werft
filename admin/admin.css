@@ -21,6 +21,9 @@ button,input,select,textarea{font:inherit;color:inherit}
 .ve-views button{border:0;background:none;border-radius:7px;padding:6px 4px;min-height:34px;font-weight:600;font-size:14px;cursor:pointer;color:var(--ve-muted)}
 .ve-views button:hover{color:var(--ve-ink)}
 .ve-views button[aria-pressed=true]{background:var(--ve-paper);color:var(--ve-ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.ve-languages{margin:0 12px 10px}
+.ve-languages>span{display:block;color:var(--ve-muted);font-size:12.5px;margin:0 0 3px 3px}
+.ve-languages .ve-views{margin:0;grid-template-columns:repeat(auto-fit,minmax(0,1fr))}
 #ve-pages{flex:1;overflow:auto;padding:0 8px 14px;border-top:1px solid var(--ve-line)}
 .ve-group{margin-top:12px}
 #ve-pages h2,.ve-folded>summary{font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ve-muted);margin:0 8px 4px}

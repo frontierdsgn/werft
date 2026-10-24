@@ -5,10 +5,11 @@
 // content as large, plain forms beside a live preview (form-view.js). Changes stay in the browser
 // until "Speichern", which stores every changed file in one commit through the gateway.
 import { schema as adminSchema } from 'werft/schema';
-import { createContext, mediaPaths, markdown, raw, escape, imageSize } from 'werft';
+import { createContext, mediaPaths, markdown, raw, escape, imageSize, isPublic } from 'werft';
+import { siteLanguages, languageDir, localize, deepMerge, differences, pageFile, pageLinks } from 'werft/content';
 import { requireUser, loadSite, api, signOut } from './session.js';
 import { disarm, postPreview } from './preview.js';
-import { pageRenderer, mapDocument, getAt, setAt, textOf } from './visual-map.js';
+import { pageRenderer, mapDocument, getAt, setAt, textOf, unmark } from './visual-map.js';
 import { buildForm, emptyValue } from './visual-form.js';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
 import { formView, mediaView, submissionsView, usersView } from './form-view.js';
@@ -25,6 +26,14 @@ const schema = adminSchema({ site, theme, editable: me.editable, statuses: me.st
 const collection = (name) => schema.collections.find((c) => c.name === name);
 const settingsFile = (name) => collection('settings')?.files.find((f) => f.name === name);
 const postType = theme.postType;
+// A site in several languages is edited one language at a time; its first language is the default.
+const languages = siteLanguages(site);
+const defaultLang = languages[0];
+let lang = defaultLang;
+const isDefault = (l = lang) => !languages.length || l === defaultLang;
+const langDir = (l = lang) => languageDir(contentDir, languages, l);
+const langPrefix = (l = lang) => (isDefault(l) ? '' : `${l}/`);
+const languageName = (code) => { try { return new Intl.DisplayNames(['de'], { type: 'language' }).of(code); } catch { return code; } };
 
 const $ = (selector) => document.querySelector(selector);
 const el = (tag, props = {}, ...children) => {
@@ -62,31 +71,88 @@ const removed = new Set(); // media files to delete with the next save
 
 const FOLDERS = { page: 'pages', pattern: 'patterns', form: 'forms', post: postType?.name };
 const SETTINGS = { settings: 'site', menus: 'menus', redirects: 'redirects' };
-function fileOf(source) {
+const slugOf = (path) => path.split('/').pop().replace(/\.json$/, '');
+const slugsAt = (dir) => [...files].filter(([p, f]) => f.data && p.startsWith(`${dir}/`)).map(([p]) => slugOf(p));
+// A language's posts: its own once it has some, else the default language's, shared by all.
+const postDir = (l = lang) => (isDefault(l) || !slugsAt(`${langDir(l)}/${postType.name}`).length ? `${contentDir}/${postType.name}` : `${langDir(l)}/${postType.name}`);
+// The file of a source in a language (the editor's, unless named). Redirects are shared.
+function fileOf(source, l = lang) {
   const [kind, slug] = source.split(':');
-  if (SETTINGS[kind]) return `${contentDir}/settings/${SETTINGS[kind]}.json`;
-  return `${contentDir}/${FOLDERS[kind]}/${slug}.json`;
+  if (kind === 'redirects') return `${contentDir}/settings/redirects.json`;
+  if (SETTINGS[kind]) return `${langDir(l)}/settings/${SETTINGS[kind]}.json`;
+  if (kind === 'post') return `${postDir(l)}/${slug}.json`;
+  return `${langDir(l)}/${FOLDERS[kind]}/${slug}.json`;
 }
+// Patterns and forms another language has not translated yet are the default language's; one is
+// copied into the language when it is first opened there, and saved only once it was changed.
+const copies = new Map(); // path → the copied text
 function dataOf(source) {
+  const kind = source.split(':')[0];
+  if (!isDefault() && (kind === 'settings' || kind === 'menus')) return viewOf(kind);
   const path = fileOf(source);
+  const original = !isDefault() && !files.has(path) && (kind === 'pattern' || kind === 'form') && files.get(fileOf(source, defaultLang))?.data;
+  if (original) {
+    files.set(path, { sha: null, saved: null, data: structuredClone(original) });
+    copies.set(path, canon(original));
+  }
   if (!files.has(path)) files.set(path, { sha: null, saved: null, data: SETTINGS[source] ? (source === 'redirects' ? { redirects: [] } : {}) : null });
   return files.get(path).data;
 }
-const slugsIn = (folder) => [...files].filter(([p, f]) => f.data && p.startsWith(`${contentDir}/${folder}/`)).map(([p]) => p.split('/').pop().replace(/\.json$/, ''));
-
-// The content as the theme sees it.
-function content() {
-  const revive = mediaPaths(site);
-  const copy = (data) => JSON.parse(JSON.stringify(data), revive);
-  const folder = (name) => (name ? slugsIn(name).sort().map((slug) => ({ ...copy(files.get(`${contentDir}/${name}/${slug}.json`).data), slug })) : []);
-  const one = (name, fallback) => (files.get(`${contentDir}/settings/${name}.json`)?.data ? copy(files.get(`${contentDir}/settings/${name}.json`).data) : fallback);
-  return {
-    pages: folder('pages'), posts: folder(postType?.name), patterns: folder('patterns'), forms: folder('forms'),
-    settings: one('site', {}), menus: one('menus', {}), redirects: one('redirects', { redirects: [] }).redirects ?? [],
-  };
+// A copy that was not changed is no change.
+const unchangedCopy = (path, f) => f.saved === null && f.data !== null && copies.get(path) === canon(f.data);
+// The slugs of a folder (pages, patterns, forms, the post type) in a language. A language shows
+// the default language's patterns and forms it has not translated.
+function slugsIn(folder, l = lang) {
+  if (folder === postType?.name) return slugsAt(postDir(l));
+  const own = slugsAt(`${langDir(l)}/${folder}`);
+  return isDefault(l) || folder === 'pages' ? own : [...new Set([...own, ...slugsAt(`${contentDir}/${folder}`)])];
 }
 
-const changedPaths = () => [...files].filter(([, f]) => (f.data === null ? f.saved !== null : canon(f.data) !== f.saved)).map(([p]) => p);
+// Site settings and menus of a language other than the default are edited complete, as the site
+// shows them; their file keeps only what differs from the default language (and what it held
+// before), so a value changed in the default language still reaches every language.
+const views = new Map(); // "lang:kind" → { kind, lang, data }
+function viewOf(kind) {
+  const key = `${lang}:${kind}`;
+  if (!views.has(key)) {
+    const base = files.get(fileOf(kind, defaultLang))?.data ?? {};
+    const own = files.get(fileOf(kind))?.data ?? {};
+    // Menus are replaced per location, settings merged key by key.
+    views.set(key, { kind, lang, data: kind === 'menus' ? structuredClone({ ...base, ...own }) : deepMerge(base, own) });
+  }
+  return views.get(key).data;
+}
+function syncViews() {
+  for (const { kind, lang: l, data } of views.values()) {
+    const path = fileOf(kind, l);
+    const f = files.get(path);
+    const own = differences(data, files.get(fileOf(kind, defaultLang))?.data ?? {}, f?.saved ? JSON.parse(f.saved) : null, kind === 'menus' ? 1 : Infinity);
+    if (f && (f.saved !== null || Object.keys(own).length)) f.data = own;
+    else if (f) files.delete(path);
+    else if (Object.keys(own).length) files.set(path, { sha: null, saved: null, data: own });
+  }
+}
+
+// The content as the theme sees it, in the editor's language (or another).
+function content(l = lang) {
+  syncViews();
+  const revive = mediaPaths(site);
+  const copy = (data) => JSON.parse(JSON.stringify(data), revive);
+  const folder = (dir) => [...files].filter(([p, f]) => f.data && p.startsWith(`${dir}/`)).map(([p, f]) => ({ ...copy(f.data), slug: slugOf(p) })).sort((a, b) => (a.slug < b.slug ? -1 : 1));
+  const one = (path, fallback) => (files.get(path)?.data ? copy(files.get(path).data) : fallback);
+  const of = (dir) => ({
+    pages: folder(`${dir}/pages`), posts: postType ? folder(`${dir}/${postType.name}`) : [], patterns: folder(`${dir}/patterns`), forms: folder(`${dir}/forms`),
+    settings: one(`${dir}/settings/site.json`, {}), menus: one(`${dir}/settings/menus.json`, {}),
+  });
+  const all = { ...of(contentDir), redirects: one(`${contentDir}/settings/redirects.json`, { redirects: [] }).redirects ?? [] };
+  if (languages.length) all.languages = Object.fromEntries(languages.slice(1).map((l) => [l, of(langDir(l))]));
+  return localize(all, { site, lang: l });
+}
+
+const changedPaths = () => {
+  syncViews();
+  return [...files].filter(([p, f]) => (f.data === null ? f.saved !== null : canon(f.data) !== (f.saved ?? copies.get(p)))).map(([p]) => p);
+};
 const isDirty = () => changedPaths().length > 0 || [...uploads.values()].some((u) => !u.saved) || removed.size > 0;
 
 // ---- Schema: the field definitions the CMS uses, looked up by path ----
@@ -125,20 +191,36 @@ function sourceLabel(source) {
   if (kind === 'post') return `${postType?.singular ?? 'Beitrag'} „${dataOf(source)?.title ?? slug}“`;
   return 'Seite';
 }
-const sharedNote = (source) => ({
-  pattern: 'Erscheint auf mehreren Seiten: Änderungen wirken überall.',
-  settings: 'Website-Einstellung: Änderungen wirken auf allen Seiten.',
-  menus: 'Menü: Änderungen wirken auf allen Seiten.',
-  form: 'Formular: Änderungen wirken überall, wo es erscheint.',
-})[source.split(':')[0]];
+// Whether a pattern or form is shown in the default language because the editor's language has
+// none of its own yet.
+const untranslated = (source) => !isDefault() && (!files.get(fileOf(source))?.data || unchangedCopy(fileOf(source), files.get(fileOf(source))));
+function sharedNote(source) {
+  const kind = source.split(':')[0];
+  const note = {
+    pattern: 'Erscheint auf mehreren Seiten: Änderungen wirken überall.',
+    settings: 'Website-Einstellung: Änderungen wirken auf allen Seiten.',
+    menus: 'Menü: Änderungen wirken auf allen Seiten.',
+    form: 'Formular: Änderungen wirken überall, wo es erscheint.',
+  }[kind];
+  if (!note || isDefault()) return note;
+  const original = `der Fassung auf ${languageName(defaultLang)}`;
+  if (kind === 'settings') return `${note} Was Sie hier nicht ändern, kommt aus ${original}.`;
+  if (kind === 'menus') return `${note} Ein Menü, das Sie hier nicht ändern, kommt aus ${original}.`;
+  return untranslated(source) ? `${note} Noch nicht übersetzt: Es zeigt den Inhalt aus ${original}, bis Sie es hier ändern.` : note;
+}
 
 // ---- Editor state ----
+// The language comes from the address too (#view/source/lang).
+const [hashView, hashOpen, hashLang] = decodeURIComponent(location.hash.slice(1)).split('/');
+if (languages.includes(hashLang)) lang = hashLang;
 let current = slugsIn('pages').includes('index') ? 'index' : slugsIn('pages')[0];
+// What the form view opens when the language has no page yet: the default language's home page,
+// which it offers to translate.
+const pageSource = () => `page:${current ?? (slugsIn('pages', defaultLang).includes('index') ? 'index' : slugsIn('pages', defaultLang)[0] ?? 'index')}`;
 // The view, and what the form view shows: a source (page:<slug>, post:<slug>, settings, …), or
 // `media`, `submissions` or `users`. Both come from the address, then from the last visit.
-const [hashView, hashOpen] = decodeURIComponent(location.hash.slice(1)).split('/');
 let view = ['visual', 'form'].includes(hashView) ? hashView : localStorage.getItem('werft.view') === 'visual' ? 'visual' : 'form';
-let selection = `page:${current}`;
+let selection = pageSource();
 let showPreview = innerWidth >= 1200;
 let editing = false;
 let locked = true;
@@ -151,8 +233,9 @@ const undoStack = [];
 const redoStack = [];
 const onPage = () => editing && view === 'visual';
 
-const snapshot = () => JSON.stringify([...files].map(([p, f]) => [p, f.data]).concat([['', [...removed]]]));
+const snapshot = () => { syncViews(); return JSON.stringify([...files].map(([p, f]) => [p, f.data]).concat([['', [...removed]]])); };
 function restore(snap) {
+  views.clear();
   const data = new Map(JSON.parse(snap));
   removed.clear();
   for (const path of data.get('') ?? []) removed.add(path);
@@ -243,22 +326,45 @@ function draw() {
   if (view === 'form' && selection.startsWith('page:') && pageList.includes(selection.slice(5))) current = selection.slice(5);
   const data = content();
   let result;
+  // Relative addresses on the page lead from where the page is published (below <lang>/ for a
+  // language other than the default, in a post's folder for a post page).
+  let folder = langPrefix();
   if (view === 'form' && selection.startsWith('post:') && dataOf(selection)) {
-    // A post as the site shows it: its own page, or marked on the page that lists it.
-    const post = postPreview({ ...JSON.parse(JSON.stringify(dataOf(selection)), mediaPaths(site)), slug: selection.slice(5) }, data, { site, theme, media });
+    // A post as the site shows it: its own page, or marked on the page that lists it. A post all
+    // languages share is shown in the default language, where it is published.
+    const shared = !isDefault() && languageOf(selection) !== lang;
+    if (shared) folder = '';
+    const entry = { ...JSON.parse(JSON.stringify(dataOf(selection)), mediaPaths(site)), slug: selection.slice(5) };
+    const post = postPreview(entry, shared ? content(defaultLang) : data, { site, theme, media });
+    if (!post.note) folder += String(theme.postType.url(entry) ?? '').replace(/[^/]*$/, '');
     result = { html: post.html, texts: [], images: [], note: post.note };
-  } else result = renderer(data, view === 'form' ? previewPage(data) : current);
+  } else {
+    const slug = view === 'form' ? previewPage(data) : current;
+    result = slug === undefined
+      ? { html: '<!doctype html><html><head></head><body></body></html>', texts: [], images: [], note: `Auf ${languageName(lang)} gibt es noch keine Seite. Legen Sie links unter „Noch nicht übersetzt“ eine Übersetzung an.` }
+      : renderer(data, slug);
+  }
+  baseEl.href = new URL(folder, siteURL).href;
   const parsed = new DOMParser().parseFromString(result.html, 'text/html');
   if (result.note) parsed.body.prepend(Object.assign(parsed.createElement('p'), { className: 've-preview-note', textContent: result.note }));
   // Nothing of the page runs in the editor: no scripts, handlers, redirects or frames.
   parsed.querySelectorAll('script, noscript, base, meta[http-equiv], iframe, object, embed').forEach((n) => n.remove());
   disarm(parsed);
+  // Links to pages the language lacks lead to the default language's, as on the site.
+  if (!isDefault() && folder.startsWith(langPrefix())) {
+    const link = pageLinks({ site, content: data, preview: true });
+    for (const a of parsed.querySelectorAll('a[href]')) {
+      const href = unmark(a.getAttribute('href'));
+      const next = link(href, `${folder}index.html`);
+      if (next !== href) a.setAttribute('href', next);
+    }
+  }
   // Files uploaded but not saved yet come from the browser's copy.
   const pending = [...uploads].filter(([, u]) => !u.saved).map(([path, u]) => [new URL(path, siteURL).href, u.url, path]);
   if (pending.length) {
     for (const node of parsed.querySelectorAll('[src], [srcset]')) {
       const src = node.getAttribute('src');
-      const upload = src && pending.find(([href]) => href === new URL(src, siteURL).href);
+      const upload = src && pending.find(([href]) => href === new URL(src, baseEl.href).href);
       if (upload) node.setAttribute('src', upload[1]);
       if (pending.some(([, , path]) => node.getAttribute('srcset')?.includes(path))) node.removeAttribute('srcset');
     }
@@ -408,9 +514,10 @@ doc.addEventListener('click', (event) => {
   if (!editing) {
     if (!link) return;
     event.preventDefault();
-    const slug = pageOfURL(link.href);
-    if (slug) openPage(slug);
-    else if (link.hash && new URL(link.href).pathname === new URL(siteURL).pathname + (current === 'index' ? '' : `${current}.html`)) doc.querySelector(link.hash)?.scrollIntoView({ behavior: 'smooth' });
+    const target = pageOfURL(link.href);
+    if (target && target.lang !== lang) switchLanguage(target.lang, `page:${target.slug}`);
+    else if (target) openPage(target.slug);
+    else if (link.hash && new URL(link.href).pathname === new URL(pageURL(current)).pathname) doc.querySelector(link.hash)?.scrollIntoView({ behavior: 'smooth' });
     return;
   }
   if (t.closest?.('a, button, label, summary')) event.preventDefault();
@@ -425,13 +532,17 @@ doc.addEventListener('click', (event) => {
   paint();
 }, true);
 
+// The page a link leads to, { slug, lang }, when it is another page of the site.
 function pageOfURL(href) {
   const url = new URL(href, siteURL);
   const root = new URL(siteURL);
   if (url.origin !== root.origin || !url.pathname.startsWith(root.pathname)) return null;
-  const rest = decodeURIComponent(url.pathname.slice(root.pathname.length));
+  let rest = decodeURIComponent(url.pathname.slice(root.pathname.length));
+  const other = languages.slice(1).find((l) => rest === l || rest.startsWith(`${l}/`));
+  if (other) rest = rest.slice(other.length + 1);
   const slug = rest === '' ? 'index' : rest.replace(/\.html$/, '');
-  return slug !== current && slugsIn('pages').includes(slug) ? slug : null;
+  const target = other ?? defaultLang;
+  return (slug !== current || target !== lang) && slugsIn('pages', target).includes(slug) ? { slug, lang: target } : null;
 }
 
 // ---- Overlay: outlines and tool bars over the page frame ----
@@ -459,12 +570,12 @@ function place(node, x, y) {
   node.style.top = `${Math.max(4, Math.min(y, overlay.clientHeight - node.offsetHeight - 4))}px`;
 }
 
-const pageData = () => dataOf(`page:${current}`);
+const pageData = () => (current ? dataOf(`page:${current}`) : null);
 
 function paintNow() {
   overlay.replaceChildren();
-  if (!model) return;
   const page = pageData();
+  if (!model || !page) return;
   if (onPage() && !page.sections?.length) {
     // The empty page gets room where its sections will be.
     const main = doc.querySelector('main') ?? doc.body;
@@ -569,7 +680,10 @@ function ownerOf(source, path) {
 }
 
 // What a form needs from the editor (see buildForm).
-const titleOf = (folder, slug) => files.get(`${contentDir}/${folder}/${slug}.json`)?.data?.title ?? slug;
+const titleOf = (folder, slug) => {
+  const source = `${Object.keys(FOLDERS).find((k) => FOLDERS[k] === folder)}:${slug}`;
+  return (files.get(fileOf(source))?.data ?? files.get(fileOf(source, defaultLang))?.data)?.title ?? slug;
+};
 const formContext = (onChange) => ({
   onChange, pickImage, mediaURL,
   suggest: (field) => (field.name === 'url' ? slugsIn('pages').map((slug) => ({ value: `${slug}.html`, label: titleOf('pages', slug) })) : []),
@@ -726,7 +840,7 @@ function sectionHTML(section) {
   const body = out.body.innerHTML;
   const inner = body.slice(body.indexOf('<!--ve-->') + 9, body.indexOf('<!--/ve-->'));
   const styles = [...out.head.querySelectorAll('link[rel~="stylesheet"], style')].map((n) => n.outerHTML).join('');
-  return `<!doctype html><html lang="${escape(out.documentElement.lang)}"><head><base href="${escape(siteURL)}">${styles}<style>html,body{overflow:hidden;pointer-events:none}</style></head><body class="${escape(out.body.className)}"><main>${inner}</main></body></html>`;
+  return `<!doctype html><html lang="${escape(out.documentElement.lang)}"><head><base href="${escape(new URL(langPrefix(), siteURL).href)}">${styles}<style>html,body{overflow:hidden;pointer-events:none}</style></head><body class="${escape(out.body.className)}"><main>${inner}</main></body></html>`;
 }
 function addSection(at) {
   pickSection().then((section) => section && sectionTo(at, () => (pageData().sections ??= []).splice(at, 0, section)));
@@ -755,7 +869,7 @@ function pickSection({ patterns: withPatterns = true } = {}) {
   };
   const cards = Object.entries(theme.blocks).map(([type, block]) => {
     const example = found.get(type);
-    const fields = schemaAt(`page:${current}`, []).fields?.find((f) => f.name === 'sections')?.types?.find((t) => t.name === type)?.fields ?? block.fields ?? [];
+    const fields = topFields('page:')?.find((f) => f.name === 'sections')?.types?.find((t) => t.name === type)?.fields ?? block.fields ?? [];
     return card(block.label ?? type, example ?? { type, ...emptyValue({ widget: 'object', fields }) }, example ? 'mit Beispielinhalt' : null);
   });
   const patterns = withPatterns ? slugsIn('patterns').map((slug) => card(`Muster: ${titleOf('patterns', slug)}`, { type: 'pattern', pattern: slug }, 'auf mehreren Seiten gleich')) : [];
@@ -803,17 +917,19 @@ const statusOf = (entry) => {
   const status = entry?.status ?? 'published';
   return status === 'published' && entry?.publish_date && Date.parse(entry.publish_date) > Date.now() ? 'Geplant' : STATUS[status] ?? status;
 };
-const pageURL = (slug) => `${siteURL}${slug === 'index' ? '' : `${slug}.html`}`;
+const pageURL = (slug) => `${siteURL}${langPrefix()}${slug === 'index' ? '' : pageFile(slug)}`;
 
 // The name of a source and what it is, for the top bar and the sidebar.
 function describe(source) {
   const [kind, slug] = source.split(':');
   const data = slug !== undefined ? dataOf(source) : null;
+  // A page not translated yet is named as in the language it exists in.
+  const name = data?.title ?? (FOLDERS[kind] ? titleOf(FOLDERS[kind], slug) : slug);
   return {
-    page: { kind: 'Seite', title: data?.title ?? slug },
-    post: { kind: postType?.singular ?? 'Beitrag', title: data?.title ?? slug },
-    pattern: { kind: 'Muster', title: data?.title ?? slug },
-    form: { kind: 'Formular', title: data?.title ?? slug },
+    page: { kind: 'Seite', title: name },
+    post: { kind: postType?.singular ?? 'Beitrag', title: name },
+    pattern: { kind: 'Muster', title: name },
+    form: { kind: 'Formular', title: name },
     settings: { kind: 'Website', title: 'Website-Einstellungen' },
     menus: { kind: 'Website', title: 'Menüs' },
     redirects: { kind: 'Website', title: 'Weiterleitungen' },
@@ -823,10 +939,18 @@ function describe(source) {
   }[kind];
 }
 
+// The language whose file a source is: none for what all languages share; the default language's
+// for posts of a language that has none of its own.
+function languageOf(source) {
+  if (!languages.length || /^(redirects|media|submissions|users)$/.test(source)) return null;
+  return source.startsWith('post:') && postDir() === `${contentDir}/${postType.name}` ? defaultLang : lang;
+}
+
 function drawBar() {
   const bar = $('#ve-top');
-  const shown = view === 'form' ? selection : `page:${current}`;
-  const { kind, title } = describe(shown) ?? {};
+  const shown = view === 'form' ? selection : current ? `page:${current}` : null;
+  const { kind, title } = (shown && describe(shown)) ?? {};
+  const language = shown && languageOf(shown);
   const data = /^(page|post|pattern|form):/.test(shown) ? dataOf(shown) : null;
   const left = el('div', { className: 've-top-left' });
   if (editing || view === 'form') {
@@ -842,7 +966,7 @@ function drawBar() {
   } else left.append(button('Bearbeiten', null, startEditing, 've-primary'));
   const state = el('span', { className: isDirty() ? 've-state ve-unsaved' : 've-state' }, isDirty() ? 'Nicht gespeichert' : 'Alles gespeichert');
   const center = el('div', { className: 've-top-center' }, el('strong', {}, title ?? ''),
-    el('span', {}, `${kind ?? ''}${data && /^(page|post):/.test(shown) ? ` · ${statusOf(data)}` : ''} · `, state));
+    el('span', {}, `${kind ?? ''}${language ? ` · ${languageName(language)}` : ''}${data && /^(page|post):/.test(shown) ? ` · ${statusOf(data)}` : ''} · `, state));
   const right = el('div', { className: 've-top-right' });
   if (view === 'form') {
     if (hasPreview()) {
@@ -865,7 +989,7 @@ function drawBar() {
     b.setAttribute('aria-pressed', String(device === name));
     devices.append(b);
   }
-  right.append(devices, el('a', { href: pageURL(current), target: '_blank', rel: 'noopener', className: 've-tool', title: 'Veröffentlichte Seite in neuem Tab' }, 'Ansehen ↗'));
+  right.append(devices, current ? el('a', { href: pageURL(current), target: '_blank', rel: 'noopener', className: 've-tool', title: 'Veröffentlichte Seite in neuem Tab' }, 'Ansehen ↗') : '');
   bar.replaceChildren(left, center, right);
 }
 
@@ -925,6 +1049,7 @@ async function finish() {
       for (const [path, f] of [...files]) { if (f.saved === null) files.delete(path); else f.data = JSON.parse(f.saved); }
       for (const [path, u] of [...uploads]) if (!u.saved) { uploads.delete(path); delete media[path]; }
       removed.clear();
+      views.clear();
     }
   }
   undoStack.length = 0;
@@ -992,7 +1117,7 @@ function open(source) {
 }
 
 function setView(next, source) {
-  const target = source ?? (next === 'form' ? `page:${current}` : selection);
+  const target = source ?? (next === 'form' ? pageSource() : selection);
   view = next;
   localStorage.setItem('werft.view', view);
   hover = {};
@@ -1013,9 +1138,9 @@ function layout() {
   const app = $('#ve-app');
   app.dataset.view = view;
   app.dataset.preview = String(view === 'visual' || (showPreview && hasPreview()));
-  for (const b of document.querySelectorAll('.ve-views button')) b.setAttribute('aria-pressed', String(b.dataset.view === view));
+  for (const b of document.querySelectorAll('.ve-views button[data-view]')) b.setAttribute('aria-pressed', String(b.dataset.view === view));
   $('#ve-form').hidden = view !== 'form';
-  history.replaceState(null, '', `#${view}/${encodeURIComponent(view === 'form' ? selection : `page:${current}`)}`);
+  history.replaceState(null, '', `#${view}/${encodeURIComponent(view === 'form' ? selection : pageSource())}${isDefault() ? '' : `/${lang}`}`);
 }
 
 // The form view's preview: the page at a common laptop width, scaled down to the room beside the
@@ -1036,7 +1161,8 @@ let formShows = null;
 function drawForm() {
   const main = $('#ve-form');
   const scroll = formShows === selection ? main.scrollTop : 0;
-  const show = { media: mediaView, submissions: submissionsView, users: usersView }[selection] ?? formView;
+  const pages = { media: mediaView, submissions: submissionsView, users: usersView };
+  const show = Object.hasOwn(pages, selection) ? pages[selection] : formView;
   formHandle = show(app, main);
   main.scrollTop = scroll;
   formShows = selection;
@@ -1049,8 +1175,8 @@ function drawPages() {
   const list = $('#ve-pages');
   const shown = view === 'form' ? selection : `page:${current}`;
   const changed = new Set(changedPaths());
-  const pages = slugsIn('pages').map((slug) => ({ slug, data: files.get(`${contentDir}/pages/${slug}.json`).data }))
-    .sort((a, b) => (b.slug === 'index') - (a.slug === 'index') || String(a.data.title ?? a.slug).localeCompare(String(b.data.title ?? b.slug), 'de'));
+  const order = (a, b) => (b.slug === 'index') - (a.slug === 'index') || String(a.data.title ?? a.slug).localeCompare(String(b.data.title ?? b.slug), 'de');
+  const pages = slugsIn('pages').map((slug) => ({ slug, data: files.get(fileOf(`page:${slug}`)).data })).sort(order);
   // The second line names only what is worth noticing: the home page, a status other than published.
   const note = (...parts) => parts.filter(Boolean).join(' · ');
   const unusual = (data) => (statusOf(data) === STATUS.published ? '' : statusOf(data));
@@ -1073,18 +1199,43 @@ function drawPages() {
     return details;
   };
   const sections = [];
+  // The languages a page is missing in, worth noticing.
+  const missing = (slug) => {
+    const without = languages.filter((l) => l !== lang && !slugsIn('pages', l).includes(slug)).map(languageName);
+    return without.length ? `nicht auf ${without.join(', ')}` : '';
+  };
   if (can('content')) {
-    sections.push(group('Seiten', el('ul', {}, ...pages.map(({ slug, data }) => item(`page:${slug}`, data.title ?? slug, note(slug === 'index' && 'Startseite', unusual(data)),
+    sections.push(group('Seiten', el('ul', {}, ...pages.map(({ slug, data }) => item(`page:${slug}`, data.title ?? slug, note(slug === 'index' && 'Startseite', unusual(data), missing(slug)),
       () => { if (slug !== current) openPage(slug); pageSettings(); }))),
     button('+ Neue Seite', null, newPage, 've-tool ve-wide')));
+    // Pages of other languages this one lacks, offered as a copy to translate.
+    const untranslatedPages = [...new Set(languages.filter((l) => l !== lang).flatMap((l) => slugsIn('pages', l)))].filter((slug) => !slugsIn('pages').includes(slug))
+      .map((slug) => ({ slug, data: { title: titleOf('pages', slug) } })).sort(order);
+    if (untranslatedPages.length) {
+      sections.push(group('Noch nicht übersetzt', el('p', { className: 've-hint' }, `Diese Seiten gibt es auf ${languageName(lang)} noch nicht. „Übersetzen“ legt eine Kopie an, die Sie hier übersetzen.`),
+        el('ul', {}, ...untranslatedPages.map(({ slug, data }) => {
+          const row = item(`page:${slug}`, data.title, slug === 'index' ? 'Startseite' : '');
+          row.append(button('Übersetzen', `„${data.title}“ auf ${languageName(lang)} anlegen`, () => translate(slug), 've-tool'));
+          return row;
+        }))));
+    }
   }
   if (postType && can('post')) {
     const date = postType.date ?? 'publish_date';
-    const posts = slugsIn(postType.name).map((slug) => ({ slug, data: files.get(`${contentDir}/${postType.name}/${slug}.json`).data }))
+    const posts = slugsIn(postType.name).map((slug) => ({ slug, data: files.get(fileOf(`post:${slug}`)).data }))
       .sort((a, b) => String(b.data[date] ?? '').localeCompare(String(a.data[date] ?? '')));
     const when = (data) => (data[date] ? new Date(data[date]).toLocaleDateString('de-DE') : '');
+    // A language without posts of its own shows the default language's; its first own post ends that.
+    const shared = !isDefault() && languageOf('post:') !== lang;
+    // Own posts of the language that are not public yet: the site still shows the default ones.
+    const waiting = !isDefault() && !shared && !posts.some(({ data }) => isPublic(data));
+    // Starting own posts changes what the public site shows, so it is for roles that may publish.
+    const mayPublish = (me.statuses ?? []).includes('published');
     sections.push(folded(`${postType.label} (${posts.length})`, postsOpen || shown.startsWith('post:'), (o) => { postsOpen = o; },
-      button(`+ ${postType.singular ?? 'Beitrag'} anlegen`, null, newPost, 've-tool ve-wide'),
+      shared && el('p', { className: 've-hint' }, `Auf ${languageName(lang)} zeigt die Website die ${postType.label} auf ${languageName(defaultLang)}. Was Sie hier anlegen oder ändern, gilt für alle Sprachen.`),
+      waiting && el('p', { className: 've-hint' }, `Bis einer dieser Einträge veröffentlicht ist, zeigt die Website auf ${languageName(lang)} weiter die ${postType.label} auf ${languageName(defaultLang)}.`),
+      button(`+ ${postType.singular ?? 'Beitrag'} anlegen${shared ? ' (für alle Sprachen)' : ''}`, null, () => newPost(), 've-tool ve-wide'),
+      shared && mayPublish && button(`Eigene ${postType.label} auf ${languageName(lang)} beginnen …`, null, () => newPost({ own: true }), 've-tool ve-wide'),
       el('ul', {}, ...posts.map(({ slug, data }) => item(`post:${slug}`, data.title ?? slug, note(when(data), unusual(data)))))));
   }
   const siteList = el('ul', {});
@@ -1097,16 +1248,58 @@ function drawPages() {
   const more = [];
   if (can('content')) {
     more.push(el('h3', {}, 'Muster'), el('p', { className: 've-hint' }, 'Abschnitte, die auf mehreren Seiten gleich erscheinen.'),
-      el('ul', {}, ...slugsIn('patterns').map((slug) => item(`pattern:${slug}`, titleOf('patterns', slug), 'Muster'))),
+      el('ul', {}, ...slugsIn('patterns').map((slug) => item(`pattern:${slug}`, titleOf('patterns', slug), untranslated(`pattern:${slug}`) ? 'Muster · noch nicht übersetzt' : 'Muster'))),
       button('+ Neues Muster', null, () => newEntry('pattern'), 've-tool ve-wide'));
     if (collection('forms')) {
-      more.push(el('h3', {}, 'Formulare'), el('ul', {}, ...slugsIn('forms').map((slug) => item(`form:${slug}`, titleOf('forms', slug), 'Formular'))),
+      more.push(el('h3', {}, 'Formulare'), el('ul', {}, ...slugsIn('forms').map((slug) => item(`form:${slug}`, titleOf('forms', slug), untranslated(`form:${slug}`) ? 'Formular · noch nicht übersetzt' : 'Formular'))),
         button('+ Neues Formular', null, () => newEntry('form'), 've-tool ve-wide'));
     }
   }
   if (can('structure')) more.push(el('h3', {}, 'Weiterleitungen'), el('ul', {}, item('redirects', 'Weiterleitungen', 'Alte Adressen auf neue umleiten')));
   if (more.length) sections.push(folded('Weitere Inhalte', moreOpen || /^(pattern|form:|redirects)/.test(shown), (o) => { moreOpen = o; }, ...more));
   list.replaceChildren(...sections);
+  drawLanguages();
+}
+
+// The language switch at the top of the sidebar, for a site in several languages.
+function drawLanguages() {
+  const box = $('#ve-languages');
+  box.hidden = languages.length < 2;
+  box.querySelector('.ve-views').replaceChildren(...languages.map((l) => {
+    const b = el('button', { type: 'button' }, languageName(l));
+    b.setAttribute('aria-pressed', String(l === lang));
+    b.addEventListener('click', () => switchLanguage(l));
+    return b;
+  }));
+}
+
+// Edits another language: the same page, or what else is open, in that language where it exists.
+function switchLanguage(next, source) {
+  if (next === lang) { if (source) open(source); return; }
+  syncViews();
+  views.clear();
+  // Copies of patterns and forms that were not changed are made again when needed.
+  for (const [path, f] of [...files]) if (unchangedCopy(path, f)) files.delete(path);
+  lang = next;
+  closePanel();
+  selected = null;
+  const target = source ?? (view === 'form' ? selection : pageSource());
+  const [kind, slug] = target.split(':');
+  if (kind === 'page') current = slug;
+  if (view === 'visual') return setView(view, target.startsWith('page:') ? target : pageSource());
+  setView(view, kind === 'post' && !slugsIn(postType.name).includes(slug) ? pageSource() : target);
+}
+
+// A page of another language as a copy in the editor's language, to be translated in place. It is
+// a draft until it is published.
+function translate(slug) {
+  const from = languages.find((l) => l !== lang && slugsIn('pages', l).includes(slug));
+  const original = files.get(fileOf(`page:${slug}`, from))?.data;
+  if (!original) return;
+  startEditing();
+  change(() => { files.set(fileOf(`page:${slug}`), { sha: null, saved: null, data: { ...structuredClone(original), status: 'draft' } }); });
+  openPage(slug);
+  toast(`Kopie angelegt. Übersetzen Sie die Texte, wählen Sie „Veröffentlicht“ und speichern Sie.`);
 }
 
 function pageSettings() {
@@ -1118,7 +1311,9 @@ function pageSettings() {
 // Deletes a page, post, pattern or form with the next save, after asking.
 async function removeEntry(source) {
   const { kind, title } = describe(source);
-  if (!(await confirmDialog(`${kind} löschen?`, `„${title}“ wird beim nächsten Speichern gelöscht. Bis dahin können Sie es mit „Rückgängig“ zurückholen.`, 'Löschen'))) return;
+  const language = languageOf(source);
+  const which = language ? ` (Fassung auf ${languageName(language)})` : '';
+  if (!(await confirmDialog(`${kind} löschen?`, `„${title}“${which} wird beim nächsten Speichern gelöscht. Bis dahin können Sie es mit „Rückgängig“ zurückholen.`, 'Löschen'))) return;
   // Leave the entry first: the preview cannot render a page that is gone.
   const home = slugsIn('pages').find((slug) => slug === 'index') ?? slugsIn('pages').find((slug) => `page:${slug}` !== source);
   if (source === `page:${current}`) open(`page:${home}`);
@@ -1128,14 +1323,18 @@ async function removeEntry(source) {
 
 const slugify = (title) => title.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
   .normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'seite';
-const unique = (folder, slug) => { let s = slug; for (let n = 2; slugsIn(folder).includes(s) || files.has(`${contentDir}/${folder}/${s}.json`); n++) s = `${slug}-${n}`; return s; };
+// A slug no entry of the folder has; a new page also takes none another language uses, which would
+// make it that page's translation.
+const KIND = { pages: 'page', patterns: 'pattern', forms: 'form', [postType?.name]: 'post' };
+const taken = (folder, slug) => (folder === 'pages' && languages.length ? languages : [lang]).some((l) => slugsIn(folder, l).includes(slug)) || files.has(fileOf(`${KIND[folder]}:${slug}`));
+const unique = (folder, slug) => { let s = slug; for (let n = 2; taken(folder, s); n++) s = `${slug}-${n}`; return s; };
 
 async function newPage() {
   const title = await promptDialog('Neue Seite', 'Titel der Seite');
   if (!title) return;
   const slug = unique('pages', slugify(title));
   startEditing();
-  change(() => { files.set(`${contentDir}/pages/${slug}.json`, { sha: null, saved: null, data: { title, status: 'draft', sections: [] } }); });
+  change(() => { files.set(fileOf(`page:${slug}`), { sha: null, saved: null, data: { title, status: 'draft', sections: [] } }); });
   openPage(slug);
 }
 
@@ -1143,9 +1342,8 @@ async function newPage() {
 async function newEntry(kind) {
   const title = await promptDialog(kind === 'pattern' ? 'Neues Muster' : 'Neues Formular', 'Name');
   if (!title) return;
-  const folder = FOLDERS[kind];
-  const slug = unique(folder, slugify(title));
-  change(() => { files.set(`${contentDir}/${folder}/${slug}.json`, { sha: null, saved: null, data: kind === 'pattern' ? { title, sections: [] } : { title } }); });
+  const slug = unique(FOLDERS[kind], slugify(title));
+  change(() => { files.set(fileOf(`${kind}:${slug}`), { sha: null, saved: null, data: kind === 'pattern' ? { title, sections: [] } : { title } }); });
   setView('form', `${kind}:${slug}`);
 }
 
@@ -1158,11 +1356,15 @@ function openPost(slug) {
     extra: button('Löschen', null, () => removeEntry(`post:${slug}`), 've-tool ve-danger'),
   });
 }
-async function newPost() {
+// own: the first post of a language that has shown the default language's posts so far.
+async function newPost({ own = false } = {}) {
+  if (own && !(await confirmDialog(`Eigene ${postType.label} auf ${languageName(lang)}?`,
+    `Sie legen den ersten Eintrag auf ${languageName(lang)} an. Sobald einer veröffentlicht ist, zeigt die Website auf ${languageName(lang)} nur noch ${postType.label}, die Sie in dieser Sprache anlegen; die auf ${languageName(defaultLang)} erscheinen dort nicht mehr.`, 'Weiter'))) return;
   const title = await promptDialog(`Neu: ${postType.singular ?? 'Beitrag'}`, 'Titel');
   if (!title) return;
   const slug = unique(postType.name, slugify(title));
-  change(() => { files.set(`${contentDir}/${postType.name}/${slug}.json`, { sha: null, saved: null, data: { title, status: 'draft' } }); });
+  const path = own ? `${langDir()}/${postType.name}/${slug}.json` : fileOf(`post:${slug}`);
+  change(() => { files.set(path, { sha: null, saved: null, data: { title, status: 'draft' } }); });
   openPost(slug);
 }
 
@@ -1182,10 +1384,15 @@ async function upload(file) {
 const images = () => [...new Set([...uploads.keys(), ...Object.keys(media).filter((p) => p.startsWith(`${mediaDir}/`))])].filter((p) => !removed.has(p));
 // The entries that name an image.
 function usesOf(path) {
-  return [...files].filter(([, f]) => f.data && JSON.stringify(f.data).includes(path))
-    .map(([p]) => p.slice(contentDir.length + 1).replace(/\.json$/, ''))
-    .map((rest) => { const [folder, slug] = rest.split('/'); const kind = Object.keys(FOLDERS).find((k) => FOLDERS[k] === folder); return kind ? `${kind}:${slug}` : Object.keys(SETTINGS).find((k) => SETTINGS[k] === slug); })
-    .filter(Boolean).map((source) => describe(source)?.title);
+  return [...files].filter(([p, f]) => f.data && !unchangedCopy(p, f) && JSON.stringify(f.data).includes(path)).map(([p, f]) => {
+    let rest = p.slice(contentDir.length + 1).replace(/\.json$/, '');
+    const language = languages.slice(1).find((l) => rest.startsWith(`${l}/`));
+    if (language) rest = rest.slice(language.length + 1);
+    const [folder, slug] = rest.split('/');
+    const setting = folder === 'settings' && Object.keys(SETTINGS).find((k) => SETTINGS[k] === slug);
+    const title = KIND[folder] ? f.data.title ?? slug : setting && describe(setting).title;
+    return title && (language ? `${title} (${languageName(language)})` : title);
+  }).filter(Boolean);
 }
 function removeImage(path) {
   const u = uploads.get(path);
@@ -1198,11 +1405,22 @@ const app = {
   get selection() { return selection; },
   dataOf, describe, topFields, schemaAt, statusOf, sharedNote, fileOf,
   savedText: (source) => files.get(fileOf(source))?.saved ?? null,
+  // The file's content as it will be saved (for a language's settings: what differs).
+  fileData: (source) => { syncViews(); return files.get(fileOf(source))?.data ?? null; },
+  // For a page the editor's language lacks: the language it exists in, to translate it from.
+  translatableFrom: (source) => source.startsWith('page:') && !dataOf(source) && languages.find((l) => l !== lang && slugsIn('pages', l).includes(source.slice(5))),
+  translate, languageName,
   snapshot, pushUndo: (snap) => { undoStack.push(snap); if (undoStack.length > 100) undoStack.shift(); redoStack.length = 0; },
   // After a change in a form: the top bar at once, the preview once typing pauses.
   changed() { drawBar(); clearTimeout(drawSoon); drawSoon = setTimeout(draw, 300); },
   change, open, removeEntry, confirmDialog, toast, formContext,
-  replaceData: (source, data) => { dataOf(source); files.get(fileOf(source)).data = data; },
+  replaceData: (source, data) => {
+    syncViews();
+    const path = fileOf(source);
+    if (!files.has(path)) files.set(path, { sha: null, saved: null, data: null });
+    files.get(path).data = data;
+    views.clear();
+  },
   images, mediaURL, upload, usesOf, removeImage, mayDeleteImages: ['administrator', 'editor'].includes(me.role),
   isUnsaved: (path) => uploads.has(path) && !uploads.get(path).saved,
 };
@@ -1211,7 +1429,7 @@ const app = {
 $('#ve-user').textContent = me.name ?? me.email;
 $('#ve-site').textContent = site.name;
 $('#ve-signout').addEventListener('click', () => { signOut(); location.href = './'; });
-for (const b of document.querySelectorAll('.ve-views button')) b.addEventListener('click', () => { if (b.dataset.view !== view) setView(b.dataset.view); });
+for (const b of document.querySelectorAll('.ve-views button[data-view]')) b.addEventListener('click', () => { if (b.dataset.view !== view) setView(b.dataset.view); });
 $('#ve-app').hidden = false;
 if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'submissions', 'users'].includes(hashOpen)) {
   if (hashOpen.startsWith('page:')) current = hashOpen.slice(5);

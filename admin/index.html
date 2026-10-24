@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Redaktion</title>
 <link rel="stylesheet" href="./admin.css">
-<script type="importmap">{ "imports": { "werft": "./werft/index.js", "werft/schema": "./werft/schema.js", "marked": "./vendor/marked.esm.js" } }</script>
+<script type="importmap">{ "imports": { "werft": "./werft/index.js", "werft/schema": "./werft/schema.js", "werft/content": "./werft/content.js", "marked": "./vendor/marked.esm.js" } }</script>
 <script type="module" src="./editor.js"></script>
 </head>
 <body>
@@ -17,6 +17,7 @@
     <button type="button" data-view="form">Formular</button>
     <button type="button" data-view="visual">Auf der Seite</button>
   </div>
+  <div id="ve-languages" class="ve-languages" hidden><span id="ve-languages-label">Sprache</span><div class="ve-views" role="group" aria-labelledby="ve-languages-label"></div></div>
   <nav id="ve-pages"></nav>
   <footer><button type="button" id="ve-signout">Abmelden</button></footer>
 </aside>

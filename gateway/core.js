@@ -15,7 +15,7 @@
 import { USERS_FILE, base64url, hashPassword, verifyPassword, signToken, readToken, stampOf, parseUsers, serializeUsers, findUser, publicUser } from './auth.js';
 import { ROLES, denial, classify, editable, statuses } from './roles.js';
 import { submissions } from './submissions.js';
-import { loadContent, isScheduled } from '../lib/content.js';
+import { loadContent, isScheduled, siteLanguages } from '../lib/content.js';
 
 const PREFIX = '/api/werft';
 const ACCESS_TTL = 12 * 3600;
@@ -34,9 +34,9 @@ async function sha256(text) {
 }
 
 // The gateway's view of a site (werft.config.js and its theme).
-export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [] });
+export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [], languages: siteLanguages(site) });
 
-// options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs },
+// options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs, languages? },
 //   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?(),
 //   turnstileSecret? (forms need Cloudflare Turnstile), fetch? (for Turnstile) }
 export function createGateway(options) {
@@ -264,8 +264,8 @@ export function createGateway(options) {
       list: async (dir) => files.filter((f) => f.path.startsWith(`${dir}/`)).map((f) => f.path.slice(dir.length + 1)),
       readText: async (p) => { if (texts.get(p) == null) throw Object.assign(new Error(p), { status: 404 }); return texts.get(p); },
     };
-    const content = await loadContent({ site: { contentDir: site.contentDir }, theme: { postType: site.postType ? { name: site.postType } : undefined }, store });
-    const entries = [...content.pages, ...content.posts];
+    const content = await loadContent({ site: { contentDir: site.contentDir, languages: site.languages }, theme: { postType: site.postType ? { name: site.postType } : undefined }, store });
+    const entries = [content, ...Object.values(content.languages ?? {})].flatMap((c) => [...c.pages, ...(c.posts ?? [])]);
     const lastBuild = await options.lastBuild?.(url);
     const due = entries.filter((e) => e.publish_date && (e.status ?? 'published') === 'published'
       && Date.parse(e.publish_date) <= now() && (!lastBuild || Date.parse(e.publish_date) > Date.parse(lastBuild)));

@@ -52,6 +52,13 @@ export function formView(app, root) {
   const data = app.dataOf(source);
   const [type, slug] = source.split(':');
   const { kind, title } = app.describe(source);
+  const from = !data && app.translatableFrom(source);
+  if (from) {
+    // A page of another language, not translated into the editor's language yet.
+    root.replaceChildren(el('div', { className: 've-form-page' }, head(app, kind, title, `Diese Seite gibt es auf ${app.languageName(from)}, aber noch nicht in dieser Sprache. „Übersetzen“ legt eine Kopie an; dann ersetzen Sie die Texte durch die Übersetzung.`),
+      card(null, null, el('div', { className: 've-actions-row' }, app.button('Übersetzen', null, () => app.translate(slug), 've-primary')))));
+    return { reveal() {} };
+  }
   if (!data) {
     root.replaceChildren(el('div', { className: 've-form-page' }, head(app, kind, title, 'Dieser Eintrag ist gelöscht. Mit „Rückgängig“ holen Sie ihn zurück.')));
     return { reveal() {} };
@@ -157,7 +164,7 @@ function version(app, source, path, commit, newest) {
     if (!diff.open || diff.dataset.loaded) return;
     diff.dataset.loaded = '1';
     try {
-      const lines = versionDiff(`${JSON.stringify(app.dataOf(source) ?? {}, null, 2)}\n`, await read());
+      const lines = versionDiff(`${JSON.stringify(app.fileData(source) ?? {}, null, 2)}\n`, await read());
       const pre = el('pre');
       pre.innerHTML = lines.some(([k]) => k !== ' ') ? diffHTML(lines) : 'Keine inhaltlichen Unterschiede.';
       diff.append(el('p', { className: 've-hint' }, 'Rot: steht jetzt da. Grün: stand in dieser Version.'), pre);
