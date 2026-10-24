@@ -220,7 +220,8 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      writing `<meta charset>`, the viewport and its assets.
    - Structured data: with `fields.organization()` in `settingsFields`, the site settings get
      "Firma, Adresse und Öffnungszeiten für Suchmaschinen" (kind, name, address, phone, e-mail,
-     opening hours), and `ctx.head()` writes them on the home page as JSON-LD (schema.org
+     opening hours as days with times like `09:00` or `9.30`; a time werft cannot read leaves its
+     line out), and `ctx.head()` writes them on each language's home page as JSON-LD (schema.org
      `LocalBusiness` or `Organization`, with the site's address, icon and share image), which
      search engines read for their results.
 4. **Content**: `content/pages/<slug>.json` (`index` becomes `index.html`), `content/patterns/`,
