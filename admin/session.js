@@ -66,13 +66,23 @@ export async function requireUser(siteName) {
       form.innerHTML = `<h1>${title}</h1><p class="werft-lead"></p>${{
         signin: field('werft-email', 'E-Mail', 'email', 'username') + field('werft-password', 'Passwort', 'password', 'current-password'),
         forgot: field('werft-email', 'E-Mail', 'email', 'username'),
-        reset: field('werft-password', 'Neues Passwort (mindestens 10 Zeichen)', 'password', 'new-password') + field('werft-repeat', 'Neues Passwort wiederholen', 'password', 'new-password'),
+        reset: field('werft-email', 'E-Mail', 'email', 'username') + field('werft-password', 'Neues Passwort (mindestens 10 Zeichen)', 'password', 'new-password') + field('werft-repeat', 'Neues Passwort wiederholen', 'password', 'new-password'),
       }[mode]}<p class="werft-error" role="alert"></p><button type="submit">${{ signin: 'Anmelden', forgot: 'Link schicken', reset: 'Passwort festlegen' }[mode]}</button>`;
       $('.werft-lead').textContent = mode === 'forgot' ? 'Sie bekommen eine E-Mail mit einem Link, mit dem Sie ein neues Passwort festlegen.' : `${siteName} · Redaktion`;
-      const switchTo = (to, text) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'werft-link'; b.textContent = text; b.addEventListener('click', () => show(to)); form.append(b); };
+      const switchTo = (to, text) => {
+        if ([...form.querySelectorAll('.werft-link')].some((b) => b.textContent === text)) return;
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'werft-link'; b.textContent = text; b.addEventListener('click', () => show(to)); form.append(b);
+      };
       if (mode === 'signin') mailing.then((yes) => { if (yes && form.isConnected && $('#werft-password')) switchTo('forgot', 'Passwort vergessen?'); });
       if (mode !== 'signin') switchTo('signin', 'Zur Anmeldung');
-      $('input').focus();
+      if (mode === 'reset') {
+        // The account the link is for (from the token), so a password manager saves the new password for it.
+        const email = $('#werft-email');
+        try { email.value = JSON.parse(atob(resetToken.split('.')[0].replace(/-/g, '+').replace(/_/g, '/'))).sub ?? ''; } catch { /* shown empty */ }
+        email.readOnly = true;
+        email.required = false;
+        $('#werft-password').focus();
+      } else $('input').focus();
       const error = $('.werft-error');
       form.onsubmit = async (event) => {
         event.preventDefault();

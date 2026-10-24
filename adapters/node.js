@@ -58,8 +58,9 @@ async function serveNotFound(res, outDir, pathname) {
 }
 
 // options: { dir, port, host, secret, branch, tickMinutes, mail (the e-mail driver when WERFT_MAIL
-// is unset: 'log' in werft dev, none in werft serve) }
-export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret, branch, tickMinutes = 0, mail, log = console.log } = {}) {
+// is unset: 'log' in werft dev, none in werft serve), dev (werft dev: links in e-mails lead to the
+// listening address) }
+export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret, branch, tickMinutes = 0, mail, dev = false, log = console.log } = {}) {
   const { root, site, theme } = await loadSite(dir);
   const outDir = path.resolve(root, site.output ?? '_site');
   const storage = await gitStorage(root);
@@ -109,9 +110,9 @@ export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret
       const origin = `http://${req.headers.host ?? `${host}:${port}`}`;
       const url = new URL(req.url, origin);
       if (url.pathname.startsWith('/api/werft')) {
-        // Links in e-mails lead to the listening address only where that is this machine (werft dev);
-        // otherwise to the site setting url, never to a Host header someone sent.
-        const local = ['127.0.0.1', 'localhost', '::1'].includes(host) && `http://${host.includes(':') ? `[${host}]` : host}:${server.address().port}`;
+        // Links in e-mails lead to the listening address on werft dev; otherwise (werft serve, behind
+        // a proxy) to the site setting url, never to a Host header someone sent.
+        const local = dev && `http://${host.includes(':') ? `[${host}]` : host}:${server.address().port}`;
         const response = await gateway(await toRequest(req, origin), { address: req.socket.remoteAddress, origin: local || undefined });
         return send(res, response ?? new Response('Not found', { status: 404 }));
       }

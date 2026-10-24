@@ -81,7 +81,7 @@ test('a reset link uses the address the request came to and is sent through wait
   } finally {
     console.log = log;
   }
-  assert.match(logged.join('\n'), /https:\/\/x\.pages\.dev\/sub\/admin\/#passwort=/);
+  assert.match(logged.join('\n'), /https:\/\/x\.pages\.dev\/admin\/#passwort=/);
   assert.ok(!logged.join('\n').includes('evil.test'));
 });
 

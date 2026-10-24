@@ -673,15 +673,17 @@ password and signs in:
 - The answer is the same whether the address has an account or not ("Wenn es zu dieser Adresse ein
   Konto gibt, …"), and the e-mail goes out after it, so neither the text nor the timing shows which
   addresses exist. Requests count like [sign-ins](#sign-in): 3 per address entered and 20 per
-  client address, then the same growing wait.
+  client address, then a wait; for the address entered it starts at 15 minutes and grows to an
+  hour, so one address gets about 25 such e-mails a day (on Cloudflare without `WERFT_KV`, per
+  isolate). That bounds what a stranger can make the site send, and the mail provider's quota.
 - The link is signed with `WERFT_SECRET`, lasts an hour and is tied to the password, so it stops
   working once a password was set with it or in another way. Its token sits after `#`, so it does
   not reach server logs, and the admin removes it from the address once used. A new password ends
   the user's other sessions.
-- The link's address never comes from the request's Host header: on Cloudflare Pages it is the
-  address the request came to, `werft dev` (on 127.0.0.1) uses its own, and otherwise (`werft
-  serve` on a public interface) the site setting `url` with the admin's folder. Without either, no
-  e-mail is sent and the log says so.
+- The link leads to the admin at the root of the host (`/admin/`, whatever the site's `base`). Its
+  address never comes from the request's Host header: on Cloudflare Pages it is the host the
+  request came to, `werft dev` uses its own listening address, and `werft serve` the host of the
+  site setting `url`. Without one, no e-mail is sent and the log says so.
 - Without an e-mail driver the form does not offer it; an administrator sets a new password on
   "Benutzer".
 

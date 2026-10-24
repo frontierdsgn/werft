@@ -387,15 +387,16 @@ export function createGateway(options) {
   const RESET_TTL = 3600;
   const SENT = 'Wenn es zu dieser Adresse ein Konto gibt, ist eine E-Mail mit einem Link unterwegs. Der Link gilt eine Stunde.';
 
-  // The admin's address: the origin the host vouches for, else the site's own address (the site
-  // setting `url`), else none.
+  // The admin's address, at the root of the host whatever the site's base (the build puts it at
+  // <output>/<admin>/): on the origin the host vouches for, else on that of the site's own address
+  // (the site setting `url`), else none.
   async function adminLink(origin) {
     if (site.admin === false) return null;
-    const dir = `${site.admin ?? 'admin'}/`;
-    if (origin) return `${origin}/${site.base ? `${String(site.base).replace(/^\/+|\/+$/g, '')}/` : ''}${dir}`;
+    const dir = `/${site.admin ?? 'admin'}/`;
     const bytes = await storage.read((await storage.head(branch)).sha, `${site.contentDir}/settings/site.json`);
+    if (origin) return `${origin}${dir}`;
     const url = (() => { try { return JSON.parse(decoder.decode(bytes)).url; } catch { return null; } })();
-    return /^https?:\/\//.test(url ?? '') ? new URL(dir, url.endsWith('/') ? url : `${url}/`).href : null;
+    return /^https?:\/\//.test(url ?? '') ? new URL(dir, url).href : null;
   }
 
   async function forgotPassword(body, { address, origin, waitUntil }) {
@@ -409,12 +410,15 @@ export function createGateway(options) {
     const [{ users }, link] = await Promise.all([loadUsers(), adminLink(origin)]);
     const user = findUser(users, email);
     if (user && link) {
-      const token = await signToken(secret, { typ: 'reset', sub: user.email, stamp: await stampOf(user), exp: Math.floor(now() / 1000) + RESET_TTL });
-      const sending = mail.send({
-        to: user.email, fromName: site.name,
-        subject: `Neues Passwort für ${site.name ?? 'die Website'}`,
-        text: `Hallo ${user.name ?? ''},\n\njemand, hoffentlich Sie, möchte ein neues Passwort für ${site.name ?? 'die Website'} festlegen. Mit diesem Link geht das, eine Stunde lang und nur einmal:\n\n${link}#passwort=${token}\n\nWenn Sie das nicht waren, können Sie diese E-Mail löschen. Ihr Passwort bleibt dann, wie es ist.\n`,
-      }).catch((e) => console.error('werft gateway: reset e-mail:', e.message));
+      // Even the token is made after the reply.
+      const sending = (async () => {
+        const token = await signToken(secret, { typ: 'reset', sub: user.email, stamp: await stampOf(user), exp: Math.floor(now() / 1000) + RESET_TTL });
+        await mail.send({
+          to: user.email, fromName: site.name,
+          subject: `Neues Passwort für ${site.name ?? 'die Website'}`,
+          text: `Hallo ${user.name ?? ''},\n\njemand, hoffentlich Sie, möchte ein neues Passwort für ${site.name ?? 'die Website'} festlegen. Mit diesem Link geht das, eine Stunde lang und nur einmal:\n\n${link}#passwort=${token}\n\nWenn Sie das nicht waren, können Sie diese E-Mail löschen. Ihr Passwort bleibt dann, wie es ist.\n`,
+        });
+      })().catch((e) => console.error('werft gateway: reset e-mail:', e.message));
       if (waitUntil) waitUntil(sending);
     } else if (user) {
       console.error('werft gateway: no address for a reset link; set the site setting url.');
@@ -427,8 +431,8 @@ export function createGateway(options) {
     const { users, sha: parent } = await loadUsers();
     const user = payload?.typ === 'reset' && findUser(users, payload.sub);
     if (!user || (await stampOf(user)) !== payload.stamp) return error(410, 'Dieser Link gilt nicht mehr. Bitte fordern Sie einen neuen an.');
-    if (String(body.password ?? '').length < 10) return error(422, 'Passwörter brauchen mindestens 10 Zeichen.');
-    const updated = { ...user, password: await hashPassword(String(body.password), options.iterations) };
+    if (typeof body.password !== 'string' || body.password.length < 10) return error(422, 'Passwörter brauchen mindestens 10 Zeichen.');
+    const updated = { ...user, password: await hashPassword(body.password, options.iterations) };
     try {
       await saveUsers(user, users.map((u) => (u === user ? updated : u)), `Neues Passwort: ${user.email}`, parent);
     } catch (e) {

@@ -45,7 +45,7 @@ test('sends a link to an account, the same reply without one, and sets the new p
   assert.equal(mail.sent.length, 1);
   const [message] = mail.sent;
   assert.deepEqual([message.to, message.from.name, message.subject], [['ada@example.org'], 'Test', 'Neues Passwort für Test']);
-  assert.match(message.text, /https:\/\/site\.test\/sub\/admin\/#passwort=/);
+  assert.match(message.text, /https:\/\/site\.test\/admin\/#passwort=/, 'the admin is at the root of the host, whatever the base');
 
   const reset = await call('/password/reset', { token: tokenFrom(message), password: 'new-password' });
   assert.equal(reset.status, 200);
@@ -89,7 +89,7 @@ test('requests are throttled per address entered, and need a mail driver', async
 test('without an origin from the host, the link uses the site setting url, else none is sent', async () => {
   const withUrl = await setup({ files: { 'content/settings/site.json': JSON.stringify({ url: 'https://www.example.test/sub' }) } });
   assert.equal((await withUrl.forgot('ada@example.org', { origin: null })).status, 200);
-  assert.match(withUrl.mail.sent[0].text, /https:\/\/www\.example\.test\/sub\/admin\/#passwort=/);
+  assert.match(withUrl.mail.sent[0].text, /https:\/\/www\.example\.test\/admin\/#passwort=/);
   const none = await setup();
   assert.equal((await none.forgot('ada@example.org', { origin: null })).status, 200);
   assert.equal(none.mail.sent.length, 0);
@@ -98,7 +98,7 @@ test('without an origin from the host, the link uses the site setting url, else 
   assert.equal(noAdmin.mail.sent.length, 0, 'a site without the admin sends no link');
 });
 
-test('werft dev links to its own address, whatever Host header a request sends', async () => {
+test('werft dev links to its own address, whatever Host header a request sends; werft serve does not', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'werft-reset-'));
   const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text); };
   write('werft.config.js', "export default { name: 'T', theme: './theme/index.js', output: '_site' };\n");
@@ -109,7 +109,8 @@ test('werft dev links to its own address, whatever Host header a request sends',
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@test', 'commit', '--quiet', '-m', 'init'], { cwd: root });
   const logged = [];
-  const dev = await serve({ dir: root, port: 0, secret: 'x'.repeat(32), mail: 'log', log: (line) => logged.push(String(line)) });
+  const dev = await serve({ dir: root, port: 0, secret: 'x'.repeat(32), mail: 'log', dev: true, log: (line) => logged.push(String(line)) });
+  const served = await serve({ dir: root, port: 0, secret: 'x'.repeat(32), mail: 'log', log: (line) => logged.push(String(line)) });
   try {
     const port = dev.server.address().port;
     const body = JSON.stringify({ email: 'ada@example.org' });
@@ -122,7 +123,13 @@ test('werft dev links to its own address, whatever Host header a request sends',
     for (let i = 0; i < 50 && !logged.some((l) => l.includes('#passwort=')); i++) await new Promise((r) => setTimeout(r, 20));
     const mailText = logged.find((l) => l.includes('#passwort='));
     assert.ok(mailText.includes(`http://127.0.0.1:${port}/admin/#passwort=`) && !mailText.includes('evil.test'));
+    // werft serve on 127.0.0.1 behind a proxy: not its own address, and here no site setting url.
+    logged.length = 0;
+    await fetch(`http://127.0.0.1:${served.server.address().port}/api/werft/password/forgot`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.ok(!logged.some((l) => l.includes('#passwort=')), 'werft serve sends no link to 127.0.0.1');
   } finally {
+    served.close();
     dev.close();
     fs.rmSync(root, { recursive: true, force: true });
   }

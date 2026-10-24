@@ -17,8 +17,13 @@ const MAX_KEYS = 10000;
 const encoder = new TextEncoder();
 const hex = (bytes) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('');
 
-// The waiting time after `count` attempts.
-export const waitAfter = (kind, count) => (count < FREE[kind] ? 0 : Math.min(60 * 1000 * 2 ** (count - FREE[kind]), MAX_WAIT));
+// The waiting time after `count` attempts: from 1 minute, doubling, at most 15; for e-mails with a
+// new-password link from 15 minutes to at most an hour, so an address gets about 25 a day.
+const WAITS = { reset: [15 * 60 * 1000, 60 * 60 * 1000] };
+export const waitAfter = (kind, count) => {
+  const [first, max] = WAITS[kind] ?? [60 * 1000, MAX_WAIT];
+  return count < FREE[kind] ? 0 : Math.min(first * 2 ** (count - FREE[kind]), max);
+};
 
 // An address as the throttle counts it: IPv4 as it is, IPv6 by its /64 network, which one
 // connection usually has to itself.
