@@ -459,8 +459,8 @@ Dates are entered in the editor's time zone and stored in UTC.
 
 The gateway sends e-mail through a driver ([mail.js](gateway/mail.js)) that the environment
 names: `WERFT_MAIL` is the driver, `WERFT_MAIL_FROM` the sender address (Pages environment
-variables, or the environment of `werft serve` and `werft dev`). Without `WERFT_MAIL` it sends
-nothing, and `/api/werft/status` reports `"mail": false`; `werft dev` then uses `log`.
+variables, or the environment of `werft serve` and `werft dev`). Without `WERFT_MAIL`, `werft dev`
+uses `log`; `werft serve` and Pages send nothing, and `/api/werft/status` reports `"mail": false`.
 
 | `WERFT_MAIL` | Sends |
 |---|---|
