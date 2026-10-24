@@ -6,6 +6,7 @@
 import net from 'node:net';
 import tls from 'node:tls';
 import { randomUUID } from 'node:crypto';
+import { domainToASCII } from 'node:url';
 import { mailer } from './mail.js';
 
 // Replies line by line: next() resolves with the next complete reply { code, lines }.
@@ -58,7 +59,16 @@ function encodeWords(text) {
   return words.map((w) => `=?utf-8?B?${Buffer.concat(w).toString('base64')}?=`).join('\r\n ');
 }
 
-const header = (text) => (ascii(text) ? text : encodeWords(text));
+// Short ASCII as it is, anything else in folded encoded words.
+const header = (text) => (ascii(text) && text.length <= 68 ? text : encodeWords(text));
+
+// An address as SMTP without SMTPUTF8 takes it: the domain in punycode, ASCII before the @.
+function asciiAddress(address) {
+  const at = address.lastIndexOf('@');
+  const domain = domainToASCII(address.slice(at + 1));
+  if (!ascii(address.slice(0, at)) || !domain) throw new Error(`"${address}" cannot be sent over SMTP (letters such as umlauts before the @, or a domain that is not valid)`);
+  return `${address.slice(0, at)}@${domain}`;
+}
 
 // The checked message as an RFC 5322 e-mail, the text base64 encoded, so no line can end the DATA.
 export function smtpMessage({ from, to, replyTo, subject, text }, { id, date = new Date() }) {
@@ -66,10 +76,10 @@ export function smtpMessage({ from, to, replyTo, subject, text }, { id, date = n
   const body = Buffer.from(text.replace(/\n/g, '\r\n')).toString('base64').replace(/.{1,76}/g, '$&\r\n');
   return [
     `From: ${sender}`,
-    `To: ${to.join(', ')}`,
+    `To: ${to.join(',\r\n ')}`,
     ...(replyTo ? [`Reply-To: ${replyTo}`] : []),
     `Subject: ${header(subject)}`,
-    `Date: ${date.toUTCString()}`,
+    `Date: ${date.toUTCString().replace(/GMT$/, '+0000')}`,
     `Message-ID: <${id}>`,
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset=utf-8',
@@ -80,19 +90,26 @@ export function smtpMessage({ from, to, replyTo, subject, text }, { id, date = n
 }
 
 // options: { from, host, port (587), secure (TLS from the start; default for port 465), user,
-//   password, tls (more tls.connect options, such as ca), timeout (ms per connection) }
+//   password, tls (more tls.connect options, such as ca), timeout (ms for the whole delivery) }
 export function smtpMail({ from, host, port = 587, secure = Number(port) === 465, user, password, tls: tlsOptions = {}, timeout = 30000 }) {
   if (!host) throw new Error('The smtp mail driver needs a host (WERFT_MAIL_HOST).');
   if (!user !== !password) throw new Error('The smtp mail driver needs both a user and a password (WERFT_MAIL_USER, WERFT_MAIL_KEY), or neither.');
   port = Number(port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('WERFT_MAIL_PORT must be a port number (587, or 465 for TLS from the start).');
   const servername = net.isIP(host) ? undefined : host;
   const encrypt = (options) => tls.connect({ servername, ...tlsOptions, ...options });
 
-  async function deliver(message) {
+  async function deliver(checked) {
+    let message;
+    try {
+      message = { ...checked, from: { ...checked.from, email: asciiAddress(checked.from.email) }, to: checked.to.map(asciiAddress), replyTo: checked.replyTo && asciiAddress(checked.replyTo) };
+    } catch (error) { throw new Error(`E-mail (smtp): ${error.message}.`); }
     const domain = message.from.email.split('@')[1];
     const id = `${randomUUID()}@${domain}`;
     let socket = secure ? encrypt({ host, port }) : net.connect({ host, port });
-    socket.setTimeout(timeout, () => socket.destroy(new Error('the server did not answer in time')));
+    // One deadline for the whole delivery, the TLS handshake too: a server that stalls or trickles
+    // cannot hold the request.
+    const deadline = setTimeout(() => socket.destroy(new Error('the server did not answer in time')), timeout);
     let reader = replies(socket);
     // Errors name the step, never the line sent: AUTH carries the password.
     const expect = async (step, ...codes) => {
@@ -108,11 +125,8 @@ export function smtpMail({ from, host, port = 587, secure = Number(port) === 465
         if (!features.some((f) => /^STARTTLS\b/i.test(f))) throw new Error('the server offers no STARTTLS, and werft sends e-mail only encrypted');
         await command('STARTTLS', 'STARTTLS', 220);
         reader.detach();
-        socket.setTimeout(0);
-        socket = await new Promise((resolve, reject) => {
-          const upgraded = encrypt({ socket, host }).once('secureConnect', () => resolve(upgraded)).once('error', reject);
-        });
-        socket.setTimeout(timeout, () => socket.destroy(new Error('the server did not answer in time')));
+        socket = encrypt({ socket, host });
+        await new Promise((resolve, reject) => socket.once('secureConnect', resolve).once('error', reject));
         reader = replies(socket);
         features = (await command(`EHLO ${domain}`, 'EHLO', 250)).lines;
       }
@@ -135,6 +149,7 @@ export function smtpMail({ from, host, port = 587, secure = Number(port) === 465
     } catch (error) {
       throw new Error(`E-mail (smtp ${host}:${port}): ${error.message}`);
     } finally {
+      clearTimeout(deadline);
       socket.end();
       socket.destroy();
     }

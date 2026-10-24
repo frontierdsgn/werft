@@ -8,7 +8,7 @@
 // fakeSmtp({ tls, implicitTls, startTls, auth, users }): an SMTP server on 127.0.0.1. `tls` is
 // { key, cert }; `startTls` offers STARTTLS on the plain port; `implicitTls` speaks TLS from the
 // start; `auth` lists the AUTH methods; `users` maps user → password; `rejectRcpt` answers 550 to
-// those recipients; `silent` never greets. Each session lands in `sessions`: { commands (as they
+// those recipients; `silent` never greets; `stallStartTls` answers STARTTLS, then goes quiet. Each session lands in `sessions`: { commands (as they
 // arrived, AUTH lines kept), encrypted (per command), mailFrom, rcptTo, data }.
 import net from 'node:net';
 import tls from 'node:tls';
@@ -43,7 +43,7 @@ export function fakeMailApi() {
   return api;
 }
 
-export async function fakeSmtp({ tls: credentials, implicitTls = false, startTls = !implicitTls, auth = ['PLAIN', 'LOGIN'], users = {}, rejectRcpt = [], silent = false } = {}) {
+export async function fakeSmtp({ tls: credentials, implicitTls = false, startTls = !implicitTls, auth = ['PLAIN', 'LOGIN'], users = {}, rejectRcpt = [], silent = false, stallStartTls = false } = {}) {
   const sessions = [];
   const sockets = new Set();
   // session: the one continued after STARTTLS, which gets no second greeting.
@@ -78,6 +78,7 @@ export async function fakeSmtp({ tls: credentials, implicitTls = false, startTls
         } else if (verb === 'STARTTLS' && startTls && !encrypted) {
           reply('220 2.0.0 Ready to start TLS');
           socket.off('data', onData);
+          if (stallStartTls) return;
           const secure = new tls.TLSSocket(socket, { isServer: true, ...credentials });
           secure.on('secure', () => handle(secure, true, session));
           secure.on('error', () => {});

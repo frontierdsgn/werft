@@ -67,6 +67,7 @@ test('the environment configures each driver, and a missing setting is an error 
   const drivers = { smtp: smtpFromEnv };
   assert.throws(() => mailFromEnv({ WERFT_MAIL: 'smtp', WERFT_MAIL_FROM: FROM }, { drivers }), /needs a host \(WERFT_MAIL_HOST\)/);
   assert.throws(() => mailFromEnv({ WERFT_MAIL: 'smtp', WERFT_MAIL_FROM: FROM, WERFT_MAIL_HOST: 'smtp.example.org', WERFT_MAIL_USER: 'u' }, { drivers }), /both a user and a password/);
+  assert.throws(() => mailFromEnv({ WERFT_MAIL: 'smtp', WERFT_MAIL_FROM: FROM, WERFT_MAIL_HOST: 'smtp.example.org', WERFT_MAIL_PORT: 'abc' }, { drivers }), /WERFT_MAIL_PORT must be a port number/);
   assert.equal(mailFromEnv({ WERFT_MAIL: 'smtp', WERFT_MAIL_FROM: FROM, WERFT_MAIL_HOST: 'smtp.example.org' }, { drivers }).kind, 'smtp');
 });
 
@@ -151,6 +152,7 @@ test('smtp: refuses to send unencrypted or to a server it cannot verify', smtp, 
 test('smtp: rejects a refused password or recipient and a server that does not answer', smtp, async () => {
   const server = await fakeSmtp({ tls: credentials, users, rejectRcpt: ['team@example.org'] });
   const silent = await fakeSmtp({ tls: credentials, silent: true });
+  const stalled = await fakeSmtp({ tls: credentials, stallStartTls: true });
   try {
     await assert.rejects(driver(server, { password: 'wrong-password' }).send(message), (error) => {
       assert.match(error.message, /AUTH: 535 5\.7\.8 Authentication failed/);
@@ -160,5 +162,25 @@ test('smtp: rejects a refused password or recipient and a server that does not a
     await assert.rejects(driver(server).send(message), /RCPT TO team@example\.org: 550 5\.1\.1/);
     assert.equal(server.sessions[1].data, null, 'no e-mail when a recipient was refused');
     await assert.rejects(driver(silent, { timeout: 200 }).send(message), /did not answer in time/);
-  } finally { server.close(); silent.close(); }
+    await assert.rejects(driver(stalled, { timeout: 200 }).send(message), /did not answer in time/, 'a stalled TLS handshake ends too');
+    assert.deepEqual(stalled.sessions[0].commands, ['EHLO example.org', 'STARTTLS']);
+  } finally { server.close(); silent.close(); stalled.close(); }
+});
+
+test('smtp: long headers are folded, and international domains go out in punycode', smtp, async () => {
+  const server = await fakeSmtp({ tls: credentials, users });
+  try {
+    const to = [...Array.from({ length: 19 }, (_, i) => `recipient-with-a-rather-long-name-${i}@subdomain.example.org`), 'info@müller.de'];
+    const subject = `Neue Einsendung: ${'lang '.repeat(30).trim()}`;
+    await driver(server).send({ to, subject, text: 'T' });
+    const [session] = server.sessions;
+    assert.equal(session.rcptTo.at(-1), '<info@xn--mller-kva.de>');
+    const mail = parseMail(session.data);
+    assert.equal(mail.subject, subject);
+    assert.equal(mail.headers.to, to.slice(0, -1).concat('info@xn--mller-kva.de').join(', '));
+    assert.match(mail.headers.date, /^\w{3}, \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} \+0000$/);
+    assert.ok(session.data.split('\r\n').every((line) => line.length <= 78), 'no line longer than 78 characters');
+    await assert.rejects(driver(server).send({ to: 'jürgen@example.org', subject: 'S', text: 'T' }), /^Error: E-mail \(smtp\): "jürgen@example\.org" cannot be sent over SMTP/);
+    assert.equal(server.sessions.length, 1, 'refused before connecting');
+  } finally { server.close(); }
 });
