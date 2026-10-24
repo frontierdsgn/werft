@@ -1748,4 +1748,5 @@ if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) :
 }
 setView(view, selection);
 if (draftOffered) offerDraft(draftOffered);
-api('/tick').catch(() => {});
+// Publishes due scheduled entries; administrators learn when the host cannot (e.g. a missing permission).
+api('/tick').catch((e) => { if (e.status === 502 && me.role === 'administrator') toast(e.message, true); });
