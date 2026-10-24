@@ -1149,7 +1149,8 @@ let formShows = null;
 function drawForm() {
   const main = $('#ve-form');
   const scroll = formShows === selection ? main.scrollTop : 0;
-  const show = { media: mediaView, submissions: submissionsView, users: usersView }[selection] ?? formView;
+  const pages = { media: mediaView, submissions: submissionsView, users: usersView };
+  const show = Object.hasOwn(pages, selection) ? pages[selection] : formView;
   formHandle = show(app, main);
   main.scrollTop = scroll;
   formShows = selection;
