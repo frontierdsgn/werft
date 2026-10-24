@@ -8,7 +8,7 @@ const MARKS = /[*_`#>~|]+|!?\[([^\]]*)\]\([^)]*\)/g;
 const plain = (text) => text.replace(/<[^>]+>/g, ' ').replace(MARKS, (m, label) => label ?? ' ').replace(/\s+/g, ' ').replace(/ ([.,;:!?])/g, '$1').trim();
 
 // Keys whose values are not text a person reads: kinds, states, addresses, files, dates.
-const SKIP = new Set(['type', 'status', 'publish_date', 'url', 'src', 'image', 'pattern', 'form', 'noindex', 'style']);
+const SKIP = new Set(['type', 'status', 'publish_date', 'url', 'src', 'image', 'pattern', 'form', 'noindex', 'style', 'focus']);
 
 // The readable texts of an entry, in order.
 export function textsOf(data) {

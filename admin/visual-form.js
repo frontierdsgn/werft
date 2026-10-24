@@ -2,6 +2,7 @@
 // page view and the form view use the same controls. A form edits a value object in place and
 // calls onChange after every change.
 import { markdown } from 'werft';
+import { focusOf } from 'werft/images';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
 
 const el = (tag, props = {}, ...children) => {
@@ -10,11 +11,11 @@ const el = (tag, props = {}, ...children) => {
   return node;
 };
 const uid = () => `ve-${Math.random().toString(36).slice(2)}`;
-// Controls that show another field of the same object (the focal point shows the image) redraw
-// when that field changes.
+// Controls that show another field of the same object (the focal point shows the image) follow
+// when that field changes, as long as they are on the page.
 const watchers = new WeakMap();
-const watch = (holder, redraw) => { if (!watchers.has(holder)) watchers.set(holder, new Set()); watchers.get(holder).add(redraw); };
-const changedIn = (holder) => watchers.get(holder)?.forEach((redraw) => redraw());
+const watch = (holder, node, follow) => { if (!watchers.has(holder)) watchers.set(holder, new Map()); watchers.get(holder).set(node, follow); };
+const changedIn = (holder) => watchers.get(holder)?.forEach((follow, node, all) => (node.isConnected ? follow() : all.delete(node)));
 
 const optionsOf = (field) => (field.options ?? []).map((o) => (typeof o === 'object' ? o : { label: String(o), value: o }));
 
@@ -142,7 +143,7 @@ function control(field, holder, ctx, path) {
       const area = el('div', { className: 've-focus', tabIndex: 0, role: 'group' }, image, dot);
       const none = el('small', { className: 've-hint' }, 'Erst ein Bild wählen.');
       const reset = el('button', { type: 'button', className: 've-tool' }, 'Zurück zur Mitte');
-      const point = () => (holder[name] ?? '50% 50%').split(' ').map((v) => parseFloat(v));
+      const point = () => (focusOf(holder) ?? '50% 50%').split(' ').map((v) => parseFloat(v));
       const draw = () => {
         const src = holder[field.image ?? 'src'];
         if (src) image.src = ctx.mediaURL(src);
@@ -171,7 +172,8 @@ function control(field, holder, ctx, path) {
         place(x + step[0], y + step[1]);
       });
       reset.addEventListener('click', () => { set(undefined); draw(); });
-      watch(holder, draw);
+      // Another image has other important parts.
+      watch(holder, area, () => { if (holder[name] !== undefined) set(undefined); draw(); });
       draw();
       return labelled(field, el('div', { className: 've-focus-field' }, area, none, reset));
     }

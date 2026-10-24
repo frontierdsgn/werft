@@ -214,10 +214,14 @@ export function mediaView(app, root) {
     const file = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/gif,image/webp' });
     file.addEventListener('change', async () => {
       if (!file.files[0]) return;
-      const { path, note } = await app.upload(file.files[0]);
-      app.replaceImage(image.path, path);
-      const where = image.used.length ? `Überall, wo „${image.name}“ war (${image.used.join(', ')}), steht jetzt „${fileName(path)}“.` : `„${fileName(path)}“ ersetzt „${image.name}“.`;
-      app.toast([where, 'Mit „Speichern“ kommt es auf die Website.', note].filter(Boolean).join(' '), false, true);
+      let added;
+      try { added = await app.upload(file.files[0]); } catch (error) { app.toast(`Das Bild ließ sich nicht hochladen: ${error.message}`, true); return; }
+      const left = app.replaceImage(image.path, added.path);
+      const name = fileName(added.path);
+      const where = left.length
+        ? `„${name}“ steht jetzt überall, wo Sie es ändern dürfen. „${image.name}“ bleibt, weil es noch verwendet wird auf: ${left.join(', ')}.`
+        : image.used.length ? `Überall, wo „${image.name}“ war (${image.used.join(', ')}), steht jetzt „${name}“.` : `„${name}“ ersetzt „${image.name}“.`;
+      app.toast([where, 'Mit „Speichern“ kommt es auf die Website.', added.note].filter(Boolean).join(' '), false, true);
       draw();
     });
     const label = el('label', { className: 've-tool ve-upload', title: `${image.name} durch ein anderes Bild ersetzen` }, 'Ersetzen …', file);
