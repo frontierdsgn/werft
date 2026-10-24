@@ -104,6 +104,7 @@ test('switching it off needs the password; an administrator can reset it for som
   clock.t += 60 * 1000;
   const again = await enable((await call('/session', { body: { email: 'ed@test', password: 'editor-password' } })).data.access_token, 'editor-password');
   const { ticket } = (await call('/session', { body: { email: 'ed@test', password: 'editor-password' } })).data;
+  clock.t += STEP * 1000; // the code that switched it on is used
   const edSession = (await call('/session', { body: { ticket, code: await code(again.secret) } })).data.access_token;
   const admin = (await call('/session', { body: { email: 'ada@test', password: 'admin-password' } })).data.access_token;
   assert.equal((await call('/users', { token: edSession, body: { action: 'two-factor-off', email: 'ada@test' } })).status, 403);
@@ -128,12 +129,25 @@ test('a site can require it of administrators: until then they reach only "Mein 
 
 test('a new password by e-mail still needs the code', async () => {
   const mail = memoryMail({ from: 'werft@example.org' });
-  const { call, code, enable } = await setup({ mail });
+  const { call, clock, code, enable } = await setup({ mail });
   const { secret } = await enable((await call('/session', { body: { email: 'eve@example.org', password: 'author-password' } })).data.access_token, 'author-password');
   assert.equal((await call('/password/forgot', { body: { email: 'eve@example.org' } })).status, 200);
   await new Promise((r) => setTimeout(r, 20));
   const token = /#passwort=([\w.-]+)/.exec(mail.sent[0].text)[1];
   const reset = await call('/password/reset', { body: { token, password: 'new-author-password' } });
   assert.deepEqual([reset.status, reset.data.second_factor, reset.data.access_token, reset.cookie], [200, true, undefined, null], 'the mailbox alone gives no session');
+  clock.t += STEP * 1000;
   assert.equal((await call('/session', { body: { ticket: reset.data.ticket, code: await code(secret) } })).status, 200);
+});
+
+test('no second setup, no reset of the own account, and a recovery code works once even at once', async () => {
+  const { call, code, enable } = await setup();
+  const admin = (await call('/session', { body: { email: 'ada@test', password: 'admin-password' } })).data.access_token;
+  const { secret, codes, token, started } = await enable(admin, 'admin-password');
+  assert.equal((await call('/me/two-factor', { token, body: { action: 'enable', pending: started.data.pending, code: await code(secret), current_password: 'admin-password' } })).status, 422, 'already on');
+  assert.equal((await call('/users', { token, body: { action: 'two-factor-off', email: 'ada@test' } })).status, 422, 'one\'s own goes off with the password');
+  const { ticket } = (await call('/session', { body: { email: 'ada@test', password: 'admin-password' } })).data;
+  assert.equal((await call('/session', { body: { ticket, code: await code(secret) } })).status, 401, 'the code that switched it on is used');
+  const both = await Promise.all([call('/session', { body: { ticket, code: codes[2] } }), call('/session', { body: { ticket, code: codes[2] } })]);
+  assert.deepEqual(both.map((r) => r.status).sort(), [200, 409]);
 });

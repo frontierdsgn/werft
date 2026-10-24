@@ -23,9 +23,9 @@ test('a symbol matches libqrencode (qrencode -l M -8) module for module', () => 
   assert.deepEqual(qrMatrix('abc123').map((row) => row.map((d) => (d ? 1 : 0)).join('')), expected);
 });
 
-test('every version up to 10 has its size, finder patterns and a valid format for level M', () => {
+test('every version has its size, finder patterns and a valid format for level M', () => {
   const finder = ['1111111', '1000001', '1011101', '1011101', '1011101', '1000001', '1111111'];
-  for (const [length, version] of [[10, 1], [20, 2], [30, 3], [50, 4], [70, 5], [90, 6], [110, 7], [130, 8], [160, 9], [200, 10]]) {
+  for (const [length, version] of [[10, 1], [20, 2], [30, 3], [50, 4], [70, 5], [90, 6], [110, 7], [130, 8], [160, 9], [200, 10], [240, 11], [500, 17], [1000, 26], [2331, 40]]) {
     const m = qrMatrix('x'.repeat(length)).map((row) => row.map((d) => (d ? 1 : 0)).join(''));
     const size = version * 4 + 17;
     assert.equal(m.length, size, `version ${version}`);
@@ -38,7 +38,10 @@ test('every version up to 10 has its size, finder patterns and a valid format fo
     assert.equal(value >> 13, 0, 'level M');
     assert.equal(value & 0x3ff, rem & 0x3ff, 'BCH');
   }
-  assert.throws(() => qrMatrix('x'.repeat(214)), /Too long/);
+  assert.throws(() => qrMatrix('x'.repeat(2332)), /Too long/);
+  // An authenticator address with a long site name and e-mail (218 bytes) fits.
+  const url = `otpauth://totp/${encodeURIComponent('Praxis für Physiotherapie Müller')}:${encodeURIComponent('info@physio-mueller.de')}?secret=${'A'.repeat(32)}&issuer=${encodeURIComponent('Praxis für Physiotherapie Müller')}&algorithm=SHA1&digits=6&period=30`;
+  assert.equal(qrMatrix(url).length, 11 * 4 + 17);
 });
 
 test('renders SVG with a quiet zone and a label', () => {

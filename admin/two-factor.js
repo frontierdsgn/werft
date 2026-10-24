@@ -36,24 +36,29 @@ export function setupTwoFactor(container, { api, siteName, onDone }) {
     let started;
     try { started = await api('/me/two-factor', { method: 'POST', body: { action: 'start' } }); } catch (e) { error.textContent = e.message; return; }
     const qr = make('div', { className: 'werft-qr' });
-    qr.innerHTML = qrSVG(started.url, { label: 'QR-Code für die Authenticator-App' });
+    // Too long an address for a QR code leaves the key to type in.
+    try { qr.innerHTML = qrSVG(started.url, { label: 'QR-Code für die Authenticator-App' }); } catch { qr.hidden = true; }
     const key = started.secret.match(/.{1,4}/g).join(' ');
     const code = make('input', { id: 'werft-2fa-code', inputMode: 'numeric', autocomplete: 'one-time-code', maxLength: 7, required: true });
     const password = make('input', { id: 'werft-2fa-password', type: 'password', autocomplete: 'current-password', required: true });
-    const confirm = make('button', { type: 'button', className: 've-primary', textContent: 'Einschalten' });
+    const confirm = make('button', { type: 'submit', className: 've-primary', textContent: 'Einschalten' });
     const label = (input, text) => make('div', { className: 've-control' }, make('label', { className: 've-label', htmlFor: input.id, textContent: text }), input);
     container.replaceChildren(
       make('p', { textContent: '1. Scannen Sie den QR-Code mit der App. Auf dem Telefon selbst: ' }, make('a', { href: started.url, textContent: 'in der App öffnen' }), '.'),
       qr,
       make('p', { className: 've-hint' }, 'Oder geben Sie den Schlüssel von Hand ein: ', make('code', { className: 'werft-key', textContent: key })),
       make('p', { textContent: '2. Geben Sie den Code ein, den die App jetzt zeigt, und zur Bestätigung Ihr Passwort.' }),
-      make('div', { className: 've-form ve-user-form' }, label(code, 'Code aus der App'), label(password, 'Ihr Passwort')), error, make('div', { className: 've-actions-row' }, confirm));
+      make('form', { className: 've-form ve-user-form' }, label(code, 'Code aus der App'), label(password, 'Ihr Passwort'), error, make('div', { className: 've-actions-row' }, confirm)));
     code.focus();
-    confirm.addEventListener('click', async () => {
+    confirm.form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       error.textContent = '';
       try {
         const result = await api('/me/two-factor', { method: 'POST', body: { action: 'enable', pending: started.pending, code: code.value, current_password: password.value } });
-        container.replaceChildren(make('p', { textContent: 'Die Zwei-Faktor-Anmeldung ist eingeschaltet.' }), recoveryCodes(result.recovery_codes, siteName, () => onDone(result)));
+        const done = make('p', { textContent: 'Die Zwei-Faktor-Anmeldung ist eingeschaltet.', tabIndex: -1 });
+        container.replaceChildren(done, recoveryCodes(result.recovery_codes, siteName, () => onDone(result)));
+        done.focus();
       } catch (e) {
         error.textContent = e.message;
         if (e.status === 410) container.replaceChildren(make('p', { className: 've-error', textContent: e.message }), begin, error);

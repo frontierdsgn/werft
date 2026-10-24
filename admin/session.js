@@ -72,6 +72,9 @@ export async function requireUser(siteName) {
       const steps = document.createElement('div');
       form.replaceChildren(Object.assign(document.createElement('h1'), { textContent: 'Zwei-Faktor-Anmeldung' }),
         Object.assign(document.createElement('p'), { className: 'werft-lead', textContent: 'Diese Website verlangt sie für Ihre Rolle. Bitte richten Sie sie jetzt ein, danach geht es weiter.' }), steps);
+      const leave = Object.assign(document.createElement('button'), { type: 'button', className: 'werft-link', textContent: 'Abmelden' });
+      leave.addEventListener('click', async () => { await signOut().catch(() => {}); location.reload(); });
+      form.append(leave);
       setupTwoFactor(steps, { api, siteName, onDone: async () => { form.remove(); resolve(await api('/me')); } });
     };
     const signedIn = async (data) => {

@@ -243,6 +243,7 @@ export function createGateway(options) {
     if (!['enable', 'disable', 'recovery'].includes(body.action)) return error(422, 'Unbekannte Aktion.');
     if (body.action === 'disable' && mustUseTwoFactor({ ...existing, totp: null })) return error(422, 'Auf dieser Website ist die Zwei-Faktor-Anmeldung für Ihre Rolle Pflicht.');
     if (body.action !== 'enable' && !existing.totp) return error(422, 'Die Zwei-Faktor-Anmeldung ist nicht eingerichtet.');
+    if (body.action === 'enable' && existing.totp) return error(422, 'Die Zwei-Faktor-Anmeldung ist schon eingerichtet.');
     const attempt = await attempts.attempt([user.payload.sid ? ['session', user.payload.sid] : ['account', user.email.toLowerCase()]]);
     if (attempt.wait) return tooMany(attempt.wait, 'Versuche');
     if (!(await verifyPassword(String(body.current_password ?? ''), existing.password))) { await attempt.failed(); return error(422, 'Das bisherige Passwort stimmt nicht.'); }
@@ -251,7 +252,9 @@ export function createGateway(options) {
       const pending = await readToken(secret, body.pending, now()).catch(() => null);
       const totpSecret = pending?.typ === 'totp-setup' && pending.sub === existing.email ? await openSecret(secret, pending.secret) : null;
       if (!totpSecret) { attempt.cancel(); return error(410, 'Die Einrichtung ist abgelaufen. Bitte noch einmal beginnen.'); }
-      if ((await stepOf(totpSecret, body.code, now())) == null) { await attempt.failed(); return error(422, 'Der Code stimmt nicht. Bitte den aktuellen Code aus der App eingeben.'); }
+      const step = await stepOf(totpSecret, body.code, now());
+      if (step == null) { await attempt.failed(); return error(422, 'Der Code stimmt nicht. Bitte den aktuellen Code aus der App eingeben.'); }
+      usedSteps.set(existing.email.toLowerCase(), step);
       codes = newRecoveryCodes();
       updated = { ...existing, totp: pending.secret, recovery: await Promise.all(codes.map((c) => recoveryHash(secret, existing.email, c))) };
     } else if (body.action === 'recovery') {
@@ -651,8 +654,10 @@ export function createGateway(options) {
       if (existing.email === user.email) return error(422, 'Sie können sich nicht selbst löschen.');
       next = users.filter((u) => u !== existing);
     } else if (body.action === 'two-factor-off') {
-      // For someone who lost their phone and their recovery codes; ends their sessions.
+      // For someone who lost their phone and their recovery codes; ends their sessions. One's own goes
+      // off in "Mein Konto", with the password.
       if (!existing?.totp) return error(404, 'Diese Person hat keine Zwei-Faktor-Anmeldung.');
+      if (existing.email === user.email) return error(422, 'Ihre eigene Zwei-Faktor-Anmeldung schalten Sie unter „Mein Konto“ aus.');
       const { totp, recovery, ...rest } = existing;
       next = users.map((u) => (u === existing ? rest : u));
     } else {

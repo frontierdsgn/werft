@@ -1,11 +1,22 @@
 // QR codes for the editor (the address an authenticator app reads when two-factor sign-in is set
-// up): byte mode, error correction level M, versions 1 to 10 (up to 213 bytes), the mask with the
+// up): byte mode, error correction level M, versions 1 to 40 (up to 2331 bytes), the mask with the
 // lowest penalty, as ISO/IEC 18004 describes. No dependencies; qrSVG() returns an SVG element's
 // markup, qrMatrix() the modules (true = dark).
 
-// Error correction level M per version: [blocks, error correction codewords per block].
-const BLOCKS = [null, [1, 10], [1, 16], [1, 26], [2, 18], [2, 24], [4, 16], [4, 18], [4, 22], [5, 22], [5, 26]];
-const ALIGN = [null, [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50]];
+// Error correction level M per version (ISO/IEC 18004, table 9): blocks, and error correction
+// codewords per block.
+const BLOCK_COUNT = [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49];
+const BLOCK_EC = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28];
+const BLOCKS = BLOCK_COUNT.map((count, ver) => [count, BLOCK_EC[ver]]);
+// The centres of the alignment patterns along each axis.
+function alignment(ver) {
+  if (ver === 1) return [];
+  const count = Math.floor(ver / 7) + 2;
+  const step = Math.floor((ver * 8 + count * 3 + 5) / (count * 4 - 4)) * 2;
+  const result = [6];
+  for (let pos = ver * 4 + 10; result.length < count; pos -= step) result.splice(1, 0, pos);
+  return result;
+}
 
 // All codewords of a version (data and error correction).
 function rawCodewords(ver) {
@@ -98,7 +109,7 @@ function penalty(m) {
 
 export function qrMatrix(text) {
   const bytes = [...new TextEncoder().encode(text)];
-  const ver = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].find((v) => 4 + (v < 10 ? 8 : 16) + bytes.length * 8 <= dataCodewords(v) * 8);
+  const ver = Array.from({ length: 40 }, (_, i) => i + 1).find((v) => 4 + (v < 10 ? 8 : 16) + bytes.length * 8 <= dataCodewords(v) * 8);
   if (!ver) throw new Error('Too long for a QR code here.');
   const size = ver * 4 + 17;
   const modules = Array.from({ length: size }, () => Array(size).fill(false));
@@ -111,7 +122,7 @@ export function qrMatrix(text) {
       if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, d !== 2 && d !== 4);
     }
   }
-  const align = ALIGN[ver];
+  const align = alignment(ver);
   for (const ax of align) for (const ay of align) {
     if ((ax === 6 && ay === 6) || (ax === 6 && ay === align.at(-1)) || (ax === align.at(-1) && ay === 6)) continue;
     for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(ax + dx, ay + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);

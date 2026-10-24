@@ -377,7 +377,7 @@ export function usersView(app, root) {
           if (self) app.signOut({ everywhere: true });
           else if (await send({ action: 'signout', email: u.email })) app.toast(`${u.name || u.email} ist überall abgemeldet.`);
         }, 've-tool'),
-        u.two_factor && u.email !== app.me.email ? app.button('Zwei-Faktor zurücksetzen', null, async () => {
+        u.two_factor && u.email !== app.me.email ? app.button('Zwei-Faktor zurücksetzen', `Zwei-Faktor-Anmeldung von ${u.name || u.email} zurücksetzen`, async () => {
           if (!(await app.confirmDialog('Zwei-Faktor-Anmeldung zurücksetzen?', `Zum Beispiel, wenn ${u.name || u.email} das Telefon und die Wiederherstellungscodes verloren hat. Die Person meldet sich danach nur mit dem Passwort an und kann die Zwei-Faktor-Anmeldung neu einrichten.`, 'Zurücksetzen'))) return;
           if (await send({ action: 'two-factor-off', email: u.email })) app.toast('Zwei-Faktor-Anmeldung zurückgesetzt.');
         }, 've-tool') : null,
