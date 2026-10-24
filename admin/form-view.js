@@ -216,6 +216,26 @@ export function mediaView(app, root) {
   return { reveal() {} };
 }
 
+// Pages, posts, patterns and forms deleted in the history, each restorable as an unsaved change.
+export function deletedView(app, root) {
+  const page = el('div', { className: 've-form-page' }, head(app, 'Website', 'Gelöschte Inhalte', 'Seiten, Einträge, Muster und Formulare, die gelöscht wurden. „Zurückholen“ legt eines wieder an, so wie es zuletzt gespeichert war; erst mit „Speichern“ ist es wieder da.'));
+  root.replaceChildren(page);
+  if (!app.can('content')) { page.append(card(null, 'Nur Administratoren und Redakteure holen gelöschte Inhalte zurück.')); return { reveal() {} }; }
+  const list = card(null, null, el('p', { className: 've-hint' }, 'Wird gesucht …'));
+  page.append(list);
+  const load = (limit) => app.findDeleted(limit).then(({ entries, searched, more }) => {
+    list.replaceChildren(
+      el('p', { className: 've-hint' }, `Durchsucht: die letzten ${searched} gespeicherten Änderungen an Inhalten.`),
+      entries.length ? el('ul', { className: 've-people' }, ...entries.map((e) => el('li', {},
+        el('div', {}, el('strong', {}, `${e.kindName} „${e.title}“`), el('small', {}, `Gelöscht am ${dateTime(e.deleted.date)} von ${e.deleted.author}${e.language ? ` · ${e.language}` : ''}`)),
+        app.button('Zurückholen', `${e.kindName} „${e.title}“ zurückholen`, () => app.restoreDeleted(e), 've-tool'))))
+        : el('p', {}, 'Keine gelöschten Inhalte gefunden.'),
+      ...(more ? [el('div', { className: 've-actions-row' }, app.button('Weiter zurück suchen', null, () => { list.replaceChildren(el('p', { className: 've-hint' }, 'Wird gesucht …')); load(100); }, 've-tool'))] : []));
+  }, (e) => { list.replaceChildren(el('p', { className: 've-error', role: 'alert' }, `Gelöschte Inhalte konnten nicht geladen werden: ${e.message}`)); });
+  load(30);
+  return { reveal() {} };
+}
+
 // Who may edit the site. Each change applies at once.
 // What visitors sent through the site's forms (gateway/submissions.js): read, download as CSV,
 // delete. Like users, a deletion is stored at once.

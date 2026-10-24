@@ -70,7 +70,7 @@ Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 | Visual editing, preview | Two views of the same [editor](#editor), switched at the top of the sidebar: "Formular" shows the fields beside a live preview rendered by the site's own theme (a click on a section in the preview opens it in the form); "Auf der Seite" edits on the page itself. A post without a page of its own (no `renderPost` in the theme) is previewed marked on the page that lists it, else alone in the theme's listing section, else as a card of its fields. |
 | Media library, alt text | "Bilder": all images with where each is used; upload several at once, delete only unused ones (Administrator, Redakteur). Large photos are scaled down before they are saved (see [Images](#images)). Images are fields with file, alt text and caption. |
 | Menus, site settings, SEO | Menu locations the theme declares; site settings; SEO title, description, share image and noindex per page, written into the page by [`ctx.head()`](#install). |
-| Revisions | Every save is a git commit. "Frühere Versionen" under each entry compares a version with the current one by content and brings it back as an unsaved change. |
+| Revisions | Every save is a git commit. "Frühere Versionen" under each entry compares a version with the current one by content and brings it back as an unsaved change. "Gelöschte Inhalte" (under "Weitere Inhalte", administrators and editors) lists pages, posts, patterns and forms deleted in the last 30 (on request 100) commits that changed the content, and brings one back as it was last saved, a page or post as a draft, as an unsaved change. |
 | Reusable blocks | Patterns: sections shared by several pages. |
 | Forms, redirects | Form definitions edited in the admin (the theme renders them); visitors' submissions kept in the repository and shown under "Einsendungen" (see [Form submissions](#form-submissions)); redirects written as `_redirects` and `.htaccess` (`/alt/*` to `/neu/:splat` works in both). |
 
@@ -720,6 +720,12 @@ Last verified on 18 October 2026 with werft 0.5.0 and `main`: the gate on Node 2
 - Build and `werft serve`: Node 22 or newer. Receiver: PHP 7.4 or newer.
 
 ### Known limits
+
+- "Gelöschte Inhalte" reads the file list of every commit it searches, one gateway request each;
+  on GitHub storage each costs a commit and a tree request (plus one per directory level of
+  `WERFT_DIR`), so a search of 100 commits counts at least 200 requests against the rate limit (from the code, not measured).
+  A page moved to a new address is not listed when its old address redirects or its content was
+  unchanged by the move.
 
 - On Cloudflare each call of `/api/werft/tick` reads the content from GitHub with a handful of API
   requests, which count against the token's or the app installation's rate limit; a cron every

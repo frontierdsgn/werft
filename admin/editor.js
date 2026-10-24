@@ -13,10 +13,11 @@ import { disarm, postPreview } from './preview.js';
 import { pageRenderer, mapDocument, getAt, setAt, textOf, unmark } from './visual-map.js';
 import { buildForm, emptyValue } from './visual-form.js';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
-import { formView, mediaView, submissionsView, usersView } from './form-view.js';
+import { formView, mediaView, submissionsView, usersView, deletedView } from './form-view.js';
 import { retargetLink, retargetLinks, mentions, movedRedirects } from './rename.js';
 import { draftKey, collectDraft, changedSince, applyDraft } from './drafts.js';
 import { duplicatePage } from './duplicate.js';
+import { entryOf, deletedEntries, restoredEntry } from './deleted.js';
 
 const REPO = '/api/v1/repos/werft/site';
 const { site, theme, base } = await loadSite();
@@ -322,7 +323,7 @@ function previewPage(data) {
   }
   return current;
 }
-const hasPreview = () => view === 'visual' || !['media', 'submissions', 'users', 'redirects'].includes(selection);
+const hasPreview = () => view === 'visual' || !['media', 'submissions', 'users', 'redirects', 'deleted'].includes(selection);
 
 function draw() {
   const pageList = slugsIn('pages');
@@ -960,13 +961,14 @@ function describe(source) {
     media: { kind: 'Website', title: 'Bilder' },
     submissions: { kind: 'Website', title: 'Einsendungen' },
     users: { kind: 'Website', title: 'Benutzer' },
+    deleted: { kind: 'Website', title: 'Gelöschte Inhalte' },
   }[kind];
 }
 
 // The language whose file a source is: none for what all languages share; the default language's
 // for posts of a language that has none of its own.
 function languageOf(source) {
-  if (!languages.length || /^(redirects|media|submissions|users)$/.test(source)) return null;
+  if (!languages.length || /^(redirects|media|submissions|users|deleted)$/.test(source)) return null;
   return source.startsWith('post:') && postDir() === `${contentDir}/${postType.name}` ? defaultLang : lang;
 }
 
@@ -1243,7 +1245,7 @@ let formShows = null;
 function drawForm() {
   const main = $('#ve-form');
   const scroll = formShows === selection ? main.scrollTop : 0;
-  const pages = { media: mediaView, submissions: submissionsView, users: usersView };
+  const pages = { media: mediaView, submissions: submissionsView, users: usersView, deleted: deletedView };
   const show = Object.hasOwn(pages, selection) ? pages[selection] : formView;
   formHandle = show(app, main);
   main.scrollTop = scroll;
@@ -1338,7 +1340,8 @@ function drawPages() {
     }
   }
   if (can('structure')) more.push(el('h3', {}, 'Weiterleitungen'), el('ul', {}, item('redirects', 'Weiterleitungen', 'Alte Adressen auf neue umleiten')));
-  if (more.length) sections.push(folded('Weitere Inhalte', moreOpen || /^(pattern|form:|redirects)/.test(shown), (o) => { moreOpen = o; }, ...more));
+  if (can('content')) more.push(el('h3', {}, 'Gelöschte Inhalte'), el('ul', {}, item('deleted', 'Gelöschte Inhalte', 'Gelöschte Seiten und Einträge zurückholen')));
+  if (more.length) sections.push(folded('Weitere Inhalte', moreOpen || /^(pattern|form:|redirects|deleted)/.test(shown), (o) => { moreOpen = o; }, ...more));
   list.replaceChildren(...sections);
   drawLanguages();
 }
@@ -1532,6 +1535,55 @@ async function newPost({ own = false } = {}) {
   openPost(slug);
 }
 
+// ---- Deleted entries ----
+// Found in the history of the content directory through the gateway: the files each commit left,
+// compared in order (admin/deleted.js). Each commit's files are read once per visit.
+const historyTrees = new Map(); // commit sha → [{ path, sha }]
+const entryAt = (path) => entryOf(path, { contentDir, languages, folders: FOLDERS });
+const KIND_NAME = { page: 'Seite', post: postType?.singular ?? 'Beitrag', pattern: 'Muster', form: 'Formular' };
+// limit: how many of the latest commits that changed the content are searched (the gateway gives
+// at most 100). Returns { entries, searched, more }.
+async function findDeleted(limit) {
+  const commits = await api(`${REPO}/commits?sha=${encodeURIComponent(branch)}&path=${encodeURIComponent(contentDir)}&limit=${limit}`);
+  const snapshots = [];
+  for (let i = 0; i < commits.length; i += 6) {
+    snapshots.push(...await Promise.all(commits.slice(i, i + 6).map(async (c) => {
+      if (!historyTrees.has(c.sha)) {
+        historyTrees.set(c.sha, api(`${REPO}/git/trees/${c.sha}?recursive=1`).then((r) => r.tree.map(({ path, sha }) => ({ path, sha })), (e) => { historyTrees.delete(c.sha); throw e; }));
+      }
+      return { commit: { sha: c.sha, date: c.commit.author.date, author: c.commit.author.name }, files: await historyTrees.get(c.sha) };
+    })));
+  }
+  const mayRestore = (path) => { const e = entryAt(path); return !!e && can(e.kind === 'post' ? 'post' : 'content'); };
+  // A page whose old address redirects was moved (a new address), not deleted.
+  const redirected = new Set((files.get(fileOf('redirects'))?.data?.redirects ?? []).map((r) => r.from));
+  const moved = (path) => { const e = entryAt(path); return e?.kind === 'page' && redirected.has(pageAddress(e.slug, e.lang ?? defaultLang)); };
+  const found = deletedEntries(snapshots, { isEntry: mayRestore, exists: (path) => files.has(path) || moved(path) });
+  // The last versions, one request per commit that holds some.
+  for (const sha of new Set(found.map((e) => e.from))) {
+    const list = found.filter((e) => e.from === sha);
+    const contents = await api(`${REPO}/file-contents?ref=${sha}`, { method: 'POST', body: { files: list.map((e) => e.path) } });
+    list.forEach((e, i) => { try { e.data = JSON.parse(decodeBase64(contents[i].content)); } catch { e.data = null; } });
+  }
+  const entries = found.filter((e) => e.data).map((e) => {
+    const entry = { ...e, ...entryAt(e.path) };
+    return { ...entry, title: e.data.title ?? entry.slug, kindName: KIND_NAME[entry.kind], language: languages.length ? languageName(entry.lang ?? defaultLang) : null };
+  });
+  return { entries, searched: commits.length, more: commits.length === limit && limit < 100 };
+}
+// Brings a deleted entry back as an unsaved change (a page or post as a draft) and opens it.
+function restoreDeleted(entry) {
+  if (files.get(entry.path)?.data) { toast(`„${entry.title}“ gibt es schon wieder.`, true); return; }
+  startEditing();
+  change(() => { files.set(entry.path, { sha: null, saved: null, data: restoredEntry(entry.data, entry.kind) }); });
+  const source = `${entry.kind}:${entry.slug}`;
+  const target = entry.lang ?? defaultLang;
+  if (languages.length && target !== lang) switchLanguage(target, source); else open(source);
+  toast(entry.kind === 'page' || entry.kind === 'post'
+    ? `„${entry.title}“ ist als Entwurf zurück. Mit „Speichern“ wird es wieder angelegt; mit „Veröffentlicht“ kommt es wieder auf die Website.`
+    : `„${entry.title}“ ist zurück. Mit „Speichern“ wird es wieder angelegt.`);
+}
+
 // ---- Images ----
 // Adds a file as an upload that is saved with the next save, scaled down first when it is larger
 // than the site allows (images.js); returns its path on the site and, if it was scaled, a sentence
@@ -1587,7 +1639,7 @@ const app = {
   fileData: (source) => { syncViews(); return files.get(fileOf(source))?.data ?? null; },
   // For a page the editor's language lacks: the language it exists in, to translate it from.
   translatableFrom: (source) => source.startsWith('page:') && !dataOf(source) && languages.find((l) => l !== lang && slugsIn('pages', l).includes(source.slice(5))),
-  translate, languageName, addressCard, duplicate,
+  translate, languageName, addressCard, duplicate, findDeleted, restoreDeleted,
   snapshot, pushUndo: (snap) => { undoStack.push(snap); if (undoStack.length > 100) undoStack.shift(); redoStack.length = 0; },
   // After a change in a form: the top bar at once, the preview once typing pauses.
   changed() { drawBar(); clearTimeout(drawSoon); drawSoon = setTimeout(draw, 300); },
@@ -1609,7 +1661,7 @@ $('#ve-site').textContent = site.name;
 $('#ve-signout').addEventListener('click', () => { signingOut = true; localStorage.removeItem(DRAFT); signOut(); location.href = './'; });
 for (const b of document.querySelectorAll('.ve-views button[data-view]')) b.addEventListener('click', () => { if (b.dataset.view !== view) setView(b.dataset.view); });
 $('#ve-app').hidden = false;
-if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'submissions', 'users'].includes(hashOpen)) {
+if (hashOpen && /^(page|post|pattern|form):/.test(hashOpen) ? dataOf(hashOpen) : ['settings', 'menus', 'redirects', 'media', 'submissions', 'users', 'deleted'].includes(hashOpen)) {
   if (hashOpen.startsWith('page:')) current = hashOpen.slice(5);
   selection = hashOpen;
 }
