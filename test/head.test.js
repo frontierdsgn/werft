@@ -66,6 +66,34 @@ test('ctx.head() names the versions of an entry in other languages', async () =>
   ]);
   // A page in one language only names no other version.
   assert.deepEqual(links(out['index.html']), ['<link rel="canonical" href="https://salon.example/">']);
+  // The addresses come from the default language's `url`; a noindex version is not named.
+  const again = await built({ languages: ['de', 'en'] }, {
+    'content/settings/site.json': json({ title: 'Salon', url: 'https://salon.example/' }),
+    'content/en/settings/site.json': json({ url: 'https://salon.example/en/' }),
+    'content/pages/kontakt.json': json({ title: 'Kontakt' }),
+    'content/en/pages/kontakt.json': json({ title: 'Contact' }),
+    'content/pages/team.json': json({ title: 'Team' }),
+    'content/en/pages/team.json': json({ title: 'Team', seo: { noindex: true } }),
+  });
+  assert.deepEqual(links(again['en/kontakt.html']).slice(0, 2), ['<link rel="canonical" href="https://salon.example/en/kontakt.html">', '<link rel="alternate" hreflang="de" href="https://salon.example/kontakt.html">']);
+  assert.deepEqual(links(again['team.html']), ['<link rel="canonical" href="https://salon.example/team.html">']);
+});
+
+test('a post names its versions in other languages by their own addresses', async () => {
+  const out = await built({ languages: ['de', 'en'] }, {
+    'content/settings/site.json': json({ title: 'Salon', url: 'https://salon.example/' }),
+    'content/news/neu.json': json({ title: 'Neu' }),
+    'content/en/news/neu.json': json({ title: 'New' }),
+  }, { ...theme, renderPost: (post, ctx) => html`${ctx.head()}${ctx.translations.map((t) => html`<a href="${t.url}">${t.lang}</a>`)}` });
+  assert.match(out['news/neu.html'], /<link rel="alternate" hreflang="en" href="https:\/\/salon.example\/en\/news\/neu.html">.*<a href="neu.html">de<\/a><a href="..\/en\/news\/neu.html">en<\/a>$/);
+});
+
+test('ctx.head() takes a picture as image and keeps an absolute image without a site address', () => {
+  const content = { pages: [{ slug: 'a', title: '' }], posts: [], patterns: [], forms: [], settings: { title: 'S', title_suffix: '| S' }, menus: {}, redirects: [] };
+  const ctx = createContext({ site: {}, theme: { blocks: {} }, content }).for(content.pages[0]);
+  const out = ctx.head({ image: { src: 'https://cdn.example/a.jpg', alt: 'Ein Bild' } }).value;
+  assert.match(out, /^<title>S<\/title>/, 'an untitled page gets the site name once');
+  assert.match(out, /<meta property="og:image" content="https:\/\/cdn.example\/a.jpg"><meta property="og:image:alt" content="Ein Bild"><meta name="twitter:card" content="summary_large_image">/);
 });
 
 test('ctx.head() options replace what the entry gives', () => {

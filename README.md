@@ -161,17 +161,20 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      `{ lang, url, current, exists }`: `url` leads to the entry in that language if it is
      published (`exists`), else to that language's home page, and is ready for an `href`.
    - `search: true` adds [site search](#site-search); `ctx.search()` then renders the search box.
-   - `ctx.head(options)` (inside `renderPage` and `renderPost`) writes the tags for
-     `<head>`: `<title>` (the SEO title, else the entry's title, with the setting `title_suffix`),
-     the description, `robots` noindex (the page's or the site's), and, once the site setting
-     `url` (the address of the home page) is set, the canonical address, Open Graph (`og:*`) and
-     `twitter:card` for link previews and, for a site in several languages, `hreflang` links to
-     the entry's published versions with `x-default` for the default language. The share image is
-     the page's SEO image, else the site setting `share_image`; with width and height when it is a
-     media file. `options` (`{ title, description, image, type }`) replace what the entry gives,
-     e.g. `ctx.head({ description: post.teaser })` in `renderPost` (a post's own SEO fields come
-     from `fields.seo()` in the post type's fields). The theme keeps writing `<meta charset>`, the
-     viewport and its assets.
+   - `ctx.head(options)` (inside `renderPage` and `renderPost`) writes the tags for `<head>`:
+     `<title>` (the SEO title, else the entry's title, with the setting `title_suffix`; the site's
+     name for an untitled entry), the description, `robots` noindex (the page's or the site's),
+     Open Graph (`og:*`) and `twitter:card` for link previews. The canonical address, `og:url`, a
+     share image given as a media path and, for a site in several languages, `hreflang` links to
+     the entry's published and indexed versions (with `x-default` for the default language) need
+     the default language's site setting `url`, the address of the home page (with the base path,
+     e.g. `https://example.org/salon/`). The share image is the page's SEO image, else the site
+     setting `share_image`; with width and height when it is a media file. `options`
+     (`{ title, description, image, type }`) replace what the entry gives; `image` is a media
+     path, an `https://` address or a `fields.picture()` value (its `alt` becomes `og:image:alt`),
+     e.g. `ctx.head({ description: post.teaser, image: post.image })` in `renderPost` (a post has
+     SEO fields only if its type adds `fields.seo()`). The theme keeps writing `<meta charset>`,
+     the viewport and its assets.
 4. **Content**: `content/pages/<slug>.json` (`index` becomes `index.html`), `content/patterns/`,
    `content/forms/` (see [Form submissions](#form-submissions)), `content/<post type>/`, `content/settings/{site,menus,redirects}.json`;
    other languages in `content/<lang>/` (see [Languages](#languages)).
