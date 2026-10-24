@@ -207,7 +207,7 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      without a date last by slug; `posts({ slugs })` returns the named posts in that order, and
      `limit` cuts the list. The admin lists posts newest first too. `posts({ type })` lists another
      post type, `posts({ taxonomy, term })` only the posts with that term; `postUrl(post)` leads to a
-     post of any type, `terms(taxonomy, post)` and `paginate(items)` see below.
+     post of any type (`postUrl(post, type)` for a post the theme copied), `terms(taxonomy, post)` and `paginate(items)` see below.
    - For [languages](#languages), `ctx` (inside `renderPage`, `renderPost` and block renders) also
      offers `lang` (the entry's language; without `languages` the site setting `lang`, else `'de'`),
      `languages` (the configured list, `[]` without the option), `url(path)`, `asset(path)` and
@@ -609,15 +609,15 @@ renderTerm: (term, ctx) => ctx.html`<h1>${term.title}</h1>${term.posts.map((post
 - Each post type has its folder (`content/news/`, in another language `content/en/news/`), its
   entry in the sidebar and its own rule for languages: a language shows the default language's
   posts of a type until one of its own of that type is public. The first type is `posts` and
-  `ctx.posts()`; `renderPost(post, ctx)` renders every type, `ctx.postType` says which. Names are
-  lower-case and differ from each other, from `pages`, `patterns`, `forms`, `settings` and the
-  languages' codes.
+  `ctx.posts()`; `renderPost(post, ctx)` renders every type, `ctx.postType` says which. Names in
+  `postTypes` and `taxonomies` are lower-case and differ from each other, from `pages`, `patterns`,
+  `forms`, `settings` and the languages' codes (a theme's one `postType` keeps the name it has).
 - A taxonomy's terms are entries in `content/<taxonomy>/<slug>.json` (`{ "title": "Konzerte",
   "description": "…" }`, translated like patterns), edited under "Weitere Inhalte" by editors and
   administrators. `fields.terms(taxonomy, label)` gives a post type the field where the post's
   terms are ticked; it stores their slugs (`"kategorien": ["konzerte"]`). Authors and contributors
   tick terms on their own posts but add no terms ([roles.js](gateway/roles.js)).
-- With `renderTerm`, every term with public posts gets a listing page at the taxonomy's
+- With `renderTerm`, every term with public posts gets a listing page in each language that shows such posts at the taxonomy's
   `url(term)` (default `<taxonomy>/<slug>.html`, as clean address `kategorien/konzerte/`), with the
   term's public posts of every type in `term.posts` (and `ctx.term`). `ctx.terms(taxonomy)` lists a
   taxonomy's terms, `ctx.terms(taxonomy, post)` a post's, each with `url` to its listing page (when

@@ -94,7 +94,8 @@ function schemaTexts() {
   const theme = {
     blocks: { hero: { label: 'Theme hero', fields: [fields.link(), fields.picture(), fields.string('heading', 'Theme heading')] } },
     menus: { main: 'Theme menu' },
-    postType: { name: 'events', label: 'Theme events', singular: 'Theme event', fields: [fields.string('title', 'Theme title'), fields.date('date', 'Theme date')] },
+    postType: { name: 'events', label: 'Theme events', singular: 'Theme event', fields: [fields.string('title', 'Theme title'), fields.date('date', 'Theme date'), fields.terms('tags', 'Theme tags')] },
+    taxonomies: [{ name: 'tags', label: 'Theme tags', singular: 'Theme tag' }],
     settingsFields: [fields.organization()],
     formFields: [fields.string('intro', 'Theme intro')],
   };

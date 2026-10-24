@@ -34,8 +34,9 @@ export function deletedEntries(snapshots, { isEntry = () => true, exists = () =>
 
 // The entry as it comes back: as it was, but a page or post as a draft, so it is published again
 // only when someone chooses to.
+// kind: page, post or a post of a type (post.<type>).
 export function restoredEntry(data, kind) {
   const copy = structuredClone(data);
-  if (kind === 'page' || kind === 'post') copy.status = 'draft';
+  if (kind === 'page' || kind === 'post' || String(kind).startsWith('post.')) copy.status = 'draft';
   return copy;
 }

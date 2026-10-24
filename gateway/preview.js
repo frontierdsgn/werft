@@ -30,13 +30,13 @@ export async function renderPreview({ site, theme, target, files, media = {}, re
   const content = await loadContent({ site, theme, store });
   const own = target.lang ? content.languages?.[target.lang] : content;
   const type = postTypesOf(theme).find((t) => t.name === (target.type ?? postTypesOf(theme)[0]?.name));
-  const list = target.kind === 'post' ? own && type && postsOf(own, type.name) : own?.pages;
+  const list = target.kind === 'post' ? own && type && postsOf(own, type.name, postTypesOf(theme)[0].name) : own?.pages;
   const entry = list?.find((e) => e.slug === target.slug);
   if (!entry) return null;
   list.splice(list.indexOf(entry), 1, { ...entry, status: 'published', publish_date: undefined });
   const ctx = createContext({ site, theme, content, media, lang: target.lang, now, preview: true });
   // The entry as the language shows it (filled in from the default language where it has to be).
-  const shown = (target.kind === 'post' ? postsOf(ctx.content, type.name) : ctx.content.pages).find((e) => e.slug === target.slug);
+  const shown = (target.kind === 'post' ? postsOf(ctx.content, type.name, postTypesOf(theme)[0].name) : ctx.content.pages).find((e) => e.slug === target.slug);
   if (!shown) return null;
   let page = shown;
   let kind = target.kind;

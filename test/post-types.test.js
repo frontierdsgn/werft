@@ -132,3 +132,32 @@ test('a theme names either postType or postTypes, with names of their own', asyn
   await assert.rejects(built({}, content, { ...theme, taxonomies: [{ name: 'pages' }] }), /the name "pages" is taken/);
   await assert.rejects(built({ languages: ['de', 'en'] }, content, { ...theme, taxonomies: [{ name: 'en' }] }), /the language "en"/);
 });
+
+test('a term in another language links its translation only where that language lists posts with it', async () => {
+  const t = { ...theme, renderTerm: (term, ctx) => html`<head>${ctx.head()}</head>${ctx.translations.map((x) => html`<a href="${x.url}"${x.exists ? '' : html` data-missing`}>${x.lang}</a>`)}` };
+  const files = { ...content, 'content/en/pages/index.json': json({ title: 'Home', status: 'published', sections: [] }), 'content/en/news/x.json': post('X', '2026-01-01') };
+  const { out } = await built({ languages: ['de', 'en'] }, files, t);
+  assert.ok(out['kategorie/team/index.html'] && !out['en/kategorie/team/index.html'], 'English has its own news, none with the term');
+  assert.doesNotMatch(out['kategorie/team/index.html'], /hreflang="en"/);
+  assert.match(out['kategorie/team/index.html'], /<a href="..\/..\/en\/" data-missing>en<\/a>/);
+});
+
+test('a copy of a post the theme makes keeps its type; content made by hand without types has the first type\'s posts', async () => {
+  const { createContext } = await import('../lib/build.js');
+  const store = { types: { news: [{ slug: 'a', title: 'A', kategorien: ['salon'] }], events: [{ slug: 'fest', title: 'Fest', kategorien: ['salon'] }] } };
+  const base = { pages: [], patterns: [], forms: [], settings: {}, menus: {}, redirects: [], terms: { kategorien: [{ slug: 'salon', title: 'Salon' }] } };
+  const events = { ...theme, postTypes: [theme.postTypes[0], { ...theme.postTypes[1], url: (p) => `termine/${p.slug}.html` }] };
+  const ctx = createContext({ site: {}, theme: events, content: { ...base, posts: store.types.news, types: store.types } }).for({ slug: 'p' });
+  const copy = { ...ctx.posts({ type: 'events' })[0] };
+  assert.deepEqual([ctx.postUrl(copy), ctx.terms('kategorien', copy).map((term) => term.slug)], ['termine/fest.html', ['salon']]);
+  // By hand: only `posts`, in two languages; English has its own.
+  const site = { languages: ['de', 'en'] };
+  const hand = createContext({ site, theme, lang: 'en', content: { ...base, posts: [{ slug: 'a', status: 'published' }], languages: { en: { posts: [{ slug: 'b', status: 'published' }] } } } });
+  assert.deepEqual([hand.posts().map((p) => p.slug), hand.posts({ type: 'events' }), hand.postUrl(hand.posts()[0])], [['b'], [], 'neuigkeiten/b.html']);
+});
+
+test('a theme\'s one postType keeps any name it had', async () => {
+  const one = { ...theme, postTypes: undefined, taxonomies: undefined, postType: { ...theme.postTypes[0], name: 'Termine' } };
+  const { out } = await built({}, { 'content/pages/index.json': json({ title: 'Start', status: 'published', sections: [] }), 'content/Termine/x.json': post('X', '2026-01-01') }, one);
+  assert.ok(out['neuigkeiten/x/index.html']);
+});

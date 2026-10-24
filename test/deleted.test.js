@@ -64,6 +64,8 @@ test('a deleted entry is listed, restored from its last version and saved again'
   const data = restoredEntry(JSON.parse(Buffer.from(last.content, 'base64').toString()), 'page');
   assert.deepEqual(data, { title: 'Sommerfest', status: 'draft', sections: [{ type: 'text', body: 'Am Fluss' }] });
   assert.deepEqual(restoredEntry({ title: 'Anfahrt', sections: [] }, 'pattern'), { title: 'Anfahrt', sections: [] }, 'a pattern has no status');
+  assert.equal(restoredEntry({ title: 'Fest', status: 'published' }, 'post.events').status, 'draft', 'a post of any type comes back as a draft');
+  assert.deepEqual(entryOf('content/en/events/fest.json', { contentDir: 'content', languages: ['de', 'en'], folders: { page: 'pages', 'post.events': 'events' } }), { kind: 'post.events', slug: 'fest', lang: 'en' });
 
   // Saved as a new file, it is there again and no longer listed.
   await save([{ operation: 'create', path: entries[0].path, content: text(data) }]);

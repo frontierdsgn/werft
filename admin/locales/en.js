@@ -455,6 +455,7 @@ export default {
 // German text. A theme's labels are the theme's and stay as written, unless they are one of these.
 export const fields = {
   'Name der Website': 'Name of the website',
+  Beschreibung: 'Description',
   'Anhang an jeden Seitentitel': 'Added to every page title',
   'z. B. „| Firmenname“, mit Leerzeichen angehängt': 'e.g. “| Company name”, added with a space',
   'Sprache (Code)': 'Language (code)',
