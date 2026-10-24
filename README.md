@@ -563,12 +563,17 @@ an address the site does not have with the nearest one and status 404:
 - `werft dev` and `werft serve` answer with the nearest `404.html` above the address
   (`en/404.html` for `/en/…`, else `404.html`), else with "Not found".
 - On PHP web space the build writes `ErrorDocument 404 /404.html` into `.htaccess` (and
-  `en/.htaccess` for a language with its own page); the receiver accepts these lines.
+  `en/.htaccess` for a language with its own page); the receiver accepts these lines. The root
+  `.htaccess` then exists even without redirects and applies to the whole web space: a hand-made
+  `.htaccess` already there stops the publish (see [PHP web space](#php-web-space-ionos-and-similar));
+  move its lines elsewhere or remove it first.
 
 The page is shown at the address that was asked for, so its relative links would start from there;
 [`ctx.head()`](#install) writes `<base href>` for its folder, so the theme's `ctx.url()` addresses
-and the links in the content work. A theme that writes its own head gives the page root-relative
-addresses instead.
+and the links in the content work. Call it before the theme's stylesheets and scripts, since an
+address before `<base>` still starts from the requested one. On this page an anchor alone (`#main`, a skip
+link) leads to the home page of its folder, so the page is best kept without one. A theme that writes
+its own head gives the page root-relative addresses instead.
 
 ### Scheduling
 

@@ -130,4 +130,6 @@ test('a page with the slug 404 builds to 404.html, noindex, out of the sitemap, 
   assert.match(below['salon/404.html'], /^<head><base href="\/salon\/">/);
   assert.equal(below['salon/.htaccess'], 'ErrorDocument 404 /salon/404.html\n');
   assert.equal(below['.htaccess'], undefined);
+  const slash = await built({ base: '/salon' }, files, page);
+  assert.equal(slash['salon/.htaccess'], 'ErrorDocument 404 /salon/404.html\n', 'a base path with a leading slash');
 });
