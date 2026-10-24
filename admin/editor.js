@@ -16,6 +16,7 @@ import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
 import { formView, mediaView, submissionsView, usersView } from './form-view.js';
 import { retargetLink, retargetLinks, mentions, movedRedirects } from './rename.js';
 import { draftKey, collectDraft, changedSince, applyDraft } from './drafts.js';
+import { duplicatePage } from './duplicate.js';
 
 const REPO = '/api/v1/repos/werft/site';
 const { site, theme, base } = await loadSite();
@@ -1386,7 +1387,8 @@ function translate(slug) {
 function pageSettings() {
   const fields = (collection('pages')?.fields ?? []).filter((f) => f.name !== 'sections');
   const extra = el('div', { className: 've-page-extra' }, addressCard(current),
-    current === 'index' ? null : button('Seite löschen', null, () => removeEntry(`page:${current}`), 've-tool ve-danger'));
+    el('div', { className: 've-actions-row' }, button('Seite duplizieren …', null, () => duplicate(current), 've-tool'),
+      current === 'index' ? null : button('Seite löschen', null, () => removeEntry(`page:${current}`), 've-tool ve-danger')));
   openPanel('Seiteneinstellungen', `page:${current}`, [], { fields, extra });
 }
 
@@ -1484,6 +1486,22 @@ async function newPage() {
   openPage(slug);
 }
 
+// A draft copy of a page in the editor's language, under a new title and address, opened in place
+// of the original.
+async function duplicate(slug) {
+  const page = dataOf(`page:${slug}`);
+  if (!page) return;
+  const title = await promptDialog('Seite duplizieren', 'Titel der Kopie', `${page.title ?? slug} (Kopie)`, {
+    yes: 'Duplizieren', hint: 'Die Kopie hat dieselben Abschnitte und ist ein Entwurf, bis Sie sie veröffentlichen.',
+  });
+  if (!title) return;
+  const next = unique('pages', slugify(title));
+  startEditing();
+  change(() => { files.set(fileOf(`page:${next}`), { sha: null, saved: null, data: duplicatePage(page, title) }); });
+  openPage(next);
+  toast(`Kopie „${title}“ angelegt (${pageFile(next)}). Mit „Speichern“ wird sie übernommen.`);
+}
+
 // A new pattern or form, opened in the form view.
 async function newEntry(kind) {
   const title = await promptDialog(kind === 'pattern' ? 'Neues Muster' : 'Neues Formular', 'Name');
@@ -1569,7 +1587,7 @@ const app = {
   fileData: (source) => { syncViews(); return files.get(fileOf(source))?.data ?? null; },
   // For a page the editor's language lacks: the language it exists in, to translate it from.
   translatableFrom: (source) => source.startsWith('page:') && !dataOf(source) && languages.find((l) => l !== lang && slugsIn('pages', l).includes(source.slice(5))),
-  translate, languageName, addressCard,
+  translate, languageName, addressCard, duplicate,
   snapshot, pushUndo: (snap) => { undoStack.push(snap); if (undoStack.length > 100) undoStack.shift(); redoStack.length = 0; },
   // After a change in a form: the top bar at once, the preview once typing pauses.
   changed() { drawBar(); clearTimeout(drawSoon); drawSoon = setTimeout(draw, 300); },
