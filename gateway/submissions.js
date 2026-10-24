@@ -22,6 +22,7 @@
 // address. A failed e-mail is logged; the submission is kept.
 import { editable } from './roles.js';
 import { isAddress } from './mail.js';
+import { say, messages } from './messages.js';
 
 export const SUBMISSIONS_BRANCH = 'werft-submissions';
 export const SUBMISSIONS_DIR = '.werft/submissions';
@@ -91,7 +92,8 @@ async function readFields(request) {
   return fields;
 }
 
-export function submissions({ storage, branch, site, now, secret, mail, turnstileSecret, fetch: request = (...args) => fetch(...args) }) {
+// localeOf(addresses): the admin language of the first of these addresses that is a user with one.
+export function submissions({ storage, branch, site, now, secret, mail, turnstileSecret, localeOf, fetch: request = (...args) => fetch(...args) }) {
   // A form's definition: in the default language, else in another language of the site (a
   // translated form keeps its name, so its submissions are kept with the original's).
   const formDirs = [site.contentDir, ...(site.languages ?? []).slice(1).map((l) => `${site.contentDir}/${l}`)];
@@ -188,8 +190,11 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     const to = String(form.notify?.to ?? '').split(/[\s,;]+/).filter(isAddress);
     const sending = [];
     if (to.length) {
-      const text = `Über das Formular „${title}“ kam eine neue Einsendung:\n\n${listing(fields)}\n\nAlle Einsendungen stehen im Editor unter „Einsendungen“.${visitor ? `\nEine Antwort auf diese E-Mail geht an ${visitor}.` : ''}\n`;
-      sending.push(mail.send({ to, subject: `Neue Einsendung: ${oneLine(title)}`, text, ...(visitor && { replyTo: visitor }), fromName }));
+      // For the site's editors: in a recipient's admin language, else the site's first language
+      // where the gateway has it, else German.
+      const t = messages((await localeOf?.(to)) ?? site.languages?.[0]);
+      const text = t('submissions.text', { title, fields: listing(fields), visitor });
+      sending.push(mail.send({ to, subject: t('submissions.subject', { title: oneLine(title) }), text, ...(visitor && { replyTo: visitor }), fromName }));
     }
     if (confirm) {
       const own = (key) => ownTexts(local, form, (f) => f.notify?.[key]);
@@ -267,14 +272,15 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
   }
 
   async function api(request, user) {
-    if (!editable(user.role).includes('content')) return json({ message: 'Nur Administratoren und Redakteure sehen Einsendungen.' }, 403);
+    const t = say(request);
+    if (!editable(user.role).includes('content')) return json({ message: t('submissions.notAllowed') }, 403);
     if (request.method === 'POST') {
       const wanted = (await request.json()).delete ?? [];
-      if (!wanted.length) return json({ message: 'Keine Einsendung ausgewählt.' }, 422);
+      if (!wanted.length) return json({ message: t('submissions.noneChosen') }, 422);
       const paths = new Set(await sentAt(await head()));
       for (const ref of wanted) {
         const [slug, id, ...rest] = String(ref).split('/');
-        if (rest.length || !SLUG.test(slug ?? '') || !ID.test(id ?? '') || !paths.has(`${SUBMISSIONS_DIR}/${slug}/${id}.json`)) return json({ message: `Einsendung ${ref} nicht gefunden.` }, 404);
+        if (rest.length || !SLUG.test(slug ?? '') || !ID.test(id ?? '') || !paths.has(`${SUBMISSIONS_DIR}/${slug}/${id}.json`)) return json({ message: t('submissions.notFound', { ref }) }, 404);
       }
       await commit(`Einsendung${wanted.length === 1 ? '' : 'en'} gelöscht (${wanted.length})`, wanted.map((ref) => ({ path: `${SUBMISSIONS_DIR}/${ref}.json`, data: null })), true);
     }

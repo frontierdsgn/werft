@@ -4,7 +4,7 @@
 import { markdown } from 'werft';
 import { focusOf } from 'werft/images';
 import { toMarkdown, formatBar, editableAsRich } from './visual-rich.js';
-import { t } from './i18n.js';
+import { t, fieldText } from './i18n.js';
 
 const el = (tag, props = {}, ...children) => {
   const node = Object.assign(document.createElement(tag), props);
@@ -51,9 +51,9 @@ export function buildForm(fields, value, ctx, path = []) {
 }
 
 function labelled(field, input, { inline = false, before = null } = {}) {
-  const label = el('label', { className: 've-label', id: uid() }, field.label ?? field.name);
+  const label = el('label', { className: 've-label', id: uid() }, fieldText(field.label) ?? field.name);
   if (/^(input|select|textarea)$/.test(input.localName)) { input.id = uid(); label.htmlFor = input.id; } else input.setAttribute('aria-labelledby', label.id);
-  const hint = field.hint ? el('small', { className: 've-hint' }, field.hint) : null;
+  const hint = field.hint ? el('small', { className: 've-hint' }, fieldText(field.hint)) : null;
   return el('div', { className: `ve-control${inline ? ' ve-inline' : ''}` }, ...(inline ? [input, label] : [label, hint, before, input]), inline ? hint : null);
 }
 
@@ -102,13 +102,13 @@ function control(field, holder, ctx, path) {
         for (const o of options) {
           const input = el('input', { type: 'radio', name: radioName, checked: o.value === (current ?? field.default) });
           input.addEventListener('change', () => set(o.value));
-          group.append(el('label', { className: 've-radio' }, input, el('span', {}, o.label)));
+          group.append(el('label', { className: 've-radio' }, input, el('span', {}, fieldText(o.label))));
         }
         return labelled(field, group);
       }
       const input = el('select');
       if (field.required === false || !options.some((o) => o.value === current)) input.append(el('option', { value: '' }, '–'));
-      for (const o of options) input.append(el('option', { value: String(o.value), selected: o.value === current }, o.label));
+      for (const o of options) input.append(el('option', { value: String(o.value), selected: o.value === current }, fieldText(o.label)));
       input.addEventListener('change', () => set(options.find((o) => String(o.value) === input.value)?.value));
       return labelled(field, input);
     }
@@ -192,8 +192,8 @@ function control(field, holder, ctx, path) {
       // A missing group joins the content on its first edit, so opening a form changes nothing.
       const value = holder[name] ?? emptyValue(field) ?? {};
       const inner = buildForm(field.fields ?? [], value, { ...ctx, onChange: () => { holder[name] ??= value; ctx.onChange(); } }, path);
-      if (field.collapsed) return el('details', { className: 've-details' }, el('summary', {}, field.label ?? name), inner);
-      return el('fieldset', { className: 've-object' }, el('legend', {}, field.label ?? name), inner);
+      if (field.collapsed) return el('details', { className: 've-details' }, el('summary', {}, fieldText(field.label) ?? name), inner);
+      return el('fieldset', { className: 've-object' }, el('legend', {}, fieldText(field.label) ?? name), inner);
     }
     case 'list': return listControl(field, holder, ctx, path);
     default: {
@@ -237,7 +237,7 @@ function summaryOf(def, item, ctx) {
 function listControl(field, holder, ctx, path) {
   const typed = !!field.types;
   const typeOf = (item) => (typed ? field.types.find((t) => t.name === item?.[field.typeKey ?? 'type']) : null);
-  const box = el('fieldset', { className: `ve-object ve-list${typed ? ' ve-typed' : ''}` }, el('legend', {}, field.label ?? field.name));
+  const box = el('fieldset', { className: `ve-object ve-list${typed ? ' ve-typed' : ''}` }, el('legend', {}, fieldText(field.label) ?? field.name));
   const body = el('div', { className: 've-list-items' });
   box.append(body);
   const single = field.field;
@@ -246,7 +246,7 @@ function listControl(field, holder, ctx, path) {
   const label = (item, i) => {
     const type = typeOf(item);
     const text = summaryOf(type ?? field, item, ctx).slice(0, 80);
-    return { kind: type?.label ?? (typed ? t('section') : null), text: text || (typed ? '' : t('item.numbered', { number: i + 1 })) };
+    return { kind: fieldText(type?.label) ?? (typed ? t('section') : null), text: text || (typed ? '' : t('item.numbered', { number: i + 1 })) };
   };
   // Moves the open state with an entry.
   const swapOpen = (i, j) => {

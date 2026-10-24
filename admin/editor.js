@@ -8,7 +8,7 @@ import { schema as adminSchema } from 'werft/schema';
 import { createContext, mediaPaths, markdown, raw, escape, imageSize, isPublic } from 'werft';
 import { downscale, downscaleTarget, maxSize, replaceEverywhere, picturesOf } from 'werft/images';
 import { siteLanguages, languageDir, localize, deepMerge, differences, pageFile, pageLinks } from 'werft/content';
-import { requireUser, loadSite, api, signOut } from './session.js';
+import { requireUser, loadSite, api, signOut, useLocale } from './session.js';
 import { disarm, postPreview } from './preview.js';
 import { pageRenderer, mapDocument, getAt, setAt, textOf, unmark } from './visual-map.js';
 import { buildForm, emptyValue } from './visual-form.js';
@@ -19,7 +19,7 @@ import { draftKey, collectDraft, changedSince, applyDraft } from './drafts.js';
 import { duplicatePage } from './duplicate.js';
 import { entryOf, deletedEntries, restoredEntry } from './deleted.js';
 import { textsOf, search } from './search.js';
-import { t, locale, intlLocale } from './i18n.js';
+import { t, locale, intlLocale, fieldText } from './i18n.js';
 
 const REPO = '/api/v1/repos/werft/site';
 const { site, theme, base } = await loadSite();
@@ -600,7 +600,7 @@ function paintNow() {
     const section = page.sections[index];
     const def = schemaAt(`page:${current}`, ['sections', index]);
     overlay.append(box(sectionRect, 've-section'));
-    const chip = el('div', { className: 've-chip' }, section.type === 'pattern' ? sourceLabel(`pattern:${section.pattern}`) : (def?.label ?? section.type));
+    const chip = el('div', { className: 've-chip' }, section.type === 'pattern' ? sourceLabel(`pattern:${section.pattern}`) : (fieldText(def?.label) ?? section.type));
     overlay.append(chip);
     place(chip, sectionRect.left + 8, sectionRect.top + 8);
     const bar = el('div', { className: 've-bar ve-section-bar' });
@@ -666,7 +666,7 @@ function paintNow() {
       const owner = ownerOf(active.source, active.path);
       // A text of a part within a section (a link, an entry) is named with that part.
       const inPart = owner && owner.path.length > (/^(page|pattern):/.test(active.source) ? 2 : 0);
-      const bar = el('div', { className: 've-bar ve-field-bar' }, el('span', { className: 've-field-label' }, `${inPart ? `${owner.label} · ` : ''}${def?.label ?? t('text')}`));
+      const bar = el('div', { className: 've-bar ve-field-bar' }, el('span', { className: 've-field-label' }, `${inPart ? `${owner.label} · ` : ''}${fieldText(def?.label) ?? t('text')}`));
       if (active.mode === 'rich') bar.append(formatBar(doc, () => active.el.dispatchEvent(new Event('input', { bubbles: true }))));
       if (owner) bar.append(button(t('options'), t('editThing', { name: owner.label }), () => openPanel(owner.title, owner.source, owner.path)));
       const note = sharedNote(active.source);
@@ -683,7 +683,7 @@ function ownerOf(source, path) {
   while (at.length && typeof at.at(-1) === 'number' && typeof getAt(dataOf(source), at) !== 'object') at = at.slice(0, -1);
   const def = schemaAt(source, at);
   if (!def?.fields?.length) return null;
-  return { source, path: at, label: def.label ?? t('section'), title: def.label ?? sourceLabel(source) };
+  return { source, path: at, label: fieldText(def.label) ?? t('section'), title: fieldText(def.label) ?? sourceLabel(source) };
 }
 
 // What a form needs from the editor (see buildForm).
@@ -727,7 +727,7 @@ function openPanel(title, source, path, { fields, extra } = {}) {
 function openSectionPanel(index) {
   const section = pageData().sections[index];
   const def = schemaAt(`page:${current}`, ['sections', index]);
-  openPanel(def?.label ?? t('section'), `page:${current}`, ['sections', index]);
+  openPanel(fieldText(def?.label) ?? t('section'), `page:${current}`, ['sections', index]);
 }
 
 // A text that cannot be edited on the page (formatted parts, values the theme reworks).
@@ -756,7 +756,7 @@ function openTextDialog(text, node) {
   const owner = ownerOf(text.source, text.path);
   const note = sharedNote(text.source);
   panel.replaceChildren(
-    el('header', {}, el('h2', {}, def?.label ?? t('text')), button(t('done'), null, closePanel, 've-primary')),
+    el('header', {}, el('h2', {}, fieldText(def?.label) ?? t('text')), button(t('done'), null, closePanel, 've-primary')),
     ...(note ? [el('p', { className: 've-note' }, note)] : []),
     ...(rich ? [formatBar(document, () => editor.dispatchEvent(new Event('input')))] : []),
     editor,
@@ -780,7 +780,7 @@ function openImage(node) {
   }, 've-primary'));
   const def = schemaAt(image.source, holderPath);
   const fields = (def?.widget === 'object' ? def.fields : []).filter((f) => f.name !== key && f.widget !== 'image');
-  if (holder && !Array.isArray(holder) && fields.length) openPanel(def.label ?? t('image'), image.source, holderPath, { fields, extra });
+  if (holder && !Array.isArray(holder) && fields.length) openPanel(fieldText(def.label) ?? t('image'), image.source, holderPath, { fields, extra });
   else {
     panel.replaceChildren(el('header', {}, el('h2', {}, t('image')), button(t('done'), null, closePanel, 've-primary')), extra);
     panel.hidden = false;
@@ -1723,6 +1723,8 @@ const app = {
   },
   images, mediaURL, upload, usesOf, altsOf, removeImage, replaceImage, mayDeleteImages: ['administrator', 'editor'].includes(me.role),
   isUnsaved: (path) => uploads.has(path) && !uploads.get(path).saved,
+  // The texts in the user's language (Mein Konto), drawn again.
+  useLocale: () => { useLocale(me); refresh(); },
   // Ends this session ({ everywhere: true }: all of the user's) and leaves for the sign-in page; on
   // a failure it says so and stays.
   signOut: async (options) => {

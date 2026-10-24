@@ -1,5 +1,5 @@
 import { setupTwoFactor } from './two-factor.js';
-import { t, setLocale, browserLocale } from './i18n.js';
+import { t, locale, setLocale, browserLocale } from './i18n.js';
 
 // Session of the werft admin: the access token lives in this page only; the gateway keeps the
 // refresh token in an HttpOnly cookie, which renews it after a reload or once it has expired.
@@ -10,11 +10,21 @@ const LEGACY = 'werft.session';
 // of failed sign-ins (see gateway/throttle.js).
 const DEVICES = 'werft.devices';
 const devices = () => { try { return JSON.parse(localStorage.getItem(DEVICES)) ?? {}; } catch { return {}; } };
+// The language the last user chose for the admin on this browser, for the sign-in page.
+const LOCALE = 'werft.locale';
+// The gateway answers in the admin's language.
+const language = () => ({ 'accept-language': locale() });
+
+// The admin's language for a signed-in user: theirs (Mein Konto), else the browser's.
+export function useLocale(user) {
+  if (user.locale) localStorage.setItem(LOCALE, user.locale); else localStorage.removeItem(LOCALE);
+  setLocale(user.locale ?? browserLocale());
+}
 
 // Ends the session on the server too; { everywhere: true } ends all of the user's sessions. Throws
 // when the gateway could not record it; the access token stays, so the page can try again.
 export async function signOut({ everywhere = false } = {}) {
-  const response = await fetch('/api/werft/session', { method: 'DELETE', headers: { authorization: `token ${token ?? ''}`, 'content-type': 'application/json' }, body: JSON.stringify({ everywhere }) })
+  const response = await fetch('/api/werft/session', { method: 'DELETE', headers: { authorization: `token ${token ?? ''}`, 'content-type': 'application/json', ...language() }, body: JSON.stringify({ everywhere }) })
     .catch(() => null);
   if (!response?.ok) throw new Error((await response?.json().catch(() => null))?.message ?? t('signOut.failed'));
   token = null;
@@ -36,7 +46,7 @@ async function refresh() {
 export async function api(path, { method = 'GET', body, raw = false } = {}, retried = false) {
   const response = await fetch(`/api/werft${path}`, {
     method,
-    headers: { authorization: `token ${token ?? ''}`, ...(body !== undefined && { 'content-type': 'application/json' }) },
+    headers: { authorization: `token ${token ?? ''}`, ...language(), ...(body !== undefined && { 'content-type': 'application/json' }) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (response.status === 401 && !retried && (await refresh())) return api(path, { method, body, raw }, true);
@@ -51,15 +61,15 @@ export async function api(path, { method = 'GET', body, raw = false } = {}, retr
 // form for a new password, which signs in too. With two-factor sign-in a code follows the password;
 // where the site requires it and the user has none yet, setting it up comes first.
 export async function requireUser(siteName) {
-  setLocale(browserLocale());
+  setLocale(localStorage.getItem(LOCALE) ?? browserLocale());
   const resetToken = /^#passwort=([\w.-]+)$/.exec(location.hash)?.[1];
   let signedInAlready = null;
   if (!resetToken) {
-    try { signedInAlready = await api('/me'); if (!signedInAlready.two_factor_required) return signedInAlready; } catch (error) { if (error.status !== 401) throw error; }
+    try { signedInAlready = await api('/me'); useLocale(signedInAlready); if (!signedInAlready.two_factor_required) return signedInAlready; } catch (error) { if (error.status !== 401) throw error; }
   }
   const mailing = fetch('/api/werft/status').then((r) => r.json()).then((s) => !!s.mail, () => false);
   const post = async (path, body) => {
-    const response = await fetch(`/api/werft${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const response = await fetch(`/api/werft${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...language() }, body: JSON.stringify(body) });
     return { ok: response.ok, status: response.status, data: await response.json().catch(() => ({})) };
   };
   const form = document.createElement('form');
@@ -82,6 +92,7 @@ export async function requireUser(siteName) {
     const signedIn = async (data) => {
       token = data.access_token;
       const me = await api('/me');
+      useLocale(me);
       if (me.two_factor_required) return setup();
       form.remove();
       resolve(me);
@@ -128,7 +139,7 @@ export async function requireUser(siteName) {
         if (mode === 'code') {
           const { ok, status, data } = await post('/session', { ticket: second.ticket, code: $('#werft-code').value });
           if (!ok) {
-            if (status === 401 && /noch einmal an/.test(data.message ?? '')) { show('signin'); $('.werft-error').textContent = data.message; return; }
+            if (status === 401 && data.code === 'signin_again') { show('signin'); $('.werft-error').textContent = data.message; return; }
             error.textContent = data.message;
             return;
           }

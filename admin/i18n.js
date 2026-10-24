@@ -3,8 +3,11 @@
 // a function of those values, for plurals and sentences that differ by more than a word. A key the
 // locale lacks shows the German text.
 import de from './locales/de.js';
+import en, { fields as enFields } from './locales/en.js';
 
-export const LOCALES = { de };
+export const LOCALES = { de, en };
+// werft's own field labels, hints and choices in other locales, by their German text.
+export const FIELD_TEXTS = { en: enFields };
 export const DEFAULT_LOCALE = 'de';
 let current = DEFAULT_LOCALE;
 
@@ -16,6 +19,10 @@ export function browserLocale(languages = globalThis.navigator?.languages ?? [gl
 export const locale = () => current;
 // For dates and numbers: the browser's variant of the locale (en-GB, de-AT), else the locale.
 export const intlLocale = () => (globalThis.navigator?.languages ?? []).find((l) => l.toLowerCase().startsWith(`${current}-`)) ?? current;
+
+// A label, hint or choice of the schema in the locale: werft's own texts are translated, a theme's
+// stay as the theme wrote them.
+export const fieldText = (text) => (typeof text === 'string' && FIELD_TEXTS[current]?.[text]) || text;
 
 export function t(key, values = {}) {
   const text = LOCALES[current][key] ?? de[key];

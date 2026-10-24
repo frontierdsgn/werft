@@ -75,4 +75,4 @@ export const serializeUsers = (users) => `${JSON.stringify({ users }, null, 2)}\
 export const findUser = (users, email) => users.find((u) => u.email.toLowerCase() === String(email ?? '').trim().toLowerCase());
 
 // The public view of a user, as the admin shows it.
-export const publicUser = ({ email, name, role, totp }) => ({ email, name, role, two_factor: !!totp });
+export const publicUser = ({ email, name, role, totp, locale }) => ({ email, name, role, two_factor: !!totp, locale: locale ?? null });

@@ -38,27 +38,28 @@ const statusOf = (data) => {
 
 // Returns null when `user` may make `change`, otherwise the reason it may not.
 // change: { operation: 'create' | 'update' | 'delete', path, text?, creator? }
-// `creator` is the e-mail of whoever added the file (first commit), for existing files.
+// `creator` is the e-mail of whoever added the file (first commit), for existing files. Returns
+// null when the user may, else the key of the reason (gateway/messages.js).
 export function denial(user, change, site) {
   const kind = classify(change.path, site);
   const own = change.operation === 'create' || change.creator?.toLowerCase() === user.email.toLowerCase();
-  if (kind === 'private') return 'Dieser Bereich ist geschützt.';
+  if (kind === 'private') return 'denied.private';
   switch (user.role) {
     case 'administrator':
       return null;
     case 'editor':
-      return ['post', 'content', 'media'].includes(kind) ? null : 'Nur Administratoren dürfen das ändern.';
+      return ['post', 'content', 'media'].includes(kind) ? null : 'denied.adminsOnly';
     case 'author':
-      if (kind === 'media') return change.operation === 'create' ? null : 'Autoren dürfen Medien nur hochladen.';
-      if (kind !== 'post') return 'Autoren dürfen nur eigene Beiträge ändern.';
-      return own ? null : 'Autoren dürfen nur eigene Beiträge ändern.';
+      if (kind === 'media') return change.operation === 'create' ? null : 'denied.authorMedia';
+      if (kind !== 'post') return 'denied.authorOwn';
+      return own ? null : 'denied.authorOwn';
     case 'contributor':
-      if (kind !== 'post' || !own) return 'Mitarbeiter dürfen nur eigene Beiträge ändern.';
-      if (change.operation !== 'delete' && !statuses(user.role).includes(statusOf(change.text))) return 'Mitarbeiter dürfen Beiträge nur als Entwurf oder zur Prüfung speichern.';
-      if (change.operation === 'delete' && change.wasPublished) return 'Mitarbeiter dürfen veröffentlichte Beiträge nicht löschen.';
+      if (kind !== 'post' || !own) return 'denied.contributorOwn';
+      if (change.operation !== 'delete' && !statuses(user.role).includes(statusOf(change.text))) return 'denied.contributorStatus';
+      if (change.operation === 'delete' && change.wasPublished) return 'denied.contributorPublished';
       return null;
     default:
-      return 'Unbekannte Rolle.';
+      return 'users.unknownRole';
   }
 }
 

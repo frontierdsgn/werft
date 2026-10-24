@@ -4,7 +4,7 @@
 import { buildForm } from './visual-form.js';
 import { versionDiff, diffHTML } from './diff.js';
 import { setupTwoFactor, recoveryCodes } from './two-factor.js';
-import { t, locale, intlLocale } from './i18n.js';
+import { t, locale, intlLocale, fieldText, LOCALES, browserLocale } from './i18n.js';
 
 const el = (tag, props = {}, ...children) => {
   const node = Object.assign(document.createElement(tag), props);
@@ -110,7 +110,7 @@ export function formView(app, root) {
     for (const o of options) {
       const input = el('input', { type: 'radio', name: 've-status', checked: (data.status ?? 'published') === o.value });
       input.addEventListener('change', () => { last = app.snapshot(); started = false; data.status = o.value; ctx.onChange(); });
-      group.append(el('label', { className: 've-choice' }, input, el('span', {}, el('strong', {}, o.label), el('small', {}, statusHelp(o.value) ?? ''))));
+      group.append(el('label', { className: 've-choice' }, input, el('span', {}, el('strong', {}, fieldText(o.label)), el('small', {}, statusHelp(o.value) ?? ''))));
     }
     page.append(card(t('visibility'), null, group, buildForm(named('publish_date'), data, ctx)));
   }
@@ -442,6 +442,17 @@ export function accountView(app, root) {
     app.toast(t('account.nameSaved'));
   });
 
+  // The admin's language for this user; empty: the browser's. Each language is named in itself.
+  const ownName = (code) => { try { return new Intl.DisplayNames([code], { type: 'language' }).of(code); } catch { return code; } };
+  const language = el('select', { id: 've-account-locale' }, el('option', { value: '' }, t('account.localeBrowser', { language: ownName(browserLocale()) })),
+    ...Object.keys(LOCALES).map((code) => el('option', { value: code, selected: app.me.locale === code }, ownName(code))));
+  const localeCard = form(card(t('account.locale'), t('account.localeLead')), [field(t('account.locale'), language)], t('account.saveLocale'), async () => {
+    const result = await app.api('/me', { method: 'POST', body: { locale: language.value || null } });
+    app.me.locale = result.locale;
+    app.useLocale();
+    app.toast(t('account.localeSaved'));
+  });
+
   const current = el('input', { id: 've-account-current', type: 'password', required: true, autocomplete: 'current-password' });
   const next = el('input', { id: 've-account-new', type: 'password', required: true, minLength: 10, autocomplete: 'new-password' });
   const repeat = el('input', { id: 've-account-repeat', type: 'password', required: true, minLength: 10, autocomplete: 'new-password' });
@@ -457,7 +468,7 @@ export function accountView(app, root) {
     el('div', { className: 've-actions-row' }, app.button(t('signOutEverywhere'), null, async () => {
       if (await app.confirmDialog(t('signOutEverywhere.title'), t('signOutEverywhere.self'), t('signOut'))) app.signOut({ everywhere: true });
     }, 've-tool')));
-  page.append(nameCard, passwordCard, twoFactorCard(app), devices);
+  page.append(nameCard, localeCard, passwordCard, twoFactorCard(app), devices);
   return { reveal() {} };
 }
 

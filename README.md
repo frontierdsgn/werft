@@ -16,8 +16,8 @@ theme turns it into static HTML, and editors work in a browser admin at `/admin`
 logins and WordPress-style roles. The same site runs on Cloudflare Pages, on any Node server, and
 (with a build host) on PHP web space such as IONOS.
 
-The admin is werft's own editor, built for people who are not technical: plain German labels, one
-clear action per place, one screen with two views of the same content.
+The admin is werft's own editor, built for people who are not technical: plain German (or English)
+labels, one clear action per place, one screen with two views of the same content.
 Which existing CMSs were evaluated first: [EVALUATION.md](EVALUATION.md).
 
 ### How it fits together
@@ -102,27 +102,46 @@ one, and unsaved changes, undo and "Speichern" carry over between them.
   sections and list items can be added, duplicated, moved and removed. Desktop and mobile width.
 - Both: undo and redo (Ctrl+Z, Ctrl+Y); "Speichern" (Ctrl+S) writes every changed file and upload in
   one commit. "Benutzer" (administrators only) changes users at once, without "Speichern".
-- "Mein Konto" (every role): one's own name, one's own password (with the current one; wrong
-  guesses count against the session like [sign-in](#sign-in) attempts, 5 then a growing wait; the
-  other devices are then signed out) and "Überall abmelden". The gateway takes only the name and
-  the password there, only for the signed-in user, and refuses a session the change has ended.
+- "Mein Konto" (every role): one's own name, the [admin's language](#the-admins-language), one's
+  own password (with the current one; wrong guesses count against the session like
+  [sign-in](#sign-in) attempts, 5 then a growing wait; the other devices are then signed out) and
+  "Überall abmelden". The gateway takes only the name, the language and the password there, only
+  for the signed-in user, and refuses a session the change has ended.
 - Unsaved changes are also kept in the browser (its local storage, per user, site and branch), so
   a closed tab or a crash does not lose them. When the admin opens again on that browser, it offers
   "Wiederherstellen", "Verwerfen" or "Später" and names entries someone saved since; restoring
   replaces those with the kept changes, as unsaved changes. New images too large for the browser's
   storage are not kept, and the message says so. "Abmelden" removes them from the browser.
 
-The admin's texts live in [admin/locales/](admin/locales/), German ([de.js](admin/locales/de.js))
-first and the default; code shows them with `t('key', values)` from [i18n.js](admin/i18n.js), and
-the page's static texts carry `data-t` attributes. A new text gets a key there;
-[test/locales.test.js](test/locales.test.js) fails on a key without a text, a text no code uses and
-a locale that lacks a key.
-
 How "Auf der Seite" finds the content on the page ([visual-map.js](admin/visual-map.js)): it renders
 the page a second time with each text wrapped in invisible private-use markers and keeps a marker
 only where the page without markers is unchanged, so a value the theme compares or slugifies is
 never marked. Themes need nothing extra. Theme scripts do not run in the editor (e.g. a mobile menu
 shows open).
+
+### The admin's language
+
+The admin speaks German (the default) or English, whatever language the site's content is in (see
+[Languages](#languages) for that). Each user picks it under "Mein Konto" ("Sprache der Redaktion");
+it is kept with the user in `.werft/users.json` (`"locale": "en"`). Without a choice the admin
+follows the browser's languages, and German where none of them is offered. The sign-in page uses
+the last choice made on that browser, else the browser's language. A text missing in English shows
+in German.
+
+- What the admin says comes from [admin/locales/](admin/locales/) ([de.js](admin/locales/de.js),
+  [en.js](admin/locales/en.js)); code shows a text with `t('key', values)` from
+  [i18n.js](admin/i18n.js), and the page's static texts carry `data-t` attributes. werft's own field
+  labels, hints and choices (from [lib/schema.js](lib/schema.js) and [lib/fields.js](lib/fields.js))
+  are translated by their German text (`fields` in `en.js`). A theme's labels, blocks and post type
+  names are the theme's and show as the theme writes them.
+- The gateway's messages ([gateway/messages.js](gateway/messages.js)) follow the language the admin
+  sends as `Accept-Language`. E-mail to an editor (a new password, a form's notice to a recipient who
+  is a user) goes out in that user's language; a notice to someone else in the site's first language
+  where werft has it, else German. What visitors see (form replies, confirmations) is the site's,
+  see [Form submissions](#form-submissions). Commit messages stay German.
+- A new text gets a key in every locale; [test/locales.test.js](test/locales.test.js) fails on a key
+  without a German text, a text no code uses, a locale or the gateway lacking a key, and a werft
+  field label without its English text.
 
 ## Install
 
@@ -919,7 +938,8 @@ In the editor, each form has "E-Mail bei neuer Einsendung" (the field `notify` o
   "confirm_subject": "Ihre Anfrage", "confirm_text": "Danke, wir melden uns bis morgen." } }
 ```
 
-- `to`: the addresses that get each submission ("Neue Einsendung: <title>", one line per field),
+- `to`: the addresses that get each submission ("Neue Einsendung: <title>", one line per field, in
+  the [admin's language](#the-admins-language) of a recipient who is a user),
   separated by commas. The reply-to is the visitor's address: the field `email` (`e-mail`,
   `mail`), else the first field that holds an address.
 - `confirm`: the visitor gets a confirmation to that address, with `confirm_subject` (default
