@@ -68,7 +68,21 @@ export function githubApp({ appId, privateKey, owner, repo, api = 'https://api.g
     return { token: access.token, expires: Date.parse(access.expires_at), committer: { name: login, email: `${userId}+${login}@${noreply}` } };
   }
 
-  return async () => {
+  // A token for starting workflows ("Actions: Read and write"), asked for separately, so the
+  // contents token keeps working on installations that have not accepted that permission yet.
+  async function actions() {
+    const signed = await jwt();
+    installation ??= gh(`/repos/${owner}/${repo}/installation`, { token: signed }).catch((e) => { installation = null; throw e; });
+    const { id } = await installation;
+    const access = await gh(`/app/installations/${id}/access_tokens`, { method: 'POST', token: signed, body: { repositories: [repo], permissions: { actions: 'write' } } }).catch((e) => {
+      if (e.github === 404) installation = null;
+      if (e.github === 422) throw Object.assign(new Error('Die GitHub App hat die Berechtigung „Actions: Read and write“ noch nicht, oder diese Installation hat sie noch nicht bestätigt.'), { permission: true });
+      throw e;
+    });
+    return { token: access.token };
+  }
+
+  const credentials = async () => {
     if (!pending || expires - now() < RENEW_BEFORE) {
       expires = Infinity;
       pending = issue().then((c) => { expires = c.expires; return c; }, (e) => { pending = null; throw e; });
@@ -76,4 +90,5 @@ export function githubApp({ appId, privateKey, owner, repo, api = 'https://api.g
     const { token, committer } = await pending;
     return { token, committer };
   };
+  return Object.assign(credentials, { actions });
 }

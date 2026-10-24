@@ -18,7 +18,10 @@
 //   WERFT_REPO         owner/repository
 //   WERFT_DIR          the site's directory in the repository ('' when it is the root)
 //   WERFT_BRANCH       production branch (default main)
-//   WERFT_DEPLOY_HOOK  optional deploy hook URL, used to publish scheduled entries
+//   WERFT_DEPLOY_WORKFLOW  optional, the workflow file that deploys the site (e.g. gate.yml): scheduled
+//                      entries start it (workflow_dispatch) instead of a deploy hook, so they pass the
+//                      site's gate; the GitHub App or token needs "Actions: Read and write"
+//   WERFT_DEPLOY_HOOK  optional deploy hook URL, used to publish scheduled entries (bypasses the gate)
 //   WERFT_TICK_KEY     optional, lets a cron service call /api/werft/tick?key=… (secret)
 //   WERFT_GITHUB_API   optional, for GitHub Enterprise Server (default https://api.github.com)
 //   TURNSTILE_SECRET_KEY  optional, forms then need Cloudflare Turnstile (secret)
@@ -41,11 +44,12 @@ export function pagesFunction({ site, theme, fetch: request = (...args) => fetch
     if (!owner || !repo || !(app || env.GITHUB_TOKEN)) throw new Error('Set WERFT_REPO (owner/repository) and GITHUB_APP_ID with GITHUB_APP_PRIVATE_KEY, or GITHUB_TOKEN, in the Pages project.');
     const api = env.WERFT_GITHUB_API || undefined;
     const base = site.base ? `/${site.base.replace(/^\/|\/$/g, '')}/` : '/';
+    const storage = githubStorage({
+      owner, repo, dir: env.WERFT_DIR ?? '', api, fetch: request,
+      ...(app ? { auth: githubApp({ appId: env.GITHUB_APP_ID, privateKey: env.GITHUB_APP_PRIVATE_KEY, owner, repo, api, fetch: request }) } : { token: env.GITHUB_TOKEN }),
+    });
     return createGateway({
-      storage: githubStorage({
-        owner, repo, dir: env.WERFT_DIR ?? '', api, fetch: request,
-        ...(app ? { auth: githubApp({ appId: env.GITHUB_APP_ID, privateKey: env.GITHUB_APP_PRIVATE_KEY, owner, repo, api, fetch: request }) } : { token: env.GITHUB_TOKEN }),
-      }),
+      storage,
       secret: env.WERFT_SECRET,
       branch: env.WERFT_BRANCH || 'main',
       tickKey: env.WERFT_TICK_KEY || undefined,
@@ -69,6 +73,7 @@ export function pagesFunction({ site, theme, fetch: request = (...args) => fetch
         return response.ok ? (await response.json()).built_at : null;
       },
       onTick: async () => {
+        if (env.WERFT_DEPLOY_WORKFLOW) return storage.dispatch(env.WERFT_DEPLOY_WORKFLOW, env.WERFT_BRANCH || 'main');
         if (!env.WERFT_DEPLOY_HOOK) return false;
         const response = await request(env.WERFT_DEPLOY_HOOK, { method: 'POST' });
         if (!response.ok) throw new Error(`Deploy hook: ${response.status}`);
