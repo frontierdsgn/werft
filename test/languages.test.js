@@ -103,7 +103,7 @@ const switching = {
 test('each language is built: the default at the root, the others below their code', async () => {
   const out = await built(site, english);
   const pages = Object.keys(out).filter((p) => p.endsWith('.html')).sort();
-  assert.deepEqual(pages, ['en/index.html', 'en/nur-englisch.html', 'en/termine/konzert.html', 'geheim.html', 'index.html', 'kontakt.html', 'termine/konzert.html']);
+  assert.deepEqual(pages, ['en/index.html', 'en/nur-englisch.html', 'geheim.html', 'index.html', 'kontakt.html', 'termine/konzert.html'], 'shared posts are published once, in German');
   const home = out['en/index.html'];
   assert.match(home, /<html lang="en">/, 'settings.lang is the language');
   assert.match(home, /<title>Home \| Salon<\/title>/, 'site settings come from German unless English has them');
@@ -111,7 +111,7 @@ test('each language is built: the default at the root, the others below their co
   assert.match(home, /<nav><a href="index.html">Home<\/a><\/nav>/, 'the English main menu replaces the German one');
   assert.match(home, /<section><p>By ferry<\/p><\/section><section><p>Geöffnet<\/p><\/section>/, 'a pattern in English, else in German');
   assert.match(home, /<form>Senden<\/form>/, 'a form not translated comes from German');
-  assert.match(home, /<a href="kontakt.html">Contact<\/a> <img src="..\/assets\/img\/a.jpg" alt="Ferry">/, 'links stay relative to the language, media lead to the root');
+  assert.match(home, /<a href="..\/kontakt.html">Contact<\/a> <img src="..\/assets\/img\/a.jpg" alt="Ferry">/, 'a page English lacks is the German one, media lead to the root');
   assert.match(home, /<ul><li>Konzert<\/li><\/ul>/, 'without own posts the German ones');
   assert.equal(out['index.html'], GOLDEN['index.html'], 'the default language is built as before');
 });
@@ -139,6 +139,29 @@ test('without languages, ctx.lang is the site setting and there is nothing to sw
   assert.equal(createContext({ site: {}, theme, content: { ...content, settings: {} } }).lang, 'de');
 });
 
+test('links to pages a language lacks lead to the default language\'s page', async () => {
+  const linking = {
+    ...theme,
+    renderPage: (page, ctx) => html`<nav>${['main', 'footer'].flatMap((m) => ctx.menu(m).items).map((i) => html`<a href="${i.url}">${i.label}</a>`)}</nav>
+      ${ctx.blocks(page.sections)}<footer>${ctx.settings.footer.links.map((l) => html`<a href="${l.url}">${l.label}</a>`)}</footer>
+      <p>${ctx.posts().map((p) => html`<a href="${ctx.postUrl(p)}">${p.title}</a>`)}</p>`,
+  };
+  const out = await built(site, {
+    ...english,
+    'content/pages/impressum.json': json({ title: 'Impressum', status: 'published', sections: [] }),
+    'content/settings/site.json': json({ title: 'Salon', footer: { text: 'Am Fluss', links: [{ label: 'Impressum', url: 'impressum.html#anbieter' }] } }),
+    'content/en/pages/index.json': json({ title: 'Home', status: 'published', sections: [
+      { type: 'text', body: '[Contact](kontakt.html?von=en) [Only English](nur-englisch.html) [Top](#top) [Home](./) [Nowhere](fehlt.html) [Web](https://x.test/impressum.html)' },
+    ] }),
+  }, linking);
+  const home = out['en/index.html'];
+  assert.match(home, /<nav><a href="index.html">Home<\/a><a href="..\/impressum.html">Impressum<\/a><\/nav>/, 'English main menu; the German footer menu leads to German pages');
+  assert.match(home, /<a href="..\/kontakt.html\?von=en">Contact<\/a> <a href="nur-englisch.html">Only English<\/a> <a href="#top">Top<\/a> <a href=".\/">Home<\/a> <a href="fehlt.html">Nowhere<\/a> <a href="https:\/\/x.test\/impressum.html">Web<\/a>/);
+  assert.match(home, /<footer><a href="..\/impressum.html#anbieter">Impressum<\/a><\/footer>/, 'inherited settings too');
+  assert.match(home, /<p><a href="..\/termine\/konzert.html">Konzert<\/a><\/p>/, 'shared posts link to their German page');
+  assert.match(out['impressum.html'], /<a href="impressum.html#anbieter">/, 'the default language is left as it is');
+});
+
 test('a site below a base path keeps its languages below it', async () => {
   const out = await built({ ...site, base: 'salon' }, english, switching);
   assert.ok(out['salon/en/index.html'] && out['salon/index.html']);
@@ -156,7 +179,8 @@ test('the editor stores in a language\'s settings only what differs from the def
   delete shown.tagline;
   const next = differences(shown, base, saved);
   assert.deepEqual(next, { footer: { text: 'By the river', links: [{ label: 'Imprint' }] }, tagline: null }, 'a changed list is kept whole; a removed text is null');
-  assert.deepEqual(deepMerge(base, next), { ...shown, tagline: null });
+  assert.deepEqual(deepMerge(base, next), shown, 'null removes the value');
+  assert.deepEqual(deepMerge(base, JSON.parse('{"__proto__": {"x": 1}, "constructor": 2}')), base, 'no keys that reach the prototype');
   // Menus are replaced per location.
   assert.deepEqual(differences({ main: { items: [1] }, footer: { items: [2] } }, { main: { items: [9] }, footer: { items: [2] } }, null, 1), { main: { items: [1] } });
 });
@@ -168,13 +192,15 @@ test('the sitemap lists every language and names the versions of a page', async 
   assert.match(map, /<url><loc>https:\/\/salon.example\/<\/loc><xhtml:link rel="alternate" hreflang="de" href="https:\/\/salon.example\/"\/><xhtml:link rel="alternate" hreflang="en" href="https:\/\/salon.example\/en\/"\/><\/url>/);
   assert.match(map, /<url><loc>https:\/\/salon.example\/kontakt.html<\/loc><\/url>/, 'a page in one language has no alternates');
   assert.match(map, /<url><loc>https:\/\/salon.example\/en\/nur-englisch.html<\/loc><\/url>/);
-  assert.match(map, /<loc>https:\/\/salon.example\/en\/termine\/konzert.html<\/loc><xhtml:link rel="alternate" hreflang="de"/);
+  assert.match(map, /<url><loc>https:\/\/salon.example\/termine\/konzert.html<\/loc><\/url>/, 'a shared post is German only');
+  assert.doesNotMatch(map, /en\/termine/);
   assert.equal(out['robots.txt'], GOLDEN['robots.txt']);
 });
 
 test('languages must be language codes', async () => {
   await assert.rejects(built({ languages: 'de' }, defaultContent), /languages must list/);
   await assert.rejects(built({ languages: ['de', '../x'] }, defaultContent), /languages must list/);
+  await assert.rejects(built({ languages: ['de', 'en', 'EN'] }, defaultContent), /languages must list/, 'codes differing only in case are one language');
   await assert.rejects(built({ languages: ['de', 'en'] }, defaultContent, { ...theme, postType: { ...theme.postType, name: 'en' } }), /post type/);
 });
 
@@ -229,6 +255,8 @@ test('the gateway treats content/<lang>/ like the default language\'s content', 
   assert.equal(sent.status, 201);
   const { data } = await call('/submissions', { token: tokens.admin });
   assert.deepEqual(data.forms.map((f) => [f.slug, f.title, f.submissions.length]), [['b', 'T', 0], ['feedback', 'Feedback', 1]]);
+  const page = await gateway(new Request('https://site.test/api/werft/forms/feedback', { method: 'POST', headers: { referer: 'https://site.test/en/kontakt.html' }, body: new URLSearchParams({ text: 'Again' }) }));
+  assert.match(await page.text(), /<html lang="en">.*<main lang="de"><p>Vielen Dank/s, 'the thank-you page takes the form page\'s language, its German text is marked');
 
   // A scheduled English page asks for a rebuild once it is due.
   await create('admin', 'content/en/pages/later.json', { title: 'Later', status: 'published', publish_date: '2026-06-01T06:00:00Z' });

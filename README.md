@@ -389,7 +389,8 @@ the local checkout. Without `WERFT_SECRET`, sessions end when the server stops.
 ### Languages
 
 A site in several languages names them in `werft.config.js`, the default first:
-`languages: ['de', 'en']`. Without the option a site builds as before. The default language's
+`languages: ['de', 'en']` (codes that differ only in case are refused). Without the option a site
+builds as before. The default language's
 content stays where it is; each other language has its own in `content/<lang>/`, laid out the same
 way:
 
@@ -397,14 +398,17 @@ way:
 |---|---|
 | `pages/<slug>.json` | The page in English. A translation has the slug of its original; that is how the two are found. A page may exist in one language only. |
 | `patterns/`, `forms/` | Translated patterns and forms; one that is missing comes from the default language (same slug). |
-| `<post type>/` | The language's own posts; without any, the language shows the default language's posts. |
+| `<post type>/` | The language's own posts. Without any, the language lists the default language's posts; their pages are published once, in the default language, and `ctx.postUrl()` on the language's pages leads there. |
 | `settings/site.json` | Only what differs: laid over the default settings key by key (lists are replaced as a whole, `null` removes a value), so the phone number and the like are kept once. `lang` is the language's code unless the file sets it. |
 | `settings/menus.json` | Replaces the default menu of each location it has. |
 
 Redirects (`content/settings/redirects.json`) and media are shared. The default language is built at
 the site's root as before; the others below their code (`en/index.html`, `en/<slug>.html`, posts at
 `en/<postType.url>`). Inside a language, links in the content (`kontakt.html`, `#anfrage`) lead to
-pages of the same language; Markdown images from the media folders are made relative to the page.
+pages of the same language. A link to a page the language does not have (`impressum.html`,
+`index.html` or `./`, with `?…` or `#…`), for example from a menu or settings it takes from the
+default language, leads to the default language's page instead (`../impressum.html`), on the site
+and in the editor's preview. Markdown images from the media folders are made relative to the page.
 `sitemap.xml` lists every language and names the versions of an entry with
 `<xhtml:link rel="alternate" hreflang="…">`. The theme writes the `lang` attribute, its assets and a
 language switch with `ctx.lang`, `ctx.url()` and `ctx.translations` (see [Install](#install)):
@@ -420,9 +424,12 @@ nicht übersetzt"; "Übersetzen" copies it, as a draft with the same slug, for t
 Site settings and menus are edited complete and saved with only what differs from the default
 language. A pattern or form that is not translated shows the default language's until it is
 changed, which saves it in the language being edited. A language without posts of its own lists
-and edits the default language's posts. The gateway checks `content/<lang>/…` like the
-same path of the default language (roles and kinds), and a translated form's submissions go with its
-original's.
+and edits the default language's posts (the sidebar says so); "Eigene … beginnen" creates its first
+own post, after which that language shows only its own. The gateway checks `content/<lang>/…` like
+the same path of the default language (roles and kinds), and a translated form's submissions go with
+its original's. The gateway's thank-you page is German (it takes the `lang` of the page the form was
+on and marks its text `lang="de"`); for one in the visitor's language, send `_redirect` to a page
+of that language.
 
 ### Scheduling
 

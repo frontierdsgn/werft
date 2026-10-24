@@ -83,7 +83,12 @@ export function submissions({ storage, branch, site, now, turnstileSecret, fetch
     const referer = (() => { try { return new URL(request.headers.get('referer')); } catch { return null; } })();
     if (status < 300 && redirect) return new Response(null, { status: 303, headers: { location: new URL(redirect, referer ?? url).href } });
     const back = referer ? `<p><a href="${escapeHTML(referer.href)}">Zurück</a></p>` : '';
-    const body = `<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${escapeHTML(site.name ?? '')}</title><body style="font:17px/1.5 system-ui,sans-serif;max-width:32em;margin:15vh auto;padding:0 16px"><p>${escapeHTML(message)}</p>${back}</body></html>`;
+    // The page takes the language of the page the form was on (a folder named after one of the
+    // site's languages); its text is German and marked so. A thank-you page in the visitor's
+    // language comes through _redirect.
+    const languages = site.languages ?? [];
+    const lang = languages.slice(1).find((l) => referer?.pathname.split('/').includes(l)) ?? languages[0] ?? 'de';
+    const body = `<!doctype html><html lang="${escapeHTML(lang)}"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${escapeHTML(site.name ?? '')}</title><body style="font:17px/1.5 system-ui,sans-serif;max-width:32em;margin:15vh auto;padding:0 16px"><main lang="de"><p>${escapeHTML(message)}</p>${back}</main></body></html>`;
     return new Response(body, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
 
