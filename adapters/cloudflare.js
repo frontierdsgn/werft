@@ -38,8 +38,8 @@ import { mailFromEnv } from '../gateway/mail.js';
 
 export function pagesFunction({ site, theme, fetch: request = (...args) => fetch(...args) }) {
   let gateway;
-  // The commit this isolate last started the deploy workflow for: a gate that fails is not started
-  // again for the same commit every quarter hour.
+  // What this isolate last started the deploy workflow for (the commit and the entries due): a gate
+  // that fails is not started again for them every quarter hour; another entry falling due is.
   let dispatched = null;
   const create = (env) => {
     const [owner, repo] = String(env.WERFT_REPO ?? '').split('/');
@@ -75,11 +75,12 @@ export function pagesFunction({ site, theme, fetch: request = (...args) => fetch
         const response = await env.ASSETS.fetch(new URL(`${base}_werft/build.json`, url));
         return response.ok ? (await response.json()).built_at : null;
       },
-      onTick: async ({ head }) => {
+      onTick: async ({ head, due }) => {
         if (env.WERFT_DEPLOY_WORKFLOW) {
-          if (dispatched === head) return true;
+          const key = JSON.stringify([head, due]);
+          if (dispatched === key) return true;
           await storage.dispatch(env.WERFT_DEPLOY_WORKFLOW, env.WERFT_BRANCH || 'main');
-          dispatched = head;
+          dispatched = key;
           return true;
         }
         if (!env.WERFT_DEPLOY_HOOK) return false;

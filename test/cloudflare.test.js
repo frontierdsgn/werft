@@ -117,13 +117,25 @@ test('says why the deploy workflow cannot be started', async () => {
       assert.deepEqual(hub.dispatches, []);
     }
     const { call, hub } = await setup({ WERFT_DEPLOY_WORKFLOW: 'gate.yml', WERFT_TICK_KEY: 'k'.repeat(32) });
-    assert.equal((await (await call(`/api/werft/tick?key=${'k'.repeat(32)}`)).json()).rebuilt, true, 'a token with the permission starts it');
+    // One commit with an entry due now and one due in half an hour.
+    hub.seed({
+      'web/.werft/users.json': hub.fileAt('main', 'web/.werft/users.json'),
+      'web/content/events/due.json': hub.fileAt('main', 'web/content/events/due.json'),
+      'web/content/events/later.json': JSON.stringify({ title: 'Later', status: 'published', publish_date: new Date(Date.now() + 30 * 60 * 1000).toISOString() }),
+    });
+    const tickAt = async (minutes) => {
+      const realNow = Date.now;
+      Date.now = () => realNow() + minutes * 60 * 1000;
+      try { return await (await call(`/api/werft/tick?key=${'k'.repeat(32)}`)).json(); } finally { Date.now = realNow; }
+    };
+    assert.equal((await tickAt(0)).rebuilt, true, 'a token with the permission starts it');
     assert.deepEqual(hub.dispatches, [{ workflow: 'gate.yml', ref: 'main' }]);
-    // Its gate fails, so the entry stays due: the same commit is not started again.
-    const realNow = Date.now;
-    Date.now = () => realNow() + 20 * 60 * 1000;
-    try { assert.equal((await (await call(`/api/werft/tick?key=${'k'.repeat(32)}`)).json()).rebuilt, true); } finally { Date.now = realNow; }
-    assert.equal(hub.dispatches.length, 1, 'one start per commit');
+    // Its gate fails, so the entry stays due: the same commit is not started again for it.
+    assert.equal((await tickAt(20)).rebuilt, true);
+    assert.equal(hub.dispatches.length, 1, 'one start per commit and due entries');
+    // Another entry falls due on the same commit: that starts it again.
+    assert.deepEqual((await tickAt(40)).due, ['due', 'later']);
+    assert.equal(hub.dispatches.length, 2);
   } finally { console.error = error; }
 });
 

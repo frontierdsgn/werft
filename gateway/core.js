@@ -61,7 +61,7 @@ async function sha256(text) {
 export const gatewaySite = (site, theme) => ({ twoFactor: site.twoFactor, name: site.name, contentDir: site.contentDir ?? site.content ?? 'content', postType: theme.postType?.name, mediaDirs: site.mediaDirs ?? [], languages: siteLanguages(site), base: site.base, admin: site.admin });
 
 // options: { storage, secret, branch, site: { name, contentDir, postType, mediaDirs, languages? },
-//   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?(),
+//   onCommit?(commit), onTick?({ due, head }) (due: the slugs, head: the branch's commit), tickKey?, maxFiles? (per save), now?(),
 //   turnstileSecret? (forms need Cloudflare Turnstile), fetch? (for Turnstile),
 //   mail? (an e-mail driver from mail.js; without it the gateway sends no e-mail),
 //   throttleStore? (failed sign-ins shared between processes, see throttle.js),
