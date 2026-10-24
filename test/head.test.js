@@ -231,3 +231,54 @@ test('the build writes an RSS feed of the newest posts per language, and ctx.hea
     assert.equal(link(none['index.html']), undefined, why);
   }
 });
+
+test('ctx.head() writes the organization the site settings describe as JSON-LD on the home page', async () => {
+  const { fields } = await import('../lib/index.js');
+  const withOrg = { ...theme, settingsFields: [fields.organization()] };
+  const files = {
+    'content/settings/site.json': json({
+      title: 'Salon </script><b>', url: 'https://salon.example/sub/', icon: 'assets/img/icon.png', share_image: 'assets/img/teilen.jpg',
+      organization: { type: 'LocalBusiness', street: 'Am Fluss 1', postal_code: '12345', city: 'Ort', country: 'DE', phone: '0123 456', email: '', hours: [
+        { from: 'Di', to: 'Fr', opens: '9:00', closes: '18.00' }, { from: 'Sa', opens: '9.30', closes: '24:00' }, { from: 'So', to: '', opens: '', closes: '' },
+        { from: 'Mo', opens: 'mittags', closes: '24:30' }, { from: 'constructor', opens: '09:00', closes: '10:00' }, null,
+      ] },
+    }),
+    'content/en/settings/site.json': json({ organization: { city: 'Town', hours: [{ from: 'Fr', to: 'Mo', opens: '10:00', closes: '22:00' }] } }),
+    'content/pages/index.json': json({ title: 'Start' }),
+    'content/en/pages/index.json': json({ title: 'Home' }),
+    'content/pages/kontakt.json': json({ title: 'Kontakt' }),
+  };
+  const jsonLd = (text) => JSON.parse(text.match(/<script type="application\/ld\+json">(.*?)<\/script>/)?.[1] ?? 'null');
+  const out = await built({ languages: ['de', 'en'] }, files, withOrg);
+  assert.doesNotMatch(out['index.html'].match(/ld\+json">(.*?)<\/script>/)[1], /<\//, 'no text ends the script early');
+  assert.deepEqual(jsonLd(out['index.html']), {
+    '@context': 'https://schema.org', '@type': 'LocalBusiness', '@id': 'https://salon.example/sub/#organization', name: 'Salon </script><b>',
+    url: 'https://salon.example/sub/', logo: 'https://salon.example/sub/assets/img/icon.png', image: 'https://salon.example/sub/assets/img/teilen.jpg', telephone: '0123 456',
+    address: { '@type': 'PostalAddress', streetAddress: 'Am Fluss 1', postalCode: '12345', addressLocality: 'Ort', addressCountry: 'DE' },
+    openingHoursSpecification: [
+      { '@type': 'OpeningHoursSpecification', dayOfWeek: ['Tuesday', 'Wednesday', 'Thursday', 'Friday'], opens: '09:00', closes: '18:00' },
+      { '@type': 'OpeningHoursSpecification', dayOfWeek: ['Saturday'], opens: '09:30', closes: '23:59' },
+    ],
+  });
+  // A language's own values are laid over the default ones; its address is its home page.
+  const english = jsonLd(out['en/index.html']);
+  assert.deepEqual([english['@id'], english.url, english.address.addressLocality, english.openingHoursSpecification], ['https://salon.example/sub/#organization', 'https://salon.example/sub/en/', 'Town',
+    [{ '@type': 'OpeningHoursSpecification', dayOfWeek: ['Friday', 'Saturday', 'Sunday', 'Monday'], opens: '10:00', closes: '22:00' }]]);
+  assert.equal(jsonLd(out['kontakt.html']), null, 'only on the home page');
+  // Without the field in the theme the settings are not read; a group with only its defaults, or
+  // hours that are not a list, writes nothing.
+  assert.equal(jsonLd((await built({}, files))['index.html']), null);
+  for (const organization of [{ type: 'LocalBusiness', country: 'DE', hours: [] }, [], { hours: {} }, { hours: 'x' }]) {
+    const quiet = await built({}, { ...files, 'content/settings/site.json': json({ title: 'Salon', organization }) }, withOrg);
+    assert.equal(jsonLd(quiet['index.html']), null, JSON.stringify(organization));
+  }
+  // A theme's own types; an organization without an address.
+  const salon = { ...theme, settingsFields: [fields.organization({ types: [{ label: 'Friseursalon', value: 'HairSalon' }, { label: 'Verein', value: 'Organization' }] })] };
+  const typed = await built({}, { ...files, 'content/settings/site.json': json({ title: 'Salon', organization: { type: 'Organization', phone: '1' } }) }, salon);
+  assert.deepEqual(jsonLd(typed['index.html']), { '@context': 'https://schema.org', '@type': 'Organization', name: 'Salon', telephone: '1' });
+  const unknown = await built({}, { ...files, 'content/settings/site.json': json({ title: 'Salon', organization: { type: 'Bakery', phone: '1' } }) }, salon);
+  assert.equal(jsonLd(unknown['index.html'])['@type'], 'HairSalon', 'a type the theme does not offer becomes its first');
+  const named = { ...theme, settingsFields: [fields.organization({ types: ['Dentist', 'Organization'] })] };
+  assert.equal(jsonLd((await built({}, { ...files, 'content/settings/site.json': json({ title: 'Praxis', organization: { type: 'Dentist', phone: '1' } }) }, named))['index.html'])['@type'], 'Dentist', 'types as plain names');
+  assert.deepEqual(fields.organization({ types: [] }).fields[0].options.map((o) => o.value), ['LocalBusiness', 'Organization'], 'no types: the default kinds');
+});
