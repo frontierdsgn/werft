@@ -62,6 +62,7 @@ export function pagesFunction({ site, theme, fetch: request = (...args) => fetch
       // three for a new token, 30 stay below the free plan's 50 per invocation.
       maxFiles: 30,
       site: gatewaySite(site, theme),
+      render: { site, theme },
       // The build the Pages project is serving right now.
       lastBuild: async (url) => {
         const response = await env.ASSETS.fetch(new URL(`${base}_werft/build.json`, url));

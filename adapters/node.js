@@ -96,6 +96,7 @@ export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret
     turnstileSecret: process.env.TURNSTILE_SECRET_KEY || undefined,
     mail: mailFromEnv(process.env, { fallback: mail, log, drivers: { smtp: smtpFromEnv } }),
     site: gatewaySite(site, theme),
+    render: { site, theme },
     onCommit: (commit) => { rebuild(commit.message); },
     onTick: ({ due }) => rebuild(`scheduled: ${due.join(', ')}`),
     lastBuild,

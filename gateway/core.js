@@ -9,13 +9,16 @@
 //                                         of one's sessions
 //   /api/werft/login/oauth/access_token   renews tokens (refresh-token grant)
 //   /api/werft/password/forgot, …/reset   "Passwort vergessen?": a link by e-mail, then a new password
+//   /api/werft/previews                   preview links of a page or post: list, create, revoke
+//   /api/werft/preview/<token>            public: the page as saved, for someone without an account
 //
 // A session is an access token (12 hours, sent as "Authorization: token …") and a refresh token
 // (30 days) in an HttpOnly cookie, so scripts on the site cannot read it. Both carry the session's
 // id. Ended sessions are listed in .werft/sessions.json on the branch werft-sessions, away from the
 // site's history: a sign-out adds its id, "everywhere" (by the user or an administrator) the time
 // before which a user's sessions count as ended. Renewing a session reads the list; other requests
-// use a copy at most SESSIONS_CHECK old.
+// use a copy at most SESSIONS_CHECK old. The same file lists the preview links until they expire or
+// are revoked.
 //   /api/werft/me, /api/werft/users       current user, POST: own name and password; user
 //                                         management (administrators)
 //   /api/werft/tick                       publish scheduled entries that are due
@@ -26,6 +29,7 @@
 import { USERS_FILE, DEFAULT_ITERATIONS, base64url, hashPassword, verifyPassword, signToken, readToken, stampOf, parseUsers, serializeUsers, findUser, publicUser } from './auth.js';
 import { ROLES, denial, classify, editable, statuses } from './roles.js';
 import { submissions } from './submissions.js';
+import { previewTarget, renderPreview } from './preview.js';
 import { throttle, addressKey } from './throttle.js';
 import { loadContent, isScheduled, siteLanguages } from '../lib/content.js';
 
@@ -57,7 +61,8 @@ export const gatewaySite = (site, theme) => ({ name: site.name, contentDir: site
 //   onCommit?(commit), onTick?(), tickKey?, maxFiles? (per save), now?(),
 //   turnstileSecret? (forms need Cloudflare Turnstile), fetch? (for Turnstile),
 //   mail? (an e-mail driver from mail.js; without it the gateway sends no e-mail),
-//   throttleStore? (failed sign-ins shared between processes, see throttle.js) }
+//   throttleStore? (failed sign-ins shared between processes, see throttle.js),
+//   render? ({ site, theme }: the site's configuration and theme, for preview links) }
 // The returned handler takes the request and { address?, origin?, waitUntil? }: the client's address
 // and the admin's origin as the host knows them (never from the request's Host header), and the
 // host's way to finish work after the response (Cloudflare's waitUntil).
@@ -79,14 +84,14 @@ export function createGateway(options) {
   }
 
   // ---- Sessions ----
-  let sessionsCache = { sha: undefined, at: -Infinity, ended: {}, users: {} };
+  let sessionsCache = { sha: undefined, at: -Infinity, ended: {}, users: {}, previews: {} };
   async function loadSessions(fresh = false) {
     if (!fresh && now() - sessionsCache.at < SESSIONS_CHECK) return sessionsCache;
     const sha = await storage.head(SESSIONS_BRANCH).then((h) => h.sha, (e) => { if (e.status === 404) return null; throw e; });
     if (sha === sessionsCache.sha) return Object.assign(sessionsCache, { at: now() });
     const bytes = sha && await storage.read(sha, SESSIONS_FILE);
     const data = bytes ? JSON.parse(decoder.decode(bytes)) : {};
-    sessionsCache = { sha, at: now(), ended: data.ended ?? {}, users: data.users ?? {} };
+    sessionsCache = { sha, at: now(), ended: data.ended ?? {}, users: data.users ?? {}, previews: data.previews ?? {} };
     return sessionsCache;
   }
 
@@ -94,11 +99,12 @@ export function createGateway(options) {
   // tokens that have expired anyway are dropped.
   async function endSessions(user, change, message) {
     for (let attempt = 1; ; attempt++) {
-      const { sha, ended, users } = await loadSessions(true);
+      const { sha, ended, users, previews } = await loadSessions(true);
       const t = now();
       const next = {
         ended: Object.fromEntries(Object.entries(ended).filter(([, exp]) => exp * 1000 > t)),
         users: Object.fromEntries(Object.entries(users).filter(([, at]) => at > t - REFRESH_TTL * 1000)),
+        previews: Object.fromEntries(Object.entries(previews).filter(([, link]) => link.exp * 1000 > t)),
       };
       change(next);
       try {
@@ -443,6 +449,78 @@ export function createGateway(options) {
     return json({ ...tokens, user: publicUser(updated) }, 200, headers);
   }
 
+  // ---- Preview links ----
+  // A link to one page or post as saved, for people without an account: signed, expiring after 1
+  // to 30 days, and listed in the sessions file until it expires or is revoked; a view checks the
+  // list as it is now. Whoever may change the entry may share and revoke its links.
+  const PREVIEW_DAYS = [1, 7, 30];
+  const previewURL = async (id, link) => `${PREFIX}/preview/${await signToken(secret, { typ: 'preview', id, path: link.path, exp: link.exp })}`;
+
+  async function mayChange(user, path) {
+    if (!previewTarget(path, site)) return 'Vorschau-Links gibt es für Seiten und Beiträge.';
+    const head = await storage.head(branch);
+    const bytes = await storage.read(head.sha, path);
+    if (!bytes) return 'Diesen Eintrag gibt es nicht (mehr). Bitte erst speichern.';
+    const text = decoder.decode(bytes);
+    const ownPostsOnly = ['author', 'contributor'].includes(user.role);
+    const creator = ownPostsOnly ? await storage.creator(branch, path) : null;
+    return denial(user, { operation: 'update', path, text, creator }, site);
+  }
+
+  async function previewsApi(request, url, user) {
+    const body = request.method === 'POST' ? (await request.json()) ?? {} : {};
+    const path = String(body.path ?? url.searchParams.get('path') ?? '').replace(/^\/+/, '');
+    if (!options.render) return error(501, 'Diese Website zeigt keine Vorschau-Links.');
+    const reason = await mayChange(user, path);
+    if (reason) return error(403, reason);
+    const list = async () => Promise.all(Object.entries((await loadSessions(true)).previews)
+      .filter(([, link]) => link.path === path && link.exp * 1000 > now())
+      .map(async ([id, link]) => ({ id, url: await previewURL(id, link), expires_at: new Date(link.exp * 1000).toISOString(), by: link.by })));
+    if (request.method !== 'POST') return json({ previews: await list() });
+    if (body.revoke !== undefined) {
+      const id = String(body.revoke);
+      if ((await loadSessions(true)).previews[id]?.path !== path) return error(404, 'Diesen Link gibt es nicht (mehr).');
+      await endSessions(user, (next) => { delete next.previews[id]; }, `Vorschau-Link widerrufen: ${path}`);
+    } else {
+      const days = PREVIEW_DAYS.includes(Number(body.days)) ? Number(body.days) : 7;
+      const id = base64url.encode(crypto.getRandomValues(new Uint8Array(12)));
+      const link = { path, exp: Math.floor(now() / 1000) + days * 24 * 3600, by: user.email };
+      await endSessions(user, (next) => { next.previews[id] = link; }, `Vorschau-Link: ${path}`);
+    }
+    return json({ previews: await list() });
+  }
+
+  // The page for a preview link; anything that does not work, the same "no longer valid" page.
+  async function showPreview(encoded) {
+    const gone = () => new Response('<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Vorschau</title><body style="font:17px/1.5 system-ui,sans-serif;max-width:32em;margin:15vh auto;padding:0 16px"><p lang="de">Dieser Vorschau-Link gilt nicht mehr.</p>', { status: 410, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex' } });
+    let html;
+    try {
+      const payload = await readToken(secret, decodeURIComponent(encoded), now()).catch(() => null);
+      const link = payload?.typ === 'preview' && (await loadSessions(true)).previews[payload.id];
+      const target = link && link.path === payload.path && link.exp * 1000 > now() && options.render && previewTarget(link.path, site);
+      if (!target) return gone();
+      const head = await storage.head(branch);
+      const tree = await treeAt(head.sha);
+      const files = tree.filter((f) => f.path.startsWith(`${site.contentDir}/`));
+      // Which media exist, for ctx.exists() (no sizes: like the editor's preview).
+      const media = Object.fromEntries(tree.filter((f) => (site.mediaDirs ?? []).some((d) => f.path.startsWith(`${d}/`))).map((f) => [f.path, {}]));
+      html = await renderPreview({
+        site: options.render.site, theme: options.render.theme, target, files, media, now: new Date(now()),
+        read: async (paths) => (await readMany(head.sha, paths)).map((b) => b && decoder.decode(b)),
+      });
+    } catch (e) {
+      console.error('werft gateway: preview:', e);
+      // The repository could not be read: try again later; anything else (a theme that fails): gone.
+      if (e.github || e.status >= 500) return new Response('<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Vorschau</title><body style="font:17px/1.5 system-ui,sans-serif;max-width:32em;margin:15vh auto;padding:0 16px"><p lang="de">Die Vorschau ist gerade nicht erreichbar. Bitte in ein paar Minuten noch einmal versuchen.</p>', { status: 503, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex', 'retry-after': '60' } });
+      return gone();
+    }
+    if (html == null) return gone();
+    // The page runs in a sandbox with an origin of its own: whatever the entry's markup contains
+    // cannot act on the admin's origin (its refresh cookie, its API). No referrer, so the token does
+    // not travel to the hosts of the page's images or fonts.
+    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex', 'referrer-policy': 'no-referrer', 'content-security-policy': 'sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms' } });
+  }
+
   async function usersApi(request, user) {
     if (user.role !== 'administrator') return error(403, 'Nur Administratoren verwalten Benutzer.');
     const { users, sha: parent } = await loadUsers();
@@ -524,6 +602,7 @@ export function createGateway(options) {
       if (path === '/login/oauth/access_token' && request.method === 'POST') return await accessToken(request);
       if (path === '/session' && request.method === 'POST') return await session(request, (await request.json()) ?? {}, address);
       if (path === '/session' && request.method === 'DELETE') return await signOut(request);
+      if (path.startsWith('/preview/') && request.method === 'GET') return await showPreview(path.slice(9));
       if (path === '/password/forgot' && request.method === 'POST') return await forgotPassword((await request.json()) ?? {}, { address, origin, waitUntil });
       if (path === '/password/reset' && request.method === 'POST') return await resetPassword(request, (await request.json()) ?? {});
       if (path === '/tick' && options.tickKey && url.searchParams.get('key')
@@ -536,6 +615,7 @@ export function createGateway(options) {
       if (path === '/me' && request.method === 'POST') return await account(request, user);
       if (path === '/me') return json({ ...publicUser(user), editable: editable(user.role), statuses: statuses(user.role), roles: ROLES });
       if (path === '/users') return await usersApi(request, user);
+      if (path === '/previews') return await previewsApi(request, url, user);
       if (path === '/submissions') return await forms.api(request, user);
       if (path.startsWith('/api/v1/')) return await gitea(request, url, user, path.slice(7));
       return error(404, 'Not found');
