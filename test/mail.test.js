@@ -11,10 +11,10 @@ import { fakeGitHub } from './fake-github.js';
 test('hands the driver a checked message', async () => {
   const mail = memoryMail({ from: 'site@example.org' });
   assert.deepEqual(await mail.send({ to: 'a@example.org', subject: ' Neue Einsendung ', text: 'Zeile 1\r\nZeile 2', replyTo: 'v@example.org', fromName: 'Die "Werft"' }), { id: 'memory-1' });
-  await mail.send({ to: ['a@example.org', ' b@example.org', 'a@example.org'], subject: '', text: 'x' });
+  await mail.send({ to: ['a@example.org', ' b@example.org', 'A@Example.org'], subject: '', text: 'x', replyTo: '', fromName: 'x\\' });
   assert.deepEqual(mail.sent, [
     { from: { email: 'site@example.org', name: 'Die Werft' }, to: ['a@example.org'], replyTo: 'v@example.org', subject: 'Neue Einsendung', text: 'Zeile 1\nZeile 2' },
-    { from: { email: 'site@example.org' }, to: ['a@example.org', 'b@example.org'], subject: '(ohne Betreff)', text: 'x' },
+    { from: { email: 'site@example.org', name: 'x' }, to: ['a@example.org', 'b@example.org'], subject: '(ohne Betreff)', text: 'x' },
   ]);
 });
 
@@ -25,6 +25,7 @@ test('refuses a message that could add headers or reaches no one', async () => {
   await refused({ fromName: 'A\nBcc: x@example.org' }, /one line/);
   await refused({ to: 'a@example.org\r\nBcc: x@example.org' }, /not an e-mail address/);
   await refused({ to: 'Name <a@example.org>' }, /not an e-mail address/);
+  for (const to of ['a\0b@example.org', 'a@example', 'a@example..org', '"a"@example.org']) await refused({ to }, /not an e-mail address/);
   await refused({ replyTo: 'v@example.org\nBcc: x@example.org' }, /reply-to/);
   await refused({ to: [] }, /no recipient/);
   await refused({ to: Array.from({ length: 21 }, (_, i) => `a${i}@example.org`) }, /at most 20/);

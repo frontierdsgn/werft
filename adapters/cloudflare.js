@@ -45,7 +45,7 @@ export function pagesFunction({ site, theme, fetch: request = (...args) => fetch
       branch: env.WERFT_BRANCH || 'main',
       tickKey: env.WERFT_TICK_KEY || undefined,
       turnstileSecret: env.TURNSTILE_SECRET_KEY || undefined,
-      mail: mailFromEnv(env),
+      mail: mailFromEnv(env, { fetch: request }),
       fetch: request,
       // Each binary file is one GitHub request; with the gateway's own requests and the GitHub App's
       // three for a new token, 30 stay below the free plan's 50 per invocation.

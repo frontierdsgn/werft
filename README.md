@@ -459,12 +459,12 @@ Dates are entered in the editor's time zone and stored in UTC.
 
 The gateway sends e-mail through a driver ([mail.js](gateway/mail.js)) that the environment
 names: `WERFT_MAIL` is the driver, `WERFT_MAIL_FROM` the sender address (Pages environment
-variables, or the environment of `werft serve`). Without `WERFT_MAIL` it sends nothing, and
-`/api/werft/status` reports `"mail": false`.
+variables, or the environment of `werft serve` and `werft dev`). Without `WERFT_MAIL` it sends
+nothing, and `/api/werft/status` reports `"mail": false`; `werft dev` then uses `log`.
 
 | `WERFT_MAIL` | Sends |
 |---|---|
-| `log` | nothing: prints each e-mail to the log (the default of `werft dev`) |
+| `log` | nothing: prints each e-mail to the log, links for a new password too, so it is for development and trying out |
 
 A driver delivering through a mail provider is not built yet: which providers werft supports is
 an open question ([#36](https://github.com/frontierdsgn/werft/issues/36)). Every driver gets the
