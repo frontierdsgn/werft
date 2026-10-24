@@ -673,8 +673,8 @@ password and signs in:
 - The answer is the same whether the address has an account or not ("Wenn es zu dieser Adresse ein
   Konto gibt, …"), and the e-mail goes out after it, so neither the text nor the timing shows which
   addresses exist. Requests count like [sign-ins](#sign-in): 3 per address entered and 20 per
-  client address, then a wait; for the address entered it starts at 15 minutes and grows to an
-  hour, so one address gets about 25 such e-mails a day (on Cloudflare without `WERFT_KV`, per
+  client address, then a wait; for the address entered it starts at 15 minutes, grows to an hour
+  and is forgotten only after a day, so one address gets about 25 such e-mails a day (on Cloudflare without `WERFT_KV`, per
   isolate). That bounds what a stranger can make the site send, and the mail provider's quota.
 - The link is signed with `WERFT_SECRET`, lasts an hour and is tied to the password, so it stops
   working once a password was set with it or in another way. Its token sits after `#`, so it does

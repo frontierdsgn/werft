@@ -112,7 +112,8 @@ export async function serve({ dir = '.', port = 8787, host = '127.0.0.1', secret
       if (url.pathname.startsWith('/api/werft')) {
         // Links in e-mails lead to the listening address on werft dev; otherwise (werft serve, behind
         // a proxy) to the site setting url, never to a Host header someone sent.
-        const local = dev && `http://${host.includes(':') ? `[${host}]` : host}:${server.address().port}`;
+        const own = ['0.0.0.0', '::'].includes(host) ? 'localhost' : host;
+        const local = dev && `http://${own.includes(':') ? `[${own}]` : own}:${server.address().port}`;
         const response = await gateway(await toRequest(req, origin), { address: req.socket.remoteAddress, origin: local || undefined });
         return send(res, response ?? new Response('Not found', { status: 404 }));
       }

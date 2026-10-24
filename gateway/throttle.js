@@ -12,6 +12,8 @@
 const FREE = { account: 5, device: 5, address: 20, session: 5, reset: 3 };
 const MAX_WAIT = 15 * 60 * 1000;
 const FORGET = 60 * 60 * 1000;
+// Requests for new-password e-mails are forgotten after a day, so the hour-long wait holds.
+const KEEP = { reset: 24 * 60 * 60 * 1000 };
 const MAX_KEYS = 10000;
 
 const encoder = new TextEncoder();
@@ -43,7 +45,7 @@ export function addressKey(address) {
 export function throttle({ secret, now, store, maxKeys = MAX_KEYS }) {
   const local = new Map();
   const hashed = async (key) => hex(await crypto.subtle.digest('SHA-256', encoder.encode(`${secret}\n${key}`))).slice(0, 32);
-  const fresh = (record, t) => (record && (t - record.last < FORGET || record.until > t) ? record : null);
+  const fresh = (record, t) => (record && (t - record.last < (record.keep ?? FORGET) || record.until > t) ? record : null);
   const newer = (a, b) => ((a?.last ?? 0) >= (b?.last ?? 0) ? a : b);
   let warned = false;
   const shared = async (operation, ...args) => {
@@ -84,7 +86,7 @@ export function throttle({ secret, now, store, maxKeys = MAX_KEYS }) {
     if (wait > 0) return { wait };
     const next = records.map((r, i) => {
       const count = (r?.count ?? 0) + 1;
-      return { count, last: t, until: t + waitAfter(keys[i][0], count) };
+      return { count, last: t, until: t + waitAfter(keys[i][0], count), ...(KEEP[keys[i][0]] && { keep: KEEP[keys[i][0]] }) };
     });
     ids.forEach((id, i) => { local.delete(id); local.set(id, next[i]); });
     evict(t, ids);
@@ -102,7 +104,7 @@ export function throttle({ secret, now, store, maxKeys = MAX_KEYS }) {
       // Writes the newest count of this process, which parallel attempts may have raised.
       failed: () => Promise.all(ids.map((id, i) => {
         const record = local.get(id) ?? next[i];
-        return shared('put', id, record, Math.ceil((record.until - now() + FORGET) / 1000));
+        return shared('put', id, record, Math.ceil((record.until - now() + (record.keep ?? FORGET)) / 1000));
       })),
       succeeded: () => {
         // The address keeps its failures; the success itself does not count.

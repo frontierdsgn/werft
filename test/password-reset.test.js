@@ -67,6 +67,7 @@ test('a link works once, for an hour, and not after another password change', as
   clock.t += hour + 1000;
   assert.equal((await call('/password/reset', { token: tokenFrom(mail.sent[1]), password: 'late-password' })).status, 410, 'expired');
 
+  clock.t += 24 * hour; // the requests so far are forgotten
   await forgot('ada@example.org');
   const older = tokenFrom(mail.sent[2]);
   await forgot('ada@example.org');
@@ -81,6 +82,16 @@ test('requests are throttled per address entered, and need a mail driver', async
   for (let i = 0; i < 4; i++) statuses.push((await forgot('ada@example.org', { address: `192.0.2.${i}` })).status);
   assert.deepEqual(statuses, [200, 200, 200, 429]);
   assert.equal(mail.sent.length, 3);
+  // Someone asking each time a wait ends gets about 25 e-mails a day to one address.
+  const steady = await setup();
+  const end = steady.clock.t + 24 * hour;
+  for (let i = 0; steady.clock.t < end; i++) {
+    const { status, data } = await steady.call('/password/forgot', { email: 'ada@example.org' }, { address: `192.0.2.${i % 250}` });
+    const minutes = status === 429 ? (/in (\d+) Minuten/.exec(data.message)?.[1] ?? 1) : 0;
+    steady.clock.t += minutes * 60 * 1000 + 1000;
+  }
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(steady.mail.sent.length <= 30, `${steady.mail.sent.length} e-mails in a day`);
   const without = await setup({ mail: null });
   const refused = await without.forgot('ada@example.org');
   assert.deepEqual([refused.status, refused.data.message], [503, 'Diese Website verschickt keine E-Mails. Ein Administrator kann Ihnen ein neues Passwort geben.']);
