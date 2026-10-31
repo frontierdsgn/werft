@@ -20,7 +20,7 @@
     "update-sites": "node scripts/release.js sites"
   },
   "dependencies": {
-    "marked": "^18.1.1"
+    "marked": "^18.1.2"
   },
   "files": [
     "lib",
