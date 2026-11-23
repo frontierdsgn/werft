@@ -24,12 +24,14 @@ function manifest(): array {
   return is_file(MANIFEST) ? (include MANIFEST) : [];
 }
 
-// A path the publisher may write: relative, no "..", not this file or its manifest, no code.
+// A path the publisher may write: relative, no "..", not this file or its manifest, no code and no
+// PHP configuration: hosts running PHP as CGI (IONOS among them) read a php.ini or .user.ini in the
+// script's directory, whose auto_prepend_file would run any uploaded file as code.
 function safe_path(string $path): bool {
   if ($path === '' || strlen($path) > 1024 || strpbrk($path, "\\\0:") !== false || $path[0] === '/') return false;
   foreach (explode('/', $path) as $segment) if ($segment === '' || $segment === '.' || $segment === '..') return false;
   if (in_array($path, [basename(__FILE__), basename(MANIFEST)], true)) return false;
-  return !preg_match('/\.(php\d?|phtml|phar|pht|phps|cgi|pl|py|sh|user\.ini)$|(^|\/)\.user\.ini$/i', $path);
+  return !preg_match('/\.(php\d*|phtml?|phar|pht|phps|cgi|fcgi|pl|py|sh|shtml?|stm|ini)$/i', $path);
 }
 
 // .htaccess may only hold redirects and werft's not-found pages (werft writes both there); anything
@@ -108,8 +110,11 @@ try {
       }
       reply(200, ['deleted' => $deleted]);
     case 'done':
+      // Keeps only files this receiver wrote with that content, so the manifest never claims a file
+      // werft did not publish (which a later put or delete would then change).
+      $known = manifest();
       $files = [];
-      foreach ($request['files'] ?? [] as $path => $hash) if (safe_path((string) $path) && preg_match('/^[0-9a-f]{64}$/', (string) $hash)) $files[(string) $path] = (string) $hash;
+      foreach ($request['files'] ?? [] as $path => $hash) if (($known[(string) $path] ?? null) === $hash) $files[(string) $path] = $hash;
       write_atomic(MANIFEST, "<?php return " . var_export($files, true) . ";\n");
       reply(200, ['files' => count($files)]);
     default:
