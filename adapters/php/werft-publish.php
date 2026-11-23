@@ -26,12 +26,14 @@ function manifest(): array {
 
 // A path the publisher may write: relative, no "..", not this file or its manifest, no code and no
 // PHP configuration: hosts running PHP as CGI (IONOS among them) read a php.ini or .user.ini in the
-// script's directory, whose auto_prepend_file would run any uploaded file as code.
+// script's directory, whose auto_prepend_file would run any uploaded file as code. Apache's
+// AddHandler and AddType act on every extension of a name, so x.php.html counts as code too.
 function safe_path(string $path): bool {
   if ($path === '' || strlen($path) > 1024 || strpbrk($path, "\\\0:") !== false || $path[0] === '/') return false;
   foreach (explode('/', $path) as $segment) if ($segment === '' || $segment === '.' || $segment === '..') return false;
   if (in_array($path, [basename(__FILE__), basename(MANIFEST)], true)) return false;
-  return !preg_match('/\.(php\d*|phtml?|phar|pht|phps|cgi|fcgi|pl|py|sh|shtml?|stm|ini)$/i', $path);
+  $name = basename($path);
+  return !preg_match('/\.(php\d*|phtml?|phar|pht|phps|cgi|fcgi|shtml?|stm)(\.|$)/i', $name) && !preg_match('/\.(pl|py|sh|ini)$/i', $name);
 }
 
 // .htaccess may only hold redirects and werft's not-found pages (werft writes both there); anything

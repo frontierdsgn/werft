@@ -45,15 +45,18 @@ test('publishes changes and deletions, leaving other files alone', { skip: !hasP
   result = await publish({ outDir: out, url: URL_, secret: SECRET, exclude: ['admin'] });
   assert.deepEqual([result.changed, result.removed], [['index.html'], ['sub/old.html']]);
   assert.deepEqual([read('index.html'), read('sub/old.html'), read('sub/page.html'), read('foreign.html')], ['two', null, 'page', 'not published by werft']);
+  result = await publish({ outDir: out, url: URL_, secret: SECRET, exclude: ['admin'] });
+  assert.deepEqual([result.changed, result.removed], [[], []], 'done keeps the unchanged files in the manifest');
 });
 
 test('refuses bad signatures, paths outside the web space and code', { skip: !hasPhp && 'php not installed' }, async () => {
   assert.equal((await signed(JSON.stringify({ action: 'manifest' }), 'q'.repeat(40))).status, 401);
   const put = (p, text) => signed(JSON.stringify({ action: 'put', files: [{ path: p, content: Buffer.from(text).toString('base64') }] }));
-  for (const p of ['../escape.html', '/abs.html', 'a/../../x.html', 'shell.php', 'x.phtml', 'x.PHP85', 'x.phtm', 'x.shtml', 'x.fcgi', 'werft-publish.php', '.user.ini', 'php.ini', 'sub/PHP5.INI']) assert.equal((await put(p, 'x')).status, 422, p);
+  for (const p of ['../escape.html', '/abs.html', 'a/../../x.html', 'shell.php', 'x.phtml', 'x.PHP85', 'x.phtm', 'x.shtml', 'x.fcgi', 'x.php.html', 'x.PHP.zzz', 'x.shtml.html', 'werft-publish.php', '.user.ini', 'php.ini', 'sub/PHP5.INI']) assert.equal((await put(p, 'x')).status, 422, p);
   assert.equal((await put('.htaccess', 'AddHandler application/x-httpd-php .html\n')).status, 422);
   for (const line of ['ErrorDocument 404 https://elsewhere.example/', 'ErrorDocument 404 /x.php', 'ErrorDocument 500 /500.html', 'ErrorDocument 404 "/a.html" SetHandler', 'ErrorDocument 404 /a.php?.html', 'ErrorDocument 404 /info.php?%{file:/etc/passwd}.html', 'ErrorDocument 404 /%{.html', 'ErrorDocument 404 /fehler.html']) assert.equal((await put('.htaccess', `${line}\n`)).status, 422, line);
   assert.equal((await put('en/.htaccess', 'ErrorDocument 404 /en/404.html\n')).status, 200, 'a local not-found page is allowed');
+  assert.equal((await put('index.pl.html', 'x')).status, 200, 'a language extension before .html is no code');
   assert.equal(fs.existsSync(path.join(path.dirname(web), 'escape.html')), false);
   const deleteForeign = await signed(JSON.stringify({ action: 'delete', paths: ['foreign.html'] }));
   assert.equal((await deleteForeign.json()).deleted, 0);
