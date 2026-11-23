@@ -505,7 +505,8 @@ and pushed there:
 
 `werft publish` sends only changed files, signed with HMAC-SHA256 (requests older than 5 minutes are
 refused). The receiver only writes and deletes files it published itself, refuses PHP and other
-code files, accepts `.htaccess` only with redirect lines and a local `ErrorDocument 404 /….html`
+code files (also as an inner extension, as in `x.php.html`) and PHP configuration (`php.ini`,
+`.user.ini`, any `.ini`), accepts `.htaccess` only with redirect lines and a local `ErrorDocument 404 /….html`
 (see [Not-found page](#not-found-page)) and writes nothing through symbolic links.
 A file already in the web space with the same name and different content stops the publish:
 remove or rename it there first (identical files are taken over). The admin is not published: editors
