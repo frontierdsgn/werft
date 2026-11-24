@@ -551,7 +551,9 @@ headers: {    // sent with every file
   `<IfModule mod_rewrite.c>`, `Header always set` inside `<IfModule mod_headers.c>`, so a server
   without the module ignores them instead of failing) and into `_headers` for Cloudflare Pages
   (`https` there only adds `Strict-Transport-Security`; the redirect to https:// is Cloudflare's
-  setting, "Always Use HTTPS").
+  setting, "Always Use HTTPS"). There a `Content-Security-Policy` is left off the admin, which
+  needs its inline import map. The build's `.htaccess` and `_headers` replace files of those names
+  from the theme or `passthrough`.
   `werft serve` sends neither: set them in the proxy in front of it.
 - `headers` takes only these names: `Strict-Transport-Security` (replaces `https`' value, e.g.
   `max-age=63072000; includeSubDomains`), `X-Content-Type-Options`, `Referrer-Policy`,
@@ -569,7 +571,10 @@ headers: {    // sent with every file
   address." `Strict-Transport-Security` makes browsers use https:// for the domain for a year, even
   if the option is switched off again.
 - After the first publish, open the site: a host that does not allow `Header` or `Rewrite*` in
-  `.htaccess` answers every page with an error 500. Then switch the option off and publish again.
+  `.htaccess` answers every page with an error 500, and one that ends HTTPS in front of Apache (so
+  Apache sees every request as http://) redirects in a loop, the receiver too. Then switch the
+  option off, delete `.htaccess` in the web space with the host's file manager (the next publish
+  writes it again) and publish; use the host's own HTTPS redirect instead.
 
 #### Own server (Node 22 or newer)
 

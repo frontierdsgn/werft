@@ -35,8 +35,11 @@ test('https and security headers go into .htaccess and _headers', async () => {
   assert.equal(text('_headers'), '/*\n  Strict-Transport-Security: max-age=31536000\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n  Permissions-Policy: camera=(), microphone=()\n');
   const only = await build({ site: { headers: { 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains' } }, theme: { renderPage: () => ({ value: '' }) }, store: memoryStore({}), media: {} });
   assert.equal(only.files.find((f) => f.path === '.htaccess').text, '<IfModule mod_headers.c>\nHeader always set Strict-Transport-Security "max-age=63072000; includeSubDomains"\n</IfModule>\n', 'headers without the redirect');
+  const csp = await build({ site: { headers: { 'Content-Security-Policy': "default-src 'self'" } }, theme: { renderPage: () => ({ value: '' }) }, store: memoryStore({}), media: {} });
+  assert.equal(csp.files.find((f) => f.path === '_headers').text, "/*\n  Content-Security-Policy: default-src 'self'\n/admin/*\n  ! Content-Security-Policy\n", 'the editor keeps working on Cloudflare Pages');
   const none = await build({ site: {}, theme: { renderPage: () => ({ value: '' }) }, store: memoryStore({}), media: {} });
   assert.ok(!none.files.some((f) => ['.htaccess', '_headers'].includes(f.path)), 'nothing without the options');
+  await assert.rejects(build({ site: { https: 'false' }, theme: { renderPage: () => ({ value: '' }) }, store: memoryStore({}), media: {} }), /werft: `https` in werft\.config\.js/);
   for (const headers of [{ 'X-Powered-By': 'werft' }, { 'X-Frame-Options': 'DENY" env=x' }, { 'Content-Security-Policy': 'expr=%{REQUEST_URI}' }, { 'X-Frame-Options': 'DENY\nAddHandler php .html' }, { 'X-Frame-Options': '' }, ['X-Frame-Options']]) {
     await assert.rejects(build({ site: { headers }, theme: { renderPage: () => ({ value: '' }) }, store: memoryStore({}), media: {} }), /werft: .*werft\.config\.js/, JSON.stringify(headers));
   }
