@@ -2,7 +2,12 @@
 
 Thank you for helping. werft is the shared core of many websites, so every change has to be useful
 to any werft site, not only to the one that needed it. The rules for changes are in
-[AGENTS.md](AGENTS.md); read "Every change is general" before you start.
+[AGENTS.md](AGENTS.md); read them before you start.
+
+What differs between sites comes from the site: its content, its theme or `werft.config.js`. werft
+gains only the general mechanism. For example, a site needed a newsletter sign-up; werft did not get
+a newsletter feature but form submissions for every form in `content/forms/`, read in the editor
+under "Einsendungen".
 
 ## Before you start
 
@@ -17,7 +22,8 @@ to any werft site, not only to the one that needed it. The rules for changes are
 2. Make one change per pull request. A new contract gets a test through the public interface; a fix
    gets a test that fails without it. Update the README where behaviour or setup changes.
 3. Run the gate: `npm ci && npm test` (Node 22 or newer; the publish tests also need `php` and
-   skip without it). A single test file: `node --test test/gateway.test.js`.
+   skip without it). A single test file: `node --test test/gateway.test.js`. The tests need no
+   network or credentials: `test/fake-github.js` stands in for GitHub.
 4. Open a pull request against `main`. Its title follows
    [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), e.g.
    `fix(gateway): keep the session after a password change`; the description says what it solves,

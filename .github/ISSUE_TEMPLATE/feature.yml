@@ -13,6 +13,6 @@ body:
     id: proposal
     attributes:
       label: Proposal
-      description: How werft could solve it in a way that is useful to any werft site (see "Every change is general" in AGENTS.md).
+      description: How werft could solve it in a way that is useful to any werft site (see CONTRIBUTING.md).
     validations:
       required: false
