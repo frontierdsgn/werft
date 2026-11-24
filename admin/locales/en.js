@@ -475,6 +475,8 @@ export const fields = {
   'Leer: werfts Text dieser Sprache (Deutsch oder Englisch), sonst der Text der ersten Sprache. Gesendet wird sie nur, wenn das Formular in der ersten Sprache der Website die Bestätigung einschaltet.': 'Empty: werft’s text in this language (German or English), else the text of the first language. It is sent only if the form in the website’s first language switches the confirmation on.',
   'Leer: „Vielen Dank, Ihre Nachricht ist angekommen.“': 'Empty: “Vielen Dank, Ihre Nachricht ist angekommen.”',
   'Text nach dem Absenden': 'Text after sending',
+  'Einsendungen annehmen': 'Accept submissions',
+  'Nur einschalten, wenn das Formular auf der Website an werft sendet. Dann erscheinen die Einsendungen hier unter „Einsendungen“. Ausgeschaltet nimmt werft für dieses Formular nichts an.': 'Switch on only if the form on the website sends to werft. Its submissions then appear here under “Submissions”. Switched off, werft accepts nothing for this form.',
   'Leer: werfts Text dieser Sprache (Deutsch oder Englisch), sonst der Text der ersten Sprache': 'Empty: werft’s text in this language (German or English), else the text of the first language',
   'Bestätigung per E-Mail in dieser Sprache': 'Confirmation by email in this language',
   'E-Mail bei neuer Einsendung': 'Email for a new submission',

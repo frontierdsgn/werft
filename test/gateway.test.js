@@ -28,7 +28,7 @@ async function repoFiles() {
     'site/content/pages/index.json': '{"title":"Start","status":"published"}\n',
     'site/content/events/a.json': '{"title":"A","status":"published"}\n',
     'site/content/settings/site.json': '{"title":"Site"}\n',
-    'site/content/forms/newsletter.json': '{"title":"Newsletter"}\n',
+    'site/content/forms/newsletter.json': '{"title":"Newsletter","receive":true}\n',
     'outside.txt': 'not part of the site\n',
   };
 }
@@ -338,13 +338,13 @@ test('a change to the own account keeps a newer password and needs a valid sessi
 });
 
 test('keeps form submissions where only administrators and editors read them', async () => {
-  const send = (form, fields, headers = {}) => gateway(new Request(`${ORIGIN}/api/werft/forms/${form}`, { method: 'POST', headers: { referer: 'https://elsewhere.test/kontakt.html', ...headers }, body: new URLSearchParams(fields) }));
+  const send = (form, fields, headers = {}) => gateway(new Request(`${ORIGIN}/api/werft/forms/${form}`, { method: 'POST', headers: { referer: `${ORIGIN}/kontakt.html`, ...headers }, body: new URLSearchParams(fields) }));
   const built = commits.length;
   const sent = await send('newsletter', [['email', 'a@b.test'], ['themen', 'Konzerte'], ['themen', 'Ausstellungen'], ['_gotcha', '']]);
   assert.equal(sent.status, 201);
-  assert.match(await sent.text(), /angekommen.*href="https:\/\/elsewhere\.test\/kontakt\.html"/s, 'a thank-you page that leads back to the form');
+  assert.match(await sent.text(), /angekommen.*href="https:\/\/site\.test\/kontakt\.html"/s, 'a thank-you page that leads back to the form');
   const onward = await send('newsletter', [['email', 'c@d.test'], ['_redirect', '/danke.html']]);
-  assert.equal(onward.headers.get('location'), 'https://elsewhere.test/danke.html', 'on to the page on the site the form was on');
+  assert.equal(onward.headers.get('location'), 'https://site.test/danke.html', 'on to the page on the site the form was on');
   assert.equal((await send('newsletter', [['email', 'x@y.test'], ['_redirect', '//evil.test/']])).status, 201, 'no redirect to another host');
   assert.equal((await send('newsletter', [['email', 'bot@spam.test'], ['_gotcha', 'http://spam.test']])).status, 200, 'bots are told it worked');
   assert.equal((await send('fehlt', [['email', 'a@b.test']])).status, 404, 'only forms the site defines');

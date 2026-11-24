@@ -8,10 +8,14 @@
 //   GET  /api/werft/submissions      every form with its submissions, newest first
 //   POST /api/werft/submissions      { delete: ['<form>/<id>', …] }, one commit
 //
+// Only a form whose definition has `receive: true` takes submissions; the others (a form that posts
+// elsewhere, such as mailto:) answer 404, so nobody can fill the branch through them.
 // Fields whose name starts with "_" are not stored. A filled-in "_gotcha" (a field hidden from
 // people) marks a bot: it gets the success reply and nothing is stored. "_redirect" sends a plain
 // form post on to that path of the page's site; without it the visitor gets a short thank-you page
-// in the language of the page the form was on (see TEXTS), which "_lang" may name.
+// in the language of the page the form was on (see TEXTS), which "_lang" may name. The page's
+// site is the referer's origin only when that is the gateway's own or the site setting `url`'s;
+// otherwise the redirect goes to the site's `url` (else the gateway) and the page has no link back.
 // With a Turnstile secret, a submission needs a valid "cf-turnstile-response" (Cloudflare's widget
 // adds it to the form). Each form takes at most PER_HOUR submissions an hour.
 //
@@ -127,6 +131,23 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
   }
 
   const refererOf = (request) => { try { return new URL(request.headers.get('referer')); } catch { return null; } };
+  // The site's own address (setting `url` of the default language), null without one.
+  async function siteURL(main) {
+    try {
+      const value = parse(await storage.read(main ?? (await storage.head(branch)).sha, `${site.contentDir}/settings/site.json`))?.url;
+      return typeof value === 'string' && /^https?:\/\//.test(value) ? new URL(value) : null;
+    } catch {
+      return null;
+    }
+  }
+  // Where a plain form post goes back to: the referer when it is a page of the site (on the
+  // gateway's origin or the site's own address), never another host, which a cross-site form sets.
+  async function homeOf(request, url, main) {
+    const own = await siteURL(main);
+    const referer = refererOf(request);
+    const trusted = referer && [url.origin, own?.origin].includes(referer.origin) ? referer : null;
+    return { referer: trusted, base: trusted ?? own ?? url };
+  }
 
   // The language of the page the form was on: the field _lang if it names one of the site's
   // languages (a post from another host, such as PHP web space, carries only the origin as
@@ -167,11 +188,12 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
   }
 
   // A plain form post gets a page, a script (Accept: application/json) gets JSON. lang: the page's.
-  function reply(request, url, status, lang, { text, lang: textLang }, redirect) {
+  // home: from homeOf().
+  function reply(request, home, status, lang, { text, lang: textLang }, redirect) {
     if ((request.headers.get('accept') ?? '').includes('application/json')) return json(status < 300 ? { ok: true } : { message: text }, status);
     // The page the form was on, so a form on another host (PHP web space) leads back there.
-    const referer = refererOf(request);
-    if (status < 300 && redirect) return new Response(null, { status: 303, headers: { location: new URL(redirect, referer ?? url).href } });
+    const { referer } = home;
+    if (status < 300 && redirect) return new Response(null, { status: 303, headers: { location: new URL(redirect, home.base).href } });
     const back = referer ? `<p><a href="${escapeHTML(referer.href)}">${escapeHTML(pick(lang, 'back').text)}</a></p>` : '';
     const main = textLang === lang ? '<main>' : `<main lang="${escapeHTML(textLang)}">`;
     const body = `<!doctype html><html lang="${escapeHTML(lang)}"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${escapeHTML(site.name ?? '')}</title><body style="font:17px/1.5 system-ui,sans-serif;max-width:32em;margin:15vh auto;padding:0 16px">${main}<p>${escapeHTML(text).replace(/\r?\n/g, '<br>')}</p>${back}</main></body></html>`;
@@ -222,26 +244,30 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
   async function receive(request, url, slug) {
     let lang, fields = {}, main = null;
     // A redirect and a script's { ok: true } show no text, so they need no language.
-    const silent = (status, redirect) => status < 300 && (!!redirect || (request.headers.get('accept') ?? '').includes('application/json'));
+    const asScript = (request.headers.get('accept') ?? '').includes('application/json');
+    const silent = (status, redirect) => status < 300 && (!!redirect || asScript);
     const say = async (status, key, { own, base, redirect } = {}) => {
-      if (silent(status, redirect)) return reply(request, url, status, null, {}, redirect);
+      const home = asScript ? null : await homeOf(request, url, main);
+      if (silent(status, redirect)) return reply(request, home, status, null, {}, redirect);
       lang ??= await languageOf(request, fields, main);
-      return reply(request, url, status, lang, pick(lang, key, own, base), redirect);
+      return reply(request, home, status, lang, pick(lang, key, own, base), redirect);
     };
     if (request.method !== 'POST') return say(405, 'post');
     if (!SLUG.test(slug)) return say(404, 'missing');
     if (Number(request.headers.get('content-length') ?? 0) > MAX_BYTES) return say(413, 'long');
     try { fields = await readFields(request); } catch { return say(400, 'unreadable'); }
-    const redirect = typeof fields._redirect === 'string' && /^\/(?![/\\])/.test(fields._redirect) ? fields._redirect : null;
+    // A path of the site; no second slash or backslash after the first, no spaces or control
+    // characters (the URL parser drops tabs and line breaks, which would turn "/\t/x" into "//x").
+    const redirect = typeof fields._redirect === 'string' && /^\/(?![/\\])[^\x00-\x20\x7f\\]*$/.test(fields._redirect) ? fields._redirect : null;
+    main = (await storage.head(branch)).sha;
+    const definition = await definitionOf(main, slug);
+    if (definition?.form.receive !== true) return say(404, 'missing');
     if (fields._gotcha) return say(200, 'thanks', { redirect });
     if (turnstileSecret && !(await human(fields, request))) return say(403, 'check');
     const kept = Object.fromEntries(Object.entries(fields).filter(([name]) => !name.startsWith('_') && name !== TURNSTILE));
     const chars = Object.entries(kept).flat(2).join('').length;
     if (Object.keys(kept).length > MAX_FIELDS || chars > MAX_CHARS) return say(413, 'long');
     if (!Object.values(kept).flat().some((v) => v.trim())) return say(422, 'empty');
-    main = (await storage.head(branch)).sha;
-    const definition = await definitionOf(main, slug);
-    if (!definition) return say(404, 'missing');
     const { form, lang: base } = definition;
     const sent = await sentAt(await head());
     const hourAgo = stamp(now() - 3600 * 1000);
