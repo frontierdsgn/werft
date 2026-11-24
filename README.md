@@ -568,6 +568,8 @@ headers: {    // sent with every file
   publish to `http://` stops with "… redirects to https://…; set WERFT_PUBLISH_URL to that
   address." `Strict-Transport-Security` makes browsers use https:// for the domain for a year, even
   if the option is switched off again.
+- After the first publish, open the site: a host that does not allow `Header` or `Rewrite*` in
+  `.htaccess` answers every page with an error 500. Then switch the option off and publish again.
 
 #### Own server (Node 22 or newer)
 
