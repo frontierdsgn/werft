@@ -17,10 +17,10 @@ beforeEach(async () => {
   hub = fakeGitHub();
   hub.seed({
     '.werft/users.json': serializeUsers([{ email: 'admin@example.org', name: 'Ada', role: 'administrator', password: await hashPassword('admin-password', 1000) }]),
-    'content/forms/anfrage.json': JSON.stringify({ title: 'Anfrage', notify: { to: 'team@example.org, chef@example.org; kein-adresse', confirm: true, confirm_text: 'Danke, wir melden uns.' } }),
-    'content/forms/newsletter.json': JSON.stringify({ title: 'Newsletter' }),
-    'content/forms/termin.json': JSON.stringify({ title: 'Termin', notify: { to: 'team@example.org' } }),
-    'content/forms/rueckruf.json': JSON.stringify({ title: 'Rückruf', notify: { confirm: true } }),
+    'content/forms/anfrage.json': JSON.stringify({ receive: true, title: 'Anfrage', notify: { to: 'team@example.org, chef@example.org; kein-adresse', confirm: true, confirm_text: 'Danke, wir melden uns.' } }),
+    'content/forms/newsletter.json': JSON.stringify({ receive: true, title: 'Newsletter' }),
+    'content/forms/termin.json': JSON.stringify({ receive: true, title: 'Termin', notify: { to: 'team@example.org' } }),
+    'content/forms/rueckruf.json': JSON.stringify({ receive: true, title: 'Rückruf', notify: { confirm: true } }),
   });
   mail = memoryMail({ from: 'site@example.org' });
   clock = Date.parse('2026-06-01T10:00:00Z');
@@ -93,11 +93,11 @@ test('without an e-mail driver, submissions are kept as before', async () => {
   assert.equal(mail.sent.length, 0);
 });
 
-test('the editor offers the e-mail settings with every form', () => {
+test('the editor offers taking submissions and the e-mail settings with every form', () => {
   const forms = schema({ site: { name: 'S' }, theme: { blocks: {}, formFields: [{ name: 'title', label: 'Titel', widget: 'string' }] } }).collections.find((c) => c.name === 'forms');
-  assert.deepEqual(forms.fields.map((f) => f.name), ['title', 'thanks', 'notify']);
-  assert.deepEqual(forms.fields[2].fields.map((f) => f.name), ['to', 'confirm', 'confirm_subject', 'confirm_text']);
+  assert.deepEqual(forms.fields.map((f) => f.name), ['title', 'receive', 'thanks', 'notify']);
+  assert.deepEqual(forms.fields[3].fields.map((f) => f.name), ['to', 'confirm', 'confirm_subject', 'confirm_text']);
   const translated = schema({ site: { name: 'S', languages: ['de', 'en'] }, theme: { blocks: {}, formFields: [{ name: 'title', label: 'Titel', widget: 'string' }] }, lang: 'en' }).collections.find((c) => c.name === 'forms');
-  assert.deepEqual(translated.fields.map((f) => f.name), ['title', 'thanks', 'notify']);
-  assert.deepEqual(translated.fields[2].fields.map((f) => f.name), ['confirm_subject', 'confirm_text'], 'who gets e-mail is set in the default language');
+  assert.deepEqual(translated.fields.map((f) => f.name), ['title', 'receive', 'thanks', 'notify']);
+  assert.deepEqual(translated.fields[3].fields.map((f) => f.name), ['confirm_subject', 'confirm_text'], 'who gets e-mail is set in the default language');
 });

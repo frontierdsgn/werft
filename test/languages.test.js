@@ -254,7 +254,7 @@ test('the gateway treats content/<lang>/ like the default language\'s content', 
     '.werft/users.json': serializeUsers(users),
     'content/pages/index.json': '{"title":"Start","status":"published"}\n',
     'content/en/pages/index.json': '{"title":"Home","status":"published"}\n',
-    'content/en/forms/feedback.json': '{"title":"Feedback"}\n',
+    'content/en/forms/feedback.json': '{"title":"Feedback","receive":true}\n',
   });
   let clock = Date.parse('2026-06-01T00:00:00Z');
   const ticks = [];
@@ -297,17 +297,17 @@ test('the gateway treats content/<lang>/ like the default language\'s content', 
 test('the thank-you page and the confirmation are in the language of the form\'s page', async () => {
   const hub = fakeGitHub();
   hub.seed({
-    'content/forms/anfrage.json': json({ title: 'Anfrage', thanks: 'Danke! Wir rufen zurück.', notify: { confirm: true, confirm_text: 'Wir melden uns.' } }),
+    'content/forms/anfrage.json': json({ receive: true, title: 'Anfrage', thanks: 'Danke! Wir rufen zurück.', notify: { confirm: true, confirm_text: 'Wir melden uns.' } }),
     'content/en/forms/anfrage.json': json({ title: 'Request', thanks: 'Thanks! We will call back.', notify: { confirm_text: 'We will be in touch.' } }),
-    'content/forms/newsletter.json': json({ title: 'Newsletter' }),
-    'content/forms/rueckruf.json': json({ title: 'Rückruf', notify: { confirm: true, confirm_text: 'Wir rufen an.' } }),
-    'content/forms/kurs.json': json({ title: 'Kurs', thanks: 'Danke <für> Ihre Anmeldung & bis bald.\nIhr Team' }),
+    'content/forms/newsletter.json': json({ receive: true, title: 'Newsletter' }),
+    'content/forms/rueckruf.json': json({ receive: true, title: 'Rückruf', notify: { confirm: true, confirm_text: 'Wir rufen an.' } }),
+    'content/forms/kurs.json': json({ receive: true, title: 'Kurs', thanks: 'Danke <für> Ihre Anmeldung & bis bald.\nIhr Team' }),
     'content/en/forms/kurs.json': json({ title: 'Course', thanks: 'Danke <für> Ihre Anmeldung & bis bald.\nIhr Team' }),
-    'content/forms/kopie.json': json({ title: 'Kopie', notify: { confirm: true, confirm_text: 'Wir melden uns.' } }),
+    'content/forms/kopie.json': json({ receive: true, title: 'Kopie', notify: { confirm: true, confirm_text: 'Wir melden uns.' } }),
     'content/en/forms/kopie.json': json({ title: 'Copy', notify: { confirm: true, confirm_text: 'Wir melden uns.' } }),
-    'content/forms/leer.json': json({ title: 'Leer', thanks: '  ' }),
-    'content/forms/kaputt.json': json({ title: 'Kaputt', thanks: { de: 'x' } }),
-    'content/en/forms/nur.json': json({ title: 'Only English', thanks: 'Only in English, thanks.' }),
+    'content/forms/leer.json': json({ receive: true, title: 'Leer', thanks: '  ' }),
+    'content/forms/kaputt.json': json({ receive: true, title: 'Kaputt', thanks: { de: 'x' } }),
+    'content/en/forms/nur.json': json({ receive: true, title: 'Only English', thanks: 'Only in English, thanks.' }),
   });
   const mail = memoryMail();
   const storage = githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch });
@@ -348,7 +348,7 @@ test('the thank-you page and the confirmation are in the language of the form\'s
 test('a site without languages answers in its settings\' language', async () => {
   const answer = async (lang) => {
     const hub = fakeGitHub();
-    hub.seed({ 'content/forms/contact.json': json({ title: 'Contact' }), 'content/settings/site.json': json({ title: 'S', lang }) });
+    hub.seed({ 'content/forms/contact.json': json({ receive: true, title: 'Contact' }), 'content/settings/site.json': json({ title: 'S', lang }) });
     const gateway = createGateway({ storage: githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch }), secret: 'x'.repeat(32), site: { name: 'S', contentDir: 'content' } });
     return (await gateway(new Request('https://site.test/api/werft/forms/contact', { method: 'POST', body: new URLSearchParams({ text: 'Hi' }) }))).text();
   };
@@ -359,7 +359,7 @@ test('a site without languages answers in its settings\' language', async () => 
 
 test('a failed read of the settings still keeps the submission', async () => {
   const hub = fakeGitHub();
-  hub.seed({ 'content/forms/contact.json': json({ title: 'Contact' }) });
+  hub.seed({ 'content/forms/contact.json': json({ receive: true, title: 'Contact' }) });
   const storage = githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch });
   const read = storage.read;
   const flaky = { ...storage, read: (sha, path) => (path.endsWith('settings/site.json') ? Promise.reject(new Error('GitHub down')) : read(sha, path)) };
@@ -378,7 +378,7 @@ test('a failed read of the settings still keeps the submission', async () => {
 
 test('a failed read of the translated form still answers and sends the e-mails', async () => {
   const hub = fakeGitHub();
-  hub.seed({ 'content/forms/anfrage.json': json({ title: 'Anfrage', notify: { to: 'team@example.org' } }), 'content/en/forms/anfrage.json': json({ title: 'Request' }) });
+  hub.seed({ 'content/forms/anfrage.json': json({ receive: true, title: 'Anfrage', notify: { to: 'team@example.org' } }), 'content/en/forms/anfrage.json': json({ title: 'Request' }) });
   const storage = githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch });
   const read = storage.read;
   const flaky = { ...storage, read: (sha, path) => (path === 'content/en/forms/anfrage.json' ? Promise.reject(new Error('GitHub down')) : read(sha, path)) };

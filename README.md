@@ -973,11 +973,18 @@ provider drivers are tested against fakes of their APIs ([fake-mail.js](test/fak
 ### Form submissions
 
 A form posts to the gateway at `/api/werft/forms/<form>`, where `<form>` is a file in
-`content/forms/` ([submissions.js](gateway/submissions.js)). The gateway commits each submission as
+`content/forms/` ([submissions.js](gateway/submissions.js)) that takes submissions: `"receive": true`
+in it ("Einsendungen annehmen" in the editor; the default language's form decides, a translation
+only for a form the default language lacks). Any other form,
+such as one that posts to `mailto:` or another service, answers 404, so nobody can fill the
+submissions through it. werft 0.6 took submissions for every form: after updating, switch it on
+for each form that posts to the gateway. The gateway commits each submission as
 `.werft/submissions/<form>/<time>-<random>.json` to the branch `werft-submissions`, which it creates
 with the first one; the site's own branch and history stay untouched, and no other service is
 involved. Administrators and editors read them in the editor under "Einsendungen" (shown when the
-site has a form), download them as CSV and delete them. Submissions hold personal data: keep the
+site has a form), download them as CSV and delete them. In the CSV, a cell that starts with `=`,
+`+`, `-`, `@`, a tab or a line break gets a leading `'`, so a visitor's text never becomes a
+spreadsheet formula. Submissions hold personal data: keep the
 repository private.
 
 Deleting is final: the gateway replaces `werft-submissions` with one new commit holding the
@@ -1000,8 +1007,12 @@ there (`git rm -r .werft/submissions`), they remain in that branch's history.
   most 50 fields and 20,000 characters; fields whose name starts with `_` are not stored.
 - A filled-in `_gotcha` gets the normal reply and stores nothing.
 - A plain form post gets a short thank-you page with a link back, or a redirect to `_redirect` (a
-  path on the site the form was on). A request with `Accept: application/json` gets `{ "ok": true }`
-  or `{ "message": … }` with the status.
+  path such as `/danke.html`, without spaces or control characters) on the site the form was on.
+  The page the form was on (its referer) counts only on the gateway's own host or the host of the
+  site setting `url`; a post from anywhere else is sent to that path on the `url` (else on the
+  gateway's host) and gets no link back, so the site's domain cannot redirect to another site.
+  On PHP web space, set `url` to the public address. A request with `Accept: application/json` gets
+  `{ "ok": true }` or `{ "message": … }` with the status.
 - The thank-you page and the messages are in the language of the page the form was on: the field
   `_lang` if it names one of the site's [languages](#languages), else a folder of the page's address
   named after one (`en/kontakt.html`), else the default language; a site without `languages` takes

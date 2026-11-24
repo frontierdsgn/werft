@@ -5,6 +5,7 @@ import { buildForm } from './visual-form.js';
 import { versionDiff, diffHTML } from './diff.js';
 import { setupTwoFactor, recoveryCodes } from './two-factor.js';
 import { t, locale, intlLocale, fieldText, LOCALES, browserLocale } from './i18n.js';
+import { csv } from './csv.js';
 
 const el = (tag, props = {}, ...children) => {
   const node = Object.assign(document.createElement(tag), props);
@@ -336,10 +337,8 @@ export function submissionsView(app, root) {
   const text = (value) => [value].flat().join(', ');
   const download = (form) => {
     const names = [...new Set(form.submissions.flatMap((s) => Object.keys(s.fields)))];
-    const cell = (value) => `"${String(value).replace(/"/g, '""')}"`;
     const rows = [[t('submissions.received'), ...names], ...form.submissions.map((s) => [s.received_at, ...names.map((n) => text(s.fields[n] ?? ''))])];
-    // The byte order mark makes Excel read the file as UTF-8.
-    const blob = new Blob([`﻿${rows.map((r) => r.map(cell).join(';')).join('\r\n')}\r\n`], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob([csv(rows)], { type: 'text/csv;charset=utf-8' });
     const link = el('a', { href: URL.createObjectURL(blob), download: `${form.slug}.csv` });
     link.click();
     URL.revokeObjectURL(link.href);

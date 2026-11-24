@@ -21,8 +21,8 @@ async function setup() {
     ]),
     'content/pages/index.json': '{"title":"Start","status":"published"}\n',
     'content/events/a.json': '{"title":"A","status":"draft"}\n',
-    'content/forms/anfrage.json': JSON.stringify({ title: 'Anfrage', notify: { to: 'cy@example.org' } }),
-    'content/forms/termin.json': JSON.stringify({ title: 'Termin', notify: { to: 'team@example.org' } }),
+    'content/forms/anfrage.json': JSON.stringify({ receive: true, title: 'Anfrage', notify: { to: 'cy@example.org' } }),
+    'content/forms/termin.json': JSON.stringify({ receive: true, title: 'Termin', notify: { to: 'team@example.org' } }),
   });
   const mail = memoryMail({ from: 'site@example.org' });
   const tasks = [];
@@ -111,7 +111,7 @@ test('a form\'s notice to someone else is in the site\'s first language, and a f
   const hub = fakeGitHub();
   hub.seed({
     '.werft/users.json': serializeUsers([]),
-    'content/forms/contact.json': JSON.stringify({ title: 'Contact', notify: { to: 'team@example.org' } }),
+    'content/forms/contact.json': JSON.stringify({ receive: true, title: 'Contact', notify: { to: 'team@example.org' } }),
   });
   const mail = memoryMail({ from: 'site@example.org' });
   const storage = githubStorage({ owner: hub.owner, repo: hub.repo, token: 't', api: hub.api, fetch: hub.fetch });
