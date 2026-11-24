@@ -974,7 +974,8 @@ provider drivers are tested against fakes of their APIs ([fake-mail.js](test/fak
 
 A form posts to the gateway at `/api/werft/forms/<form>`, where `<form>` is a file in
 `content/forms/` ([submissions.js](gateway/submissions.js)) that takes submissions: `"receive": true`
-in it ("Einsendungen annehmen" in the editor, set in the default language). Any other form,
+in it ("Einsendungen annehmen" in the editor; the default language's form decides, a translation
+only for a form the default language lacks). Any other form,
 such as one that posts to `mailto:` or another service, answers 404, so nobody can fill the
 submissions through it. werft 0.6 took submissions for every form: after updating, switch it on
 for each form that posts to the gateway. The gateway commits each submission as

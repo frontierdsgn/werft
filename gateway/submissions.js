@@ -242,12 +242,12 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
   }
 
   async function receive(request, url, slug) {
-    let lang, fields = {}, main = null;
+    let lang, home, fields = {}, main = null;
     // A redirect and a script's { ok: true } show no text, so they need no language.
     const asScript = (request.headers.get('accept') ?? '').includes('application/json');
     const silent = (status, redirect) => status < 300 && (!!redirect || asScript);
     const say = async (status, key, { own, base, redirect } = {}) => {
-      const home = asScript ? null : await homeOf(request, url, main);
+      if (!asScript) home ??= await homeOf(request, url, main);
       if (silent(status, redirect)) return reply(request, home, status, null, {}, redirect);
       lang ??= await languageOf(request, fields, main);
       return reply(request, home, status, lang, pick(lang, key, own, base), redirect);
@@ -257,8 +257,11 @@ export function submissions({ storage, branch, site, now, secret, mail, turnstil
     if (Number(request.headers.get('content-length') ?? 0) > MAX_BYTES) return say(413, 'long');
     try { fields = await readFields(request); } catch { return say(400, 'unreadable'); }
     // A path of the site; no second slash or backslash after the first, no spaces or control
-    // characters (the URL parser drops tabs and line breaks, which would turn "/\t/x" into "//x").
-    const redirect = typeof fields._redirect === 'string' && /^\/(?![/\\])[^\x00-\x20\x7f\\]*$/.test(fields._redirect) ? fields._redirect : null;
+    // characters (the URL parser drops tabs and line breaks, which would turn "/\t/x" into "//x"),
+    // and not one that resolves to "//…" ("/.//x"), which a server may answer with a
+    // protocol-relative redirect of its own.
+    const path = typeof fields._redirect === 'string' && /^\/(?![/\\])[^\x00-\x20\x7f\\]*$/.test(fields._redirect) ? fields._redirect : null;
+    const redirect = path && !new URL(path, url).pathname.startsWith('//') ? path : null;
     main = (await storage.head(branch)).sha;
     const definition = await definitionOf(main, slug);
     if (definition?.form.receive !== true) return say(404, 'missing');

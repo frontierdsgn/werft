@@ -98,6 +98,6 @@ test('the editor offers taking submissions and the e-mail settings with every fo
   assert.deepEqual(forms.fields.map((f) => f.name), ['title', 'receive', 'thanks', 'notify']);
   assert.deepEqual(forms.fields[3].fields.map((f) => f.name), ['to', 'confirm', 'confirm_subject', 'confirm_text']);
   const translated = schema({ site: { name: 'S', languages: ['de', 'en'] }, theme: { blocks: {}, formFields: [{ name: 'title', label: 'Titel', widget: 'string' }] }, lang: 'en' }).collections.find((c) => c.name === 'forms');
-  assert.deepEqual(translated.fields.map((f) => f.name), ['title', 'thanks', 'notify']);
-  assert.deepEqual(translated.fields[2].fields.map((f) => f.name), ['confirm_subject', 'confirm_text'], 'whether it takes submissions and who gets e-mail are set in the default language');
+  assert.deepEqual(translated.fields.map((f) => f.name), ['title', 'receive', 'thanks', 'notify']);
+  assert.deepEqual(translated.fields[3].fields.map((f) => f.name), ['confirm_subject', 'confirm_text'], 'who gets e-mail is set in the default language');
 });

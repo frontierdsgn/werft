@@ -44,7 +44,7 @@ test('a plain form post leads only to pages of the site', async () => {
   assert.equal(await location({ _redirect: '/danke.html' }, 'https://salon.pages.dev/kontakt.html'), 'https://salon.pages.dev/danke.html', 'the gateway\'s host');
   assert.equal(await location({ _gotcha: '1', _redirect: '/x' }, 'https://evil.example/page'), 'https://www.salon.example/x', 'another host\'s referer is not followed');
   assert.equal(await location({ _redirect: '/danke.html' }), 'https://www.salon.example/danke.html', 'without a referer: the site\'s address');
-  for (const redirect of ['//evil.example/', '/\\evil.example', '/\t/evil.example', '/\n/evil.example', ' //evil.example', '/a b', 'https://evil.example/']) {
+  for (const redirect of ['//evil.example/', '/\\evil.example', '/\t/evil.example', '/\n/evil.example', ' //evil.example', '/a b', 'https://evil.example/', '/.//evil.example', '/..//evil.example', '/%2e//evil.example']) {
     const response = await send('anfrage', { email: 'v@example.org', _redirect: redirect }, { referer: 'https://www.salon.example/kontakt.html' });
     assert.deepEqual([response.status, response.headers.get('location')], [201, null], JSON.stringify(redirect));
   }
