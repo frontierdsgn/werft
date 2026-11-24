@@ -177,6 +177,8 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      images: { maxSize: 2560, widths: [480, 960, 1600], formats: ['webp'] }, // optional; see Images
      twoFactor: true,               // optional: administrators must use two-factor sign-in (or a list of roles)
      urls: 'html',                  // optional: werft 0.6's addresses (kontakt.html); see Addresses
+     https: true,                   // optional: http:// to https:// and HSTS; see HTTPS and security headers
+     headers: { 'X-Content-Type-Options': 'nosniff' }, // optional, the same section
    };
    ```
 3. **Theme** (`theme/index.js`), a plain object:
@@ -508,7 +510,8 @@ and pushed there:
 refused). The receiver only writes and deletes files it published itself, refuses PHP and other
 code files (also as an inner extension, as in `x.php.html`) and PHP configuration (`php.ini`,
 `.user.ini`, any `.ini`), accepts `.htaccess` only with redirect lines and a local `ErrorDocument 404 /….html`
-(see [Not-found page](#not-found-page)) and writes nothing through symbolic links.
+(see [Not-found page](#not-found-page)), the lines of [HTTPS and security headers](#https-and-security-headers)
+exactly as werft writes them, and writes nothing through symbolic links.
 A file already in the web space with the same name and different content stops the publish:
 remove or rename it there first (identical files are taken over). The admin is not published: editors
 use the admin on the build host.
@@ -528,6 +531,50 @@ environment, and this step after the Wrangler step, with the same `if`:
 
 Without any build host, the owner can build and publish from their own computer with the same two
 commands.
+
+#### HTTPS and security headers
+
+Web space does not send visitors from `http://` to `https://` by itself and sends no security
+headers. Two options in `werft.config.js` add them:
+
+```js
+https: true,  // redirect http:// to https:// and send Strict-Transport-Security: max-age=31536000
+headers: {    // sent with every file
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-Frame-Options': 'SAMEORIGIN',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+},
+```
+
+- The build writes them into the root `.htaccess` (Apache: `RewriteRule` for the redirect inside
+  `<IfModule mod_rewrite.c>`, `Header always set` inside `<IfModule mod_headers.c>`, so a server
+  without the module ignores them instead of failing) and into `_headers` for Cloudflare Pages
+  (`https` there only adds `Strict-Transport-Security`; the redirect to https:// is Cloudflare's
+  setting, "Always Use HTTPS"). There a `Content-Security-Policy` is left off the admin, which
+  needs its inline import map. The build's `.htaccess` and `_headers` replace files of those names
+  from the theme or `passthrough`.
+  `werft serve` sends neither: set them in the proxy in front of it.
+- `headers` takes only these names: `Strict-Transport-Security` (replaces `https`' value, e.g.
+  `max-age=63072000; includeSubDomains`), `X-Content-Type-Options`, `Referrer-Policy`,
+  `X-Frame-Options`, `Permissions-Policy`, `Content-Security-Policy`,
+  `Content-Security-Policy-Report-Only`, `Cross-Origin-Opener-Policy`,
+  `Cross-Origin-Resource-Policy`, `Cross-Origin-Embedder-Policy` and
+  `X-Permitted-Cross-Domain-Policies`, with values of letters, digits, spaces and
+  `= ; , : ' / . _ ( ) * + -`. Anything else stops the build. The receiver accepts exactly these
+  lines and nothing that sets a handler, `php_value`, `Options`, `SetEnv`, an expression or another
+  rewrite.
+- Before switching them on: copy the current `werft-publish.php` to the web space (an older one
+  refuses the new `.htaccess` with 422, the publish protocol is unchanged), make sure the domain
+  has a certificate, and set `WERFT_PUBLISH_URL` to `https://…`. Once the `.htaccess` is out, a
+  publish to `http://` stops with "… redirects to https://…; set WERFT_PUBLISH_URL to that
+  address." `Strict-Transport-Security` makes browsers use https:// for the domain for a year, even
+  if the option is switched off again.
+- After the first publish, open the site: a host that does not allow `Header` or `Rewrite*` in
+  `.htaccess` answers every page with an error 500, and one that ends HTTPS in front of Apache (so
+  Apache sees every request as http://) redirects in a loop, the receiver too. Then switch the
+  option off, delete `.htaccess` in the web space with the host's file manager (the next publish
+  writes it again) and publish; use the host's own HTTPS redirect instead.
 
 #### Own server (Node 22 or newer)
 
