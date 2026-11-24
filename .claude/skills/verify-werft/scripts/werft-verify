@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Starts, checks and stops a disposable werft site served from this checkout, for end-to-end
+# verification. Every run lives in its own directory; evidence lives apart from it and survives `down`.
+#
+#   werft-verify up [run-id]       make the fixture site, start `werft dev` on a free port, wait until usable
+#   werft-verify doctor <run-dir>  read-only: is this instance ours, up, built from this checkout?
+#   werft-verify browser <run-dir> install playwright-core into the run (once) for journeys/*.mjs
+#   werft-verify down <run-dir>    stop the server this run started and delete the run directory
+#
+# Environment: WERFT_VERIFY_ROOT (default ${TMPDIR:-/tmp}) holds runs and evidence;
+# WERFT_VERIFY_NODE (default: node on PATH), Node 22 or newer.
+set -euo pipefail
+
+CHECKOUT=$(cd "$(dirname "$0")/../../../.." && pwd)
+ROOT=${WERFT_VERIFY_ROOT:-${TMPDIR:-/tmp}}
+NODE=${WERFT_VERIFY_NODE:-node}
+ADMIN_EMAIL=admin@verify.test
+ADMIN_PASSWORD=verify-password-1
+EDITOR_EMAIL=editor@verify.test
+EDITOR_PASSWORD=verify-password-2
+PLAYWRIGHT_VERSION=1.58.2
+
+die() { echo "werft-verify: $*" >&2; exit 1; }
+field() { "$NODE" -e 'const r=require(process.argv[1]); console.log(r[process.argv[2]] ?? "")' "$1/run.json" "$2"; }
+
+fixture() {
+  local site=$1 port=$2
+  mkdir -p "$site/theme/static" "$site/content/pages" "$site/content/forms" "$site/content/settings" "$site/assets/img"
+  cat > "$site/werft.config.js" <<'EOF'
+// Verification fixture: one theme with a text block and a form block, two forms (one taking
+// submissions through the gateway, one posting elsewhere), a page, a 404 page and static CSS.
+export default { name: 'Verify Site', theme: './theme/index.js', content: 'content', mediaDirs: ['assets/img'], output: '_site' };
+EOF
+  cat > "$site/theme/index.js" <<'EOF'
+import { fields } from 'werft';
+const { string, markdown, relation } = fields;
+export default {
+  staticDir: 'theme/static',
+  formFields: [string('title', 'Titel'), string('button', 'Text der Schaltfläche')],
+  blocks: {
+    text: { label: 'Text', fields: [string('heading', 'Überschrift'), markdown('body', 'Text')], render: (s, ctx) => ctx.html`<section class="text"><h2>${s.heading}</h2>${ctx.md(s.body)}</section>` },
+    form: {
+      label: 'Formular', fields: [relation('form', 'Formular', 'forms')],
+      render: (s, ctx) => {
+        const form = ctx.form(s.form);
+        if (!form) return ctx.html``;
+        return ctx.html`<form method="post" action="/api/werft/forms/${s.form}" aria-label="${form.title}"><label>E-Mail <input name="email" type="email" required></label><label>Nachricht <textarea name="nachricht"></textarea></label><input name="_gotcha" tabindex="-1" autocomplete="off" hidden><input name="_redirect" type="hidden" value="/danke/"><button>${form.button ?? 'Senden'}</button></form>`;
+      },
+    },
+  },
+  renderPage: (page, ctx) => ctx.html`<!doctype html><html lang="de"><head>${ctx.head()}<link rel="stylesheet" href="${ctx.url('style.css')}"></head><body><nav>${ctx.menu('main')?.items.map((i) => ctx.html`<a href="${ctx.url(i.url)}">${i.label}</a>`)}</nav><main><h1>${page.title}</h1>${ctx.blocks(page.sections)}</main></body></html>`,
+  menus: { main: 'Hauptmenü' },
+};
+EOF
+  printf 'body{font-family:sans-serif}\n' > "$site/theme/static/style.css"
+  printf '{"title":"Start","status":"published","sections":[{"type":"text","heading":"Willkommen","body":"Das ist die **Startseite**."}]}\n' > "$site/content/pages/index.json"
+  printf '{"title":"Kontakt","status":"published","sections":[{"type":"form","form":"anfrage"}]}\n' > "$site/content/pages/kontakt.json"
+  printf '{"title":"Danke","status":"published","sections":[{"type":"text","heading":"Danke","body":"Ihre Nachricht ist angekommen."}]}\n' > "$site/content/pages/danke.json"
+  printf '{"title":"Nicht gefunden","status":"published","sections":[]}\n' > "$site/content/pages/404.json"
+  printf '{"title":"Anfrage","button":"Anfrage senden","receive":true}\n' > "$site/content/forms/anfrage.json"
+  printf '{"title":"Newsletter","button":"Abonnieren"}\n' > "$site/content/forms/newsletter.json"
+  printf '{"title":"Verify Site","lang":"de","url":"http://127.0.0.1:%s/","search_visibility":"noindex"}\n' "$port" > "$site/content/settings/site.json"
+  printf '{"main":{"label":"Hauptmenü","items":[{"label":"Start","url":"index.html"},{"label":"Kontakt","url":"kontakt/"}]}}\n' > "$site/content/settings/menus.json"
+  printf '{"redirects":[{"from":"/alt.html","to":"/kontakt/"}]}\n' > "$site/content/settings/redirects.json"
+  printf 'node_modules\n_site\n_site.*\n' > "$site/.gitignore"
+  # The site resolves `werft` from its node_modules, as an installed site does: link this checkout.
+  mkdir -p "$site/node_modules"
+  ln -s "$CHECKOUT" "$site/node_modules/werft"
+  (cd "$site" && WERFT_PASSWORD=$ADMIN_PASSWORD "$NODE" "$CHECKOUT/bin/werft.js" user add "$ADMIN_EMAIL" --role administrator --name Ada >/dev/null \
+    && WERFT_PASSWORD=$EDITOR_PASSWORD "$NODE" "$CHECKOUT/bin/werft.js" user add "$EDITOR_EMAIL" --role editor --name Eda >/dev/null)
+  git -C "$site" init -q -b main
+  git -C "$site" -c user.name=verify -c user.email=verify@verify.test add -A
+  git -C "$site" -c user.name=verify -c user.email=verify@verify.test commit -q -m "Verification fixture"
+}
+
+up() {
+  local id=${1:-$(date +%Y%m%d-%H%M%S)-$$}
+  local run="$ROOT/werft-verify-$id" evidence="$ROOT/werft-verify-evidence/$id"
+  [ -e "$run" ] && die "$run exists; pick another run id"
+  "$NODE" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' || die "Node 22 or newer needed ($("$NODE" --version))"
+  [ -d "$CHECKOUT/node_modules/marked" ] || die "run npm ci in $CHECKOUT first"
+  mkdir -p "$run" "$evidence"
+  local port; port=$("$NODE" -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')
+  fixture "$run/site" "$port"
+  local secret; secret=$("$NODE" -e 'console.log(require("crypto").randomBytes(32).toString("base64url"))')
+  # werft dev: binds 127.0.0.1, commits to the fixture's git, writes e-mails to its log.
+  # exec keeps one process: $! is node itself, leader of its own process group (down kills the group).
+  (cd "$run/site" && exec env WERFT_SECRET="$secret" setsid "$NODE" "$CHECKOUT/bin/werft.js" dev . --port "$port") > "$run/server.log" 2>&1 < /dev/null &
+  echo $! > "$run/server.pid"
+  local url="http://127.0.0.1:$port"
+  cat > "$run/run.json" <<EOF
+{ "id": "$id", "url": "$url", "port": $port, "pid": $(cat "$run/server.pid"), "site": "$run/site", "log": "$run/server.log",
+  "evidence": "$evidence", "checkout": "$CHECKOUT", "rev": "$(git -C "$CHECKOUT" rev-parse HEAD)",
+  "admin": { "email": "$ADMIN_EMAIL", "password": "$ADMIN_PASSWORD" }, "editor": { "email": "$EDITOR_EMAIL", "password": "$EDITOR_PASSWORD" } }
+EOF
+  # Usable means: the gateway answers with users, the first build finished, and the admin is there.
+  for _ in $(seq 1 150); do
+    if curl -fsS -m 5 "$url/api/werft/status" 2>/dev/null | grep -q '"has_users":true' \
+      && curl -fsS -m 5 -o /dev/null "$url/kontakt/" && curl -fsS -m 5 -o /dev/null "$url/admin/"; then
+      echo "$run"; return 0
+    fi
+    kill -0 "$(cat "$run/server.pid")" 2>/dev/null || { cat "$run/server.log" >&2; die "server exited"; }
+    sleep 0.2
+  done
+  cat "$run/server.log" >&2
+  die "not ready after 30 s; still running as pid $(cat "$run/server.pid"): werft-verify down $run"
+}
+
+doctor() {
+  local run=${1:?run dir}; [ -f "$run/run.json" ] || die "$run is no werft-verify run"
+  local pid url ok=0; pid=$(field "$run" pid); url=$(field "$run" url)
+  check() { if timeout 10 bash -c "$2" >/dev/null 2>&1; then echo "ok    $1"; else echo "FAIL  $1"; ok=1; fi; }
+  check "server pid $pid alive" "kill -0 $pid"
+  check "pid $pid is werft dev of this run" "tr '\\0' ' ' < /proc/$pid/cmdline | grep -q 'werft.js dev'"
+  check "pid $pid listens on $url" "ss -ltnp 2>/dev/null | grep -q ':$(field "$run" port) .*pid=$pid,'"
+  check "gateway answers, users present" "curl -fsS $url/api/werft/status | grep -q '\"has_users\":true'"
+  check "site built (_werft/build.json)" "curl -fsS $url/_werft/build.json | grep -q built_at"
+  check "admin served" "curl -fsS $url/admin/ | grep -q importmap"
+  check "checkout still at $(field "$run" rev | cut -c1-7)" "[ \"$(git -C "$(field "$run" checkout)" rev-parse HEAD)\" = \"$(field "$run" rev)\" ]"
+  check "admin can sign in" "curl -fsS -X POST $url/api/werft/session -H 'content-type: application/json' -d '{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}' | grep -q access_token"
+  echo "evidence: $(field "$run" evidence)"
+  return $ok
+}
+
+browser() {
+  local run=${1:?run dir}
+  [ -d "$run/pw/node_modules/playwright-core" ] || npm install --prefix "$run/pw" --no-audit --no-fund --loglevel=error "playwright-core@$PLAYWRIGHT_VERSION" >/dev/null
+  echo "$run/pw/node_modules/playwright-core"
+}
+
+down() {
+  local run=${1:?run dir}; [ -f "$run/run.json" ] || die "$run is no werft-verify run"
+  local pid; pid=$(field "$run" pid)
+  if kill -0 "$pid" 2>/dev/null && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q 'werft.js dev'; then
+    kill -- "-$pid" 2>/dev/null || kill "$pid"
+    for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  fi
+  local evidence; evidence=$(field "$run" evidence)
+  cp "$run/server.log" "$evidence/server.log" 2>/dev/null || true
+  rm -rf "$run"
+  echo "stopped; evidence kept in $evidence"
+}
+
+case "${1:-}" in
+  up) up "${2:-}" ;;
+  doctor) doctor "${2:-}" ;;
+  browser) browser "${2:-}" ;;
+  down) down "${2:-}" ;;
+  *) sed -n '2,12p' "$0"; exit 2 ;;
+esac
