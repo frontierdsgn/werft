@@ -2,7 +2,12 @@
 
 Thank you for helping. werft is the shared core of many websites, so every change has to be useful
 to any werft site, not only to the one that needed it. The rules for changes are in
-[AGENTS.md](AGENTS.md); read "Every change is general" before you start.
+[AGENTS.md](AGENTS.md); read them before you start.
+
+What differs between sites comes from the site: its content, its theme or `werft.config.js`. werft
+gains only the general mechanism. For example, a site needed a newsletter sign-up; werft did not get
+a newsletter feature but form submissions for every form in `content/forms/`, read in the editor
+under "Einsendungen".
 
 ## Before you start
 
