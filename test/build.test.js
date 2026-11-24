@@ -20,6 +20,28 @@ test('redirects with * work on Cloudflare and on Apache', async () => {
   assert.equal(text('.htaccess'), 'Redirect 301 /alt.html /neu.html\nRedirectMatch 302 ^/classic/(.*)$ https://salon.example/$1\n');
 });
 
+test('https and security headers go into .htaccess and _headers', async () => {
+  const redirects = [{ from: '/alt.html', to: '/neu.html' }];
+  const store = memoryStore({ 'content/settings/redirects.json': JSON.stringify({ redirects }) });
+  const site = { https: true, headers: { 'x-content-type-options': 'nosniff', 'Referrer-Policy': 'strict-origin-when-cross-origin', 'Permissions-Policy': 'camera=(), microphone=()' } };
+  const { files } = await build({ site, theme: { renderPage: () => ({ value: '' }) }, store, media: {} });
+  const text = (path) => files.find((f) => f.path === path)?.text;
+  assert.equal(text('.htaccess'), [
+    '<IfModule mod_rewrite.c>', 'RewriteEngine On', 'RewriteCond %{HTTPS} !=on', 'RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]', '</IfModule>',
+    '<IfModule mod_headers.c>', 'Header always set Strict-Transport-Security "max-age=31536000"', 'Header always set X-Content-Type-Options "nosniff"',
+    'Header always set Referrer-Policy "strict-origin-when-cross-origin"', 'Header always set Permissions-Policy "camera=(), microphone=()"', '</IfModule>',
+    'Redirect 301 /alt.html /neu.html', '',
+  ].join('\n'));
+  assert.equal(text('_headers'), '/*\n  Strict-Transport-Security: max-age=31536000\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n  Permissions-Policy: camera=(), microphone=()\n');
+  const only = await build({ site: { headers: { 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains' } }, theme: { renderPage: () => ({ value: '' }) }, store: memoryStore({}), media: {} });
+  assert.equal(only.files.find((f) => f.path === '.htaccess').text, '<IfModule mod_headers.c>\nHeader always set Strict-Transport-Security "max-age=63072000; includeSubDomains"\n</IfModule>\n', 'headers without the redirect');
+  const none = await build({ site: {}, theme: { renderPage: () => ({ value: '' }) }, store: memoryStore({}), media: {} });
+  assert.ok(!none.files.some((f) => ['.htaccess', '_headers'].includes(f.path)), 'nothing without the options');
+  for (const headers of [{ 'X-Powered-By': 'werft' }, { 'X-Frame-Options': 'DENY" env=x' }, { 'Content-Security-Policy': 'expr=%{REQUEST_URI}' }, { 'X-Frame-Options': 'DENY\nAddHandler php .html' }, { 'X-Frame-Options': '' }, ['X-Frame-Options']]) {
+    await assert.rejects(build({ site: { headers }, theme: { renderPage: () => ({ value: '' }) }, store: memoryStore({}), media: {} }), /werft: .*werft\.config\.js/, JSON.stringify(headers));
+  }
+});
+
 test('posts come newest first by the theme\'s date field, undated posts last by slug', async () => {
   const post = (slug, date) => ({ slug, title: slug, status: 'published', ...(date && { date }) });
   const content = {

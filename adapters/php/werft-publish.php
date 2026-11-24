@@ -36,14 +36,25 @@ function safe_path(string $path): bool {
   return !preg_match('/\.(php\d*|phtml?|phar|pht|phps|cgi|fcgi|shtml?|stm)(\.|$)/i', $name) && !preg_match('/\.(pl|py|sh|ini)$/i', $name);
 }
 
-// .htaccess may only hold redirects and werft's not-found pages (werft writes both there); anything
-// else could make the server run uploaded files as code.
+// .htaccess may only hold what werft writes there: redirects, its not-found pages, the redirect to
+// https:// and security headers (werft.config.js `https` and `headers`), each line exactly in
+// werft's shape. Anything else (handlers, php_value, Options, SetEnv, <If>, expressions) could make
+// the server run uploaded files as code.
+const SECURITY_HEADERS = ['Strict-Transport-Security', 'X-Content-Type-Options', 'Referrer-Policy', 'X-Frame-Options', 'Permissions-Policy',
+  'Content-Security-Policy', 'Content-Security-Policy-Report-Only', 'Cross-Origin-Opener-Policy', 'Cross-Origin-Resource-Policy', 'Cross-Origin-Embedder-Policy',
+  'X-Permitted-Cross-Domain-Policies'];
+const HTACCESS_LINES = ['<IfModule mod_rewrite.c>', '<IfModule mod_headers.c>', '</IfModule>', 'RewriteEngine On', 'RewriteCond %{HTTPS} !=on',
+  'RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]'];
+
 function safe_content(string $path, string $data): bool {
   if (basename($path) !== '.htaccess') return true;
   foreach (preg_split('/\r?\n/', $data) as $line) {
     $line = trim($line);
-    if ($line !== '' && $line[0] !== '#' && !preg_match('/^(Redirect|RedirectMatch|RedirectPermanent|RedirectTemp)\s/i', $line)
-      && !preg_match('#^ErrorDocument\s+404\s+/(?:[A-Za-z0-9._~-]+/)*404\.html$#', $line)) return false;
+    if ($line === '' || $line[0] === '#' || in_array($line, HTACCESS_LINES, true)) continue;
+    if (preg_match('/^(Redirect|RedirectMatch|RedirectPermanent|RedirectTemp)\s/i', $line)) continue;
+    if (preg_match('#^ErrorDocument\s+404\s+/(?:[A-Za-z0-9._~-]+/)*404\.html$#', $line)) continue;
+    if (preg_match('#^Header always set ([A-Za-z-]+) "(?!expr=)[A-Za-z0-9 =;,:\'/._()*+-]{1,1024}"$#', $line, $m) && in_array($m[1], SECURITY_HEADERS, true)) continue;
+    return false;
   }
   return true;
 }

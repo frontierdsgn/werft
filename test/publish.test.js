@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
 import { publish } from '../lib/publish.js';
+import { build, SECURITY_HEADERS } from '../lib/build.js';
 
 const hasPhp = (() => { try { execFileSync('php', ['--version']); return true; } catch { return false; } })();
 const SECRET = 'p'.repeat(40);
@@ -56,6 +57,23 @@ test('refuses bad signatures, paths outside the web space and code', { skip: !ha
   assert.equal((await put('.htaccess', 'AddHandler application/x-httpd-php .html\n')).status, 422);
   for (const line of ['ErrorDocument 404 https://elsewhere.example/', 'ErrorDocument 404 /x.php', 'ErrorDocument 500 /500.html', 'ErrorDocument 404 "/a.html" SetHandler', 'ErrorDocument 404 /a.php?.html', 'ErrorDocument 404 /info.php?%{file:/etc/passwd}.html', 'ErrorDocument 404 /%{.html', 'ErrorDocument 404 /fehler.html']) assert.equal((await put('.htaccess', `${line}\n`)).status, 422, line);
   assert.equal((await put('en/.htaccess', 'ErrorDocument 404 /en/404.html\n')).status, 200, 'a local not-found page is allowed');
+  const secure = ['<IfModule mod_rewrite.c>', 'RewriteEngine On', 'RewriteCond %{HTTPS} !=on', 'RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]', '</IfModule>',
+    '<IfModule mod_headers.c>', 'Header always set Strict-Transport-Security "max-age=31536000"', 'Header always set X-Content-Type-Options "nosniff"',
+    'Header always set Permissions-Policy "camera=(), geolocation=()"', 'Header always set Content-Security-Policy "default-src \'self\'; img-src * data:"', '</IfModule>', 'Redirect 301 /alt /neu', ''].join('\n');
+  assert.equal((await put('.htaccess', secure)).status, 200, 'the https redirect and security headers werft writes');
+  assert.equal(read('.htaccess'), secure);
+  // Every header the build may write, as the build writes it.
+  const headers = Object.fromEntries(SECURITY_HEADERS.map((name) => [name, "a=b; c 'self' (d) *.e/f:g,h+i_j-k"]));
+  const built = await build({ site: { https: true, headers }, theme: { renderPage: () => ({ value: '' }) }, store: { list: async () => [], readText: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); } }, media: {} });
+  assert.equal((await put('.htaccess', built.files.find((f) => f.path === '.htaccess').text)).status, 200, 'what the build writes');
+  for (const line of [
+    'Header always set X-Powered-By "werft"', 'Header set X-Frame-Options "DENY"', 'Header always set X-Frame-Options DENY', 'Header always set x-frame-options "DENY"',
+    'Header always set X-Frame-Options "DENY" env=x', 'Header always set Content-Security-Policy "expr=%{REQUEST_URI}"', 'Header always set X-Frame-Options "%{HTTP_HOST}e"',
+    'Header always set X-Frame-Options "a\\"', 'Header always unset X-Frame-Options', 'Header always set X-Frame-Options "DENY" "early"',
+    'RewriteRule ^ https://evil.example%{REQUEST_URI} [R=301,L]', 'RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [P]', 'RewriteRule ^(.*)$ /x.php [L]',
+    'RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,H=application/x-httpd-php]', 'RewriteCond %{HTTPS} on', 'RewriteEngine on [L]', 'RewriteOptions Inherit',
+    'RewriteBase /', '<If "true">', '<IfModule mod_php.c>', '<Files *.html>', 'Options +ExecCGI', 'SetEnv A b', 'php_value auto_prepend_file x.html', 'SetHandler application/x-httpd-php',
+  ]) assert.equal((await put('.htaccess', `${line}\n`)).status, 422, line);
   assert.equal((await put('index.pl.html', 'x')).status, 200, 'a language extension before .html is no code');
   assert.equal(fs.existsSync(path.join(path.dirname(web), 'escape.html')), false);
   const deleteForeign = await signed(JSON.stringify({ action: 'delete', paths: ['foreign.html'] }));
@@ -72,4 +90,14 @@ test('refuses bad signatures, paths outside the web space and code', { skip: !ha
   fs.symlinkSync(elsewhere, path.join(web, 'linked'));
   assert.equal((await put('linked/x.html', 'x')).status, 422, 'no writes through symbolic links');
   assert.deepEqual(fs.readdirSync(elsewhere), []);
+});
+
+test('a receiver that redirects stops the publish with the address to use', async () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'werft-pub-redirect-'));
+  write(out, 'index.html', 'one');
+  const requests = [];
+  const fetch = async (url, init) => { requests.push([url, init.method, init.redirect]); return new Response(null, { status: 301, headers: { location: 'https://site.example/werft-publish.php' } }); };
+  await assert.rejects(publish({ outDir: out, url: 'http://site.example/werft-publish.php', secret: SECRET, fetch }), { message: 'Publish manifest: http://site.example/werft-publish.php redirects to https://site.example/werft-publish.php; set WERFT_PUBLISH_URL to that address.' });
+  assert.deepEqual(requests, [['http://site.example/werft-publish.php', 'POST', 'manual']], 'the redirect is not followed');
+  fs.rmSync(out, { recursive: true, force: true });
 });
