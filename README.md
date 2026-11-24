@@ -185,7 +185,8 @@ a `werft.config.js`, a theme and a `content/` folder. The steps below show every
      returns `ctx.html\`…\`` and escapes by default.
    - `renderPage(page, ctx)`: the page frame around `ctx.blocks(page.sections)`.
    - Optional: `menus` (location → label), `settingsFields`, `formFields`, `postType`
-     (`{ name, label, singular, fields, date }`), `staticDir` (CSS, JS, fonts copied as they are, with what links lead to; the build skips a broken link and names it).
+     (`{ name, label, singular, fields, date }`), `staticDir` (CSS, JS, fonts copied as they are; a link
+     is copied as what it leads to, a broken one is skipped and named).
      `date` names the post field that orders posts (default `publish_date`); declare it with
      `fields.date(name, label)`, which stores an ISO date (`2026-11-14`) and shows it in the
      editor's locale (14.11.2026 in a German browser). Older files with "14.11.2026" are read too.

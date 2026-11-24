@@ -30,3 +30,16 @@ test('a broken link in the static files is skipped and named, the other files ar
     'werft: theme/static/css/gone is a broken link and was not copied',
   ]);
 });
+
+test('a link that loops back to a folder above fails the build instead of copying what is above', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'werft-static-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text); };
+  write('werft.config.js', "export default { name: 'T', theme: './theme/index.js', output: '_site', admin: false };\n");
+  write('theme/index.js', "export default { blocks: {}, staticDir: 'theme/static', renderPage: (page, ctx) => ctx.html`<title>${page.title}</title>` };\n");
+  write('content/pages/index.json', '{"title":"Start","status":"published"}\n');
+  write('theme/static/a.css', 'a{}');
+  fs.symlinkSync('..', path.join(root, 'theme/static/up'));
+  await assert.rejects(buildToDisk(root, { log: () => {} }), { code: 'ELOOP' });
+  assert.equal(fs.existsSync(path.join(root, '_site')), false, 'nothing is published');
+});
