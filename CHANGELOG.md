@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.0](https://github.com/frontierdsgn/werft/compare/v0.6.0...v0.7.0) (2026-11-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **forms:** take submissions only where a form opts in, redirect only within the site, guard the CSV ([#106](https://github.com/frontierdsgn/werft/issues/106))
+* every page's and post's address changes to a folder (kontakt/ instead of kontakt.html); the old addresses redirect with 301. Themes must build every path to assets and media with ctx.url(), ctx.asset() or ctx.img(), since pages now sit in folders. `urls: 'html'` in werft.config.js keeps the old addresses. Fixes #58
+
+### Features
+
+* **admin:** texts per locale, German first ([#95](https://github.com/frontierdsgn/werft/issues/95)) ([a01b5cc](https://github.com/frontierdsgn/werft/commit/a01b5cc613eaee11d75d88686d23492cc5d9749d))
+* **admin:** the admin in English, chosen per user ([#98](https://github.com/frontierdsgn/werft/issues/98)) ([22b4275](https://github.com/frontierdsgn/werft/commit/22b4275b098241b76f20c9cbb2e5eaead8cf38ef))
+* **build:** HTTPS redirect and security headers for web space and Cloudflare Pages ([#107](https://github.com/frontierdsgn/werft/issues/107)) ([48a7a56](https://github.com/frontierdsgn/werft/commit/48a7a56054871ed064f0eda34253da78d10c0c81))
+* clean page addresses and pages below a parent page ([#97](https://github.com/frontierdsgn/werft/issues/97)) ([e1e704a](https://github.com/frontierdsgn/werft/commit/e1e704afc84159600d9396dbcf169c2a627149aa))
+* several post types, taxonomies with listing pages, and pagination ([#99](https://github.com/frontierdsgn/werft/issues/99)) ([70aa136](https://github.com/frontierdsgn/werft/commit/70aa136849103a4603a0de4d6e3cd044e85c5a79))
+
+
+### Bug Fixes
+
+* **build:** skip a broken link in the static files instead of dropping them all ([#105](https://github.com/frontierdsgn/werft/issues/105)) ([1e2c47f](https://github.com/frontierdsgn/werft/commit/1e2c47fd434f4d3e2efbe421963c361d1454e058))
+* **forms:** take submissions only where a form opts in, redirect only within the site, guard the CSV ([#106](https://github.com/frontierdsgn/werft/issues/106)) ([10ed44e](https://github.com/frontierdsgn/werft/commit/10ed44ecabf5f0496d12f9bc3433e458baf7b6dd))
+* **php:** refuse PHP configuration files and keep done from claiming foreign files ([#102](https://github.com/frontierdsgn/werft/issues/102)) ([fdc9b85](https://github.com/frontierdsgn/werft/commit/fdc9b8574338704dd30a503e1d1597f0469d6b80))
+
 ## [0.6.0](https://github.com/frontierdsgn/werft/compare/v0.5.0...v0.6.0) (2026-10-24)
 
 
